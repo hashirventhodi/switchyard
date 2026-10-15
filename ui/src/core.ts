@@ -13,6 +13,30 @@ export interface CoreConnection {
 export const CORE_EVENT = "core://event";
 export const DISPATCH = "dispatch";
 
+export function insideTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/** Stand-in when the renderer runs in a plain browser (`pnpm dev`): refuses every command. */
+export function detachedCore(): CoreConnection {
+  const listeners = new Set<(e: Event) => void>();
+  return {
+    send: (command) => {
+      if (command.type === "attach") return;
+      const event: Event = {
+        type: "commandRefused",
+        command: command.type,
+        reason: "No core: the renderer is running outside the Switchyard app",
+      };
+      listeners.forEach((l) => l(event));
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
 /** The core inside the Tauri app, over IPC. */
 export async function tauriCore(): Promise<CoreConnection> {
   const { invoke } = await import("@tauri-apps/api/core");
