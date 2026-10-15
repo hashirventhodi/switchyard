@@ -14,7 +14,7 @@ use switchyard_schema::{Event, McpServerFact, McpState, PermissionMode};
 
 struct Setup {
     core: Harness,
-    repo: TempRepo,
+    _repo: TempRepo,
     worktree: PathBuf,
 }
 
@@ -28,7 +28,7 @@ fn setup(mcp_json: Option<&str>) -> Setup {
     let worktree = repo.add_worktree("feat/mcp");
     let mut core = Harness::launch();
     added_repository(&core.add_repository(&repo.path));
-    Setup { core, repo, worktree }
+    Setup { core, _repo: repo, worktree }
 }
 
 const TWO_SERVERS: &str = r#"{
