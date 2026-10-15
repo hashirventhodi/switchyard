@@ -135,6 +135,9 @@ pub(crate) struct Inner {
     forge: forge::Tracker,
     /// The core itself, for callbacks that re-enter it from other threads (the watcher).
     me: Weak<Mutex<Inner>>,
+    /// Each Repository's worktrees as last announced, by repository id: what a re-list
+    /// from git is compared with.
+    listed: std::collections::HashMap<String, Vec<Worktree>>,
 }
 
 #[derive(Debug)]
@@ -163,6 +166,7 @@ impl Core {
             review: Default::default(),
             forge: Default::default(),
             me: Weak::new(),
+            listed: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
@@ -379,7 +383,8 @@ impl Inner {
 
     /// Watch each of an announced repository's worktrees and push their facts, so none
     /// waits for a change to have them.
-    fn watch_and_refresh(&self, repo: &StoredRepository) {
+    fn watch_and_refresh(&mut self, repo: &StoredRepository) {
+        disk::remember_repository(self, repo);
         disk::watch_repository(self, Path::new(&repo.path));
         worktrees::refresh_repository(self, Path::new(&repo.path));
     }

@@ -255,7 +255,13 @@ export function reduce(state: State, event: Event): State {
         ...state,
         repositories: state.repositories.map((r) =>
           r.id === event.repositoryId
-            ? { ...r, worktrees: [...r.worktrees.filter((w) => w.path !== event.worktree.path), event.worktree] }
+            ? {
+                ...r,
+                // A worktree announced again (its branch renamed) keeps its place.
+                worktrees: r.worktrees.some((w) => w.path === event.worktree.path)
+                  ? r.worktrees.map((w) => (w.path === event.worktree.path ? event.worktree : w))
+                  : [...r.worktrees, event.worktree],
+              }
             : r,
         ),
       };

@@ -28,7 +28,7 @@ use crate::Inner;
 mod archive;
 mod recovery;
 mod requests;
-pub(crate) use archive::{archive_occupant, export, read_archived, replace, update_settings};
+pub(crate) use archive::{archive_gone, archive_occupant, export, read_archived, replace, update_settings};
 pub(crate) use recovery::load;
 pub(crate) use requests::answer as answer_request;
 
