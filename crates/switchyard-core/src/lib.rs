@@ -9,6 +9,7 @@
 pub mod agents;
 pub mod compat;
 mod git;
+pub mod mcp;
 pub mod processes;
 mod rebase;
 mod policy;

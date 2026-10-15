@@ -26,6 +26,15 @@ pub enum Event {
         /// The model the CLI is using, when it says.
         #[serde(default)]
         model: Option<String>,
+        /// Each MCP server the CLI was given, with its connection state at start.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mcp_servers: Vec<McpServerStatus>,
+    },
+    /// MCP servers whose connection state changed since last reported (a server
+    /// still connecting at init settled, or one dropped). Servers not listed are
+    /// unchanged.
+    McpStatus {
+        servers: Vec<McpServerStatus>,
     },
     AgentText {
         text: String,
@@ -72,6 +81,28 @@ pub enum Event {
         detail: String,
         reason: Option<String>,
     },
+}
+
+/// An MCP server's connection state, as the CLI reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerStatus {
+    pub name: String,
+    pub state: McpServerState,
+    /// Why a failed server failed, when the CLI says.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpServerState {
+    Connected,
+    /// Still connecting.
+    Pending,
+    Failed,
+    /// Needs the user to sign in (OAuth) before it connects.
+    NeedsAuth,
+    Disabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

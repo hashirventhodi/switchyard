@@ -170,7 +170,7 @@ test("the summary strip shows agent, model, CLI version, path, mode, turns, cost
     {
       type: "sessionFactsChanged",
       sessionId: "session-1",
-      facts: { model: "claude-opus-5-5", cliVersion: "2.1.300", cliPermissionMode: "default", turns: 2, modeWarning: null, classifierDenials: 0 },
+      facts: { model: "claude-opus-5-5", cliVersion: "2.1.300", cliPermissionMode: "default", turns: 2, modeWarning: null, classifierDenials: 0, mcpServers: [] },
     },
   );
   openSession();

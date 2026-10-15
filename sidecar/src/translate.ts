@@ -11,6 +11,9 @@
 //    "tool_use_id","title","decision_reason","blocked_path"}    canUseTool was called
 //   {"type":"switchyard","subtype":"can_use_tool_aborted","request_id"}
 //                                                               its signal aborted (interrupt)
+//   {"type":"switchyard","subtype":"mcp_status","servers":[McpServerStatus]}
+//                                                               query.mcpServerStatus() result
+//                                                               (asked while a server is pending)
 //
 // Raw responses are "driver ops" the sidecar performs on the live query:
 //   {"op":"push_user_message","message":SDKUserMessage}  push into the streaming input
@@ -24,6 +27,8 @@
 
 import {
   PROTOCOL_RANGE,
+  type McpServerState,
+  type McpServerStatus,
   type PermissionMode,
   type ProtocolCommand,
   type ProtocolEvent,
@@ -95,6 +100,8 @@ export class ClaudeTranslator {
   private questionCalls = new Set<string>();
   /** Requests the CLI withdrew before they were answered. */
   private abandoned = new Set<string>();
+  /** Each MCP server's state as last reported, by name. */
+  private mcp = new Map<string, McpServerStatus>();
 
   ingest(raw: string): ProtocolEvent[] {
     let msg: Json;
@@ -144,8 +151,11 @@ export class ClaudeTranslator {
 
   private system(msg: Json): ProtocolEvent[] {
     if (msg.subtype === "init") {
-      if (this.initialisedSession === msg.session_id) return [];
+      // A re-sent init only says something new about MCP servers.
+      if (this.initialisedSession === msg.session_id) return this.mcpChanges(msg.mcp_servers);
       this.initialisedSession = msg.session_id;
+      const servers = mcpStatuses(msg.mcp_servers);
+      this.mcp = new Map(servers.map((s) => [s.name, s]));
       return [
         {
           type: "session_init",
@@ -154,6 +164,7 @@ export class ClaudeTranslator {
           cli_permission_mode: msg.permissionMode,
           cli: { name: "claude-code", version: msg.claude_code_version },
           model: msg.model ?? null,
+          mcp_servers: servers,
         },
       ];
     }
@@ -227,7 +238,23 @@ export class ClaudeTranslator {
     if (msg.subtype === "query_error") return [{ type: "error", message: String(msg.message), fatal: true }];
     if (msg.subtype === "can_use_tool") return [this.permissionRequest(msg)];
     if (msg.subtype === "can_use_tool_aborted" && this.pending.delete(msg.request_id)) this.abandoned.add(msg.request_id);
+    if (msg.subtype === "mcp_status") return this.mcpChanges(msg.servers);
     return [];
+  }
+
+  /** True while a server reported at init has not settled (the driver asks the SDK again). */
+  mcpPending(): boolean {
+    return [...this.mcp.values()].some((s) => s.state === "pending");
+  }
+
+  /** An mcp_status event for the servers whose state differs from the last reported. */
+  private mcpChanges(raw: unknown): ProtocolEvent[] {
+    const changed = mcpStatuses(raw).filter((s) => {
+      const known = this.mcp.get(s.name);
+      return !known || known.state !== s.state || known.error !== s.error;
+    });
+    for (const s of changed) this.mcp.set(s.name, s);
+    return changed.length ? [{ type: "mcp_status", servers: changed }] : [];
   }
 
   private permissionRequest(msg: Json): ProtocolEvent {
@@ -319,6 +346,26 @@ function answered(input: Json, text: string): Json {
   if (questions.length === 1) return { ...input, answers: { [questions[0].question]: text } };
   return { ...input, response: text };
 }
+
+/** The SDK's MCP server statuses (system/init `mcp_servers`, `query.mcpServerStatus()`). */
+function mcpStatuses(raw: unknown): McpServerStatus[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((s: Json) => typeof s?.name === "string")
+    .map((s: Json) => ({
+      name: s.name,
+      state: MCP_STATE[s.status] ?? "failed",
+      error: typeof s.error === "string" ? s.error : null,
+    }));
+}
+
+const MCP_STATE: Record<string, McpServerState> = {
+  connected: "connected",
+  pending: "pending",
+  failed: "failed",
+  "needs-auth": "needs_auth",
+  disabled: "disabled",
+};
 
 function resultText(content: unknown): string | null {
   if (typeof content === "string") return content;

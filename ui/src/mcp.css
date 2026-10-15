@@ -1,0 +1,6 @@
+/* Context's MCP servers section (prototype: Context "MCP servers"). */
+.ctx.mcp .empty{padding:4px 12px;margin:0;color:var(--fg-2)}
+.mcp-list{list-style:none;margin:0;padding:0}
+.ctx .kv .k small{font-family:var(--font-ui);color:var(--fg-2);margin-left:6px;font-size:11px}
+.ctx .kv .v.ok{color:var(--ok)}
+.ctx .kv .v.no{color:var(--fg-2)}

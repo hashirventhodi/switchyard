@@ -28,6 +28,7 @@ fn init(external: &str) -> AgentEvent {
         cli_permission_mode: "default".into(),
         cli: CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
         model: Some("claude-opus-5-5".into()),
+        mcp_servers: vec![],
     }
 }
 
