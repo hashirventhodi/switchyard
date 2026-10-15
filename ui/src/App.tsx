@@ -9,8 +9,9 @@ import {
 } from "./actions";
 import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from "./keymap";
 import { Palette, ShortcutsHelp } from "./Overlays";
-import { NewSession } from "./NewSession";
+import { NewSession, type NewSessionPreset } from "./NewSession";
 import { SessionView } from "./SessionView";
+import { NewWorktree, WorktreesView } from "./WorktreesView";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
 import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
@@ -65,7 +66,10 @@ export interface AppProps {
   actions?: ActionRegistry;
 }
 
-type Overlay = "palette" | "help" | "newSession" | null;
+type Overlay = "palette" | "help" | "newSession" | "newWorktree" | null;
+
+/** A session the user just asked for, by where it will run; it opens once the core confirms it. */
+type PendingStart = { worktreePath: string } | { repositoryId: string; branch: string };
 
 export function App({ core, pickFolder, actions }: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
@@ -74,8 +78,12 @@ export function App({ core, pickFolder, actions }: AppProps) {
   const [prefs, setPrefs] = useState(loadPrefs);
   const [sidebarOpen, setSidebarOpen] = useState(false); // overlay below 860 px
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
-  // The worktree of a session the user just asked for: it opens once the core confirms it.
-  const [pendingStart, setPendingStart] = useState<string | null>(null);
+  const [pendingStart, setPendingStart] = useState<PendingStart | null>(null);
+  const [newSessionPreset, setNewSessionPreset] = useState<NewSessionPreset>({});
+  const openNewSession = useCallback((preset: NewSessionPreset) => {
+    setNewSessionPreset(preset);
+    setOverlay("newSession");
+  }, []);
 
   const updatePrefs = useCallback((patch: Partial<Prefs>) => {
     setPrefs((p) => {
@@ -100,14 +108,22 @@ export function App({ core, pickFolder, actions }: AppProps) {
     [updatePrefs],
   );
   useEffect(() => {
-    const started = pendingStart && sessions.find((s) => s.worktreePath === pendingStart);
+    const started =
+      pendingStart &&
+      sessions.find((s) =>
+        "worktreePath" in pendingStart
+          ? s.worktreePath === pendingStart.worktreePath
+          : s.repositoryId === pendingStart.repositoryId && s.branch === pendingStart.branch,
+      );
     if (started) {
       setPendingStart(null);
       openSession(started.id);
     }
   }, [pendingStart, sessions, openSession]);
   const startSession = (command: Command) => {
-    if (command.type === "startSession") setPendingStart(command.worktreePath);
+    if (command.type === "startSession") setPendingStart({ worktreePath: command.worktreePath });
+    if (command.type === "startSessionOnNewWorktree")
+      setPendingStart({ repositoryId: command.repositoryId, branch: command.branch });
     core.send(command);
   };
   const shownSession = (selectedSession && state.sessions[selectedSession]) || sessions[sessions.length - 1];
@@ -144,7 +160,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
 
   useHandler(registry, "palette.toggle", () => setOverlay((o) => (o === "palette" ? null : "palette")));
   useHandler(registry, "help.open", () => setOverlay("help"));
-  useHandler(registry, "session.new", () => setOverlay("newSession"));
+  useHandler(registry, "session.new", () => openNewSession({}));
   useHandler(registry, "sidebar.toggle", toggleSidebar);
   useHandler(registry, "dock.toggle", toggleDock);
   useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
@@ -193,6 +209,8 @@ export function App({ core, pickFolder, actions }: AppProps) {
         });
     items.push({ id: "theme", group: "Actions", title: "Toggle theme", run: toggleTheme });
     items.push({ id: "addRepository", group: "Actions", title: "Add repository", run: addRepository });
+    if (state.repositories.length > 0)
+      items.push({ id: "newWorktree", group: "Actions", title: "New worktree", run: () => setOverlay("newWorktree") });
     return items;
   });
 
@@ -320,6 +338,14 @@ export function App({ core, pickFolder, actions }: AppProps) {
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
             <SessionView key={shownSession.id} session={shownSession} send={core.send} />
+          ) : prefs.view === "worktrees" ? (
+            <WorktreesView
+              state={state}
+              send={core.send}
+              onOpenSession={openSession}
+              onNewSession={openNewSession}
+              onNewWorktree={() => setOverlay("newWorktree")}
+            />
           ) : (
             <div className="page">
               <div className="pagehead">
@@ -381,7 +407,10 @@ export function App({ core, pickFolder, actions }: AppProps) {
         </div>
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
         {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
-        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} />}
+        {overlay === "newSession" && (
+          <NewSession state={state} preset={newSessionPreset} onStart={startSession} onClose={closeOverlay} />
+        )}
+        {overlay === "newWorktree" && <NewWorktree state={state} send={core.send} onClose={closeOverlay} />}
       </div>
     </ActionsContext.Provider>
   );

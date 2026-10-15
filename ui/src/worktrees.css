@@ -1,0 +1,40 @@
+/* Worktrees view, New worktree modal and the New session "where" choice. Rules follow the
+   prototype's .wtg, .wtc, .sec, .choice and .row2. */
+.pagehead .sub{color:var(--fg-2);font-size:12px}
+.pagehead .right{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sec{display:flex;align-items:baseline;gap:10px;margin:18px 0 8px}
+.sec h2{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-2);font-weight:600}
+.sec .meta{color:var(--fg-2);font:11px var(--font-mono)}
+
+.wtg{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.wtc{background:var(--bg-1);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.wtc.free{border-style:dashed}
+.wtc .h{display:flex;align-items:center;gap:8px;min-width:0}
+.wtc .h .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-2);flex:none}
+.wtc .h .dot[class*="st-"]{background:var(--st)}
+.wtc .h .n{font:500 13px var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wtc .h .tag,.wtc .h .free-tag{color:var(--fg-2);font-size:11px;flex:none}
+.wtc .path{font:11px var(--font-mono);color:var(--fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wtc .row{display:flex;gap:12px;font:11px var(--font-mono);color:var(--fg-1);flex-wrap:wrap}
+.wtc .row b{color:var(--fg);font-weight:500}
+.wtc .row .behind{color:var(--warn)}
+.wtc .act{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px}
+.wtc .act.confirm span{font-size:12px;color:var(--fg-1);flex-basis:100%}
+.wtc .title{font-size:12px;color:var(--fg-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn.danger{color:var(--bad);border-color:var(--bad-soft)}
+.btn.danger:hover{background:var(--bad-soft)}
+
+.choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.choice legend{margin-bottom:5px}
+.choice label{position:relative;border:1px solid var(--line-2);border-radius:var(--radius);padding:9px 10px;display:flex;flex-direction:column;gap:2px;background:var(--bg);cursor:pointer}
+.choice label.on{border-color:var(--accent);background:var(--accent-soft)}
+.choice label input{position:absolute;opacity:0;pointer-events:none}
+.choice label:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.choice b{font-weight:500;color:var(--fg)}
+.choice small{color:var(--fg-2);font-size:11px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field input{background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:6px 8px;color:var(--fg)}
+@media (max-width:860px){
+  .choice,.row2{grid-template-columns:1fr}
+  .wtg{grid-template-columns:1fr}
+}
