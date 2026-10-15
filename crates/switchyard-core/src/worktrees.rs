@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use switchyard_schema::{AgentKind, Event, PermissionMode, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
-use crate::{git, sessions, Inner};
+use crate::{git, repo_policy, sessions, Inner};
 
 /// Create a worktree on a new `branch` from the repository's base; announce it and its
 /// facts. Returns it, or refuses `command` with the reason.
@@ -32,7 +32,17 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
         inner.refuse(command, format!("Branch {branch} already exists; pick another name or use its worktree"));
         return None;
     }
-    let parent = inner.runtime.worktree_root.join(repository_folder(dir));
+    // The repository's policy may name its own root (for tooling that assumes worktrees
+    // sit next to or inside the checkout); otherwise one folder per repository under ours.
+    let parent = match repo_policy::load(dir) {
+        Ok(policy) => policy
+            .worktree_root(dir)
+            .unwrap_or_else(|| inner.runtime.worktree_root.join(repository_folder(dir))),
+        Err(reason) => {
+            inner.refuse(command, format!("Could not create the worktree: {reason}"));
+            return None;
+        }
+    };
     let target = free_path(&parent, &slug(branch));
     let primary = match git::worktrees(dir) {
         Ok(list) if !list.is_empty() => list.into_iter().next().expect("not empty"),

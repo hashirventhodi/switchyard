@@ -8,6 +8,7 @@
 
 pub mod agents;
 mod git;
+mod repo_policy;
 mod sessions;
 pub mod sidecar;
 mod store;

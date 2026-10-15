@@ -78,6 +78,68 @@ fn two_clones_with_the_same_folder_name_get_distinct_worktree_directories() {
     assert!(git_worktree_paths(&second.path).contains(&PathBuf::from(&in_b.path)));
 }
 
+#[test]
+fn a_repository_policy_can_name_its_own_worktree_root() {
+    let repo = TempRepo::new("acme");
+    std::fs::create_dir(repo.path.join(".switchyard")).unwrap();
+    std::fs::write(
+        repo.path.join(".switchyard/policy.yml"),
+        "# Our tooling expects worktrees next to the checkout.\nworktrees:\n  root: ../acme-trees\n",
+    )
+    .unwrap();
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    let worktree = added_worktree(&create(&mut core, &repository.id, "feat/login"));
+
+    let expected = repo.path.parent().unwrap().join("acme-trees/feat-login");
+    assert_eq!(PathBuf::from(&worktree.path), expected);
+    assert!(git_worktree_paths(&repo.path).contains(&expected));
+}
+
+#[test]
+fn an_unreadable_policy_file_refuses_creation_with_the_reason() {
+    let repo = TempRepo::new("acme");
+    std::fs::create_dir(repo.path.join(".switchyard")).unwrap();
+    std::fs::write(repo.path.join(".switchyard/policy.yml"), "worktrees: [not, a, map\n").unwrap();
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    let reason = refused(&create(&mut core, &repository.id, "feat/login"));
+
+    assert!(reason.contains("policy.yml"), "{reason}");
+    assert_eq!(git_worktree_paths(&repo.path), vec![repo.path.clone()]);
+}
+
+#[test]
+fn a_worktree_added_by_hand_appears_after_relaunch_at_its_own_path() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+    let ours = added_worktree(&create(&mut core, &repository.id, "feat/login"));
+
+    // While the app is closed, the user adds a worktree with git directly.
+    let by_hand = repo.add_worktree("spike/cache");
+    let mut core = core.relaunch();
+    let events = core.send(Command::Attach);
+
+    let mut listed: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::WorktreeAdded { worktree, .. } => Some(PathBuf::from(&worktree.path)),
+            _ => None,
+        })
+        .collect();
+    listed.sort();
+    let mut expected = vec![repo.path.clone(), PathBuf::from(&ours.path), by_hand.clone()];
+    expected.sort();
+    assert_eq!(listed, expected);
+    assert!(!by_hand.starts_with(core.worktree_root()), "adopted in place, not moved");
+    assert!(by_hand.join("README").is_file());
+    let refreshed = core.send(Command::RefreshWorktrees);
+    assert_eq!(facts_of(&refreshed, &by_hand), WorktreeFacts::default());
+}
+
 fn facts_of(events: &[Event], path: &Path) -> WorktreeFacts {
     let found: Vec<_> = events
         .iter()
