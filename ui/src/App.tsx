@@ -11,6 +11,7 @@ import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from ".
 import { Palette, ShortcutsHelp } from "./Overlays";
 import { NewSession } from "./NewSession";
 import { SessionView } from "./SessionView";
+import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
 import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
@@ -325,6 +326,11 @@ export function App({ core, pickFolder, actions }: AppProps) {
               <div className="pagehead">
                 <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
               </div>
+              {prefs.view === "dashboard" && (
+                <div className="kpis">
+                  <SpendToday sessions={sessions} variant="kpi" />
+                </div>
+              )}
               <p className="empty">
                 {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
               </p>
@@ -364,7 +370,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
-            <span className="i">$0.00 today</span>
+            <SpendToday sessions={sessions} variant="status" />
           </div>
         </footer>
 

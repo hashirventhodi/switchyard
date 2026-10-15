@@ -1,0 +1,7 @@
+{"echo":{"type":"session_init","external_session_id":"echo-sess-2","permission_mode":"auto_edit","cli_permission_mode":"auto","cli":{"name":"echo-cli","version":"1.0.0"},"model":"echo-model-1-20261001"}}
+{"echo":{"type":"agent_text","text":"Reading the module."}}
+{"echo":{"type":"token_usage","input_tokens":100000,"output_tokens":20000,"cache_read_tokens":400000,"cost_usd":null}}
+{"echo":{"type":"agent_text","text":"Renamed the helper."}}
+{"echo":{"type":"token_usage","input_tokens":300000,"output_tokens":50000,"cache_read_tokens":1000000,"cost_usd":null}}
+{"echo":{"type":"turn_complete"}}
+{"echo":{"type":"done","summary":"Renamed."}}
