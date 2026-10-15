@@ -226,6 +226,11 @@ pub(crate) fn occupant(inner: &Inner, path: &str) -> Option<SessionStatus> {
     inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.status)
 }
 
+/// The id of the session occupying the worktree at `path`, if any.
+pub(crate) fn occupant_id(inner: &Inner, path: &str) -> Option<String> {
+    inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.id.clone())
+}
+
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
 pub(crate) fn replay(inner: &Inner) {
     let table = PriceTable::read(&inner.data_dir);

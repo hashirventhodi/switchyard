@@ -102,7 +102,14 @@ fn start_hunk(b: &mut Building, line: &str) {
     b.old_left = ol;
     b.new_left = nl;
     b.hunk_start = format!("-{old}");
-    b.hunks.push(Hunk { id: String::new(), header: line.to_string(), lines: Vec::new() });
+    b.hunks.push(Hunk {
+        id: String::new(),
+        header: line.to_string(),
+        lines: Vec::new(),
+        decision: None,
+        comment: None,
+        sent: false,
+    });
 }
 
 fn hunk_line(b: &mut Building, line: &str) {
