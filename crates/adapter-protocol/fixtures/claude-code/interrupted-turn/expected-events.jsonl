@@ -1,0 +1,6 @@
+{"type":"session_init","external_session_id":"5b0c2d1e-7a44-4c55-9a1f-2f0e3c9d8b10","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":"claude-opus-5-5"}
+{"type":"agent_text","text":"Running the full test suite."}
+{"type":"tool_call_started","call_id":"toolu_01","tool":"Bash","input":{"command":"pnpm test","description":"Run tests"}}
+{"type":"tool_call_finished","call_id":"toolu_01","ok":false,"output":"Error: interrupted by user"}
+{"type":"token_usage","input_tokens":8,"output_tokens":40,"cache_read_tokens":11800,"cost_usd":0.0103}
+{"type":"turn_complete"}

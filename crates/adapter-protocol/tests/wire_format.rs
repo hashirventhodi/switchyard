@@ -30,7 +30,8 @@ fn session_init_reports_actual_mode_external_id_and_cli_version() {
             "external_session_id": "sess-1",
             "permission_mode": "ask_first",
             "cli_permission_mode": "manual",
-            "cli": { "name": "claude-code", "version": "2.1.300" }
+            "cli": { "name": "claude-code", "version": "2.1.300" },
+            "model": "claude-opus-5-5"
         }),
         Event::SessionInit {
             external_session_id: "sess-1".into(),
@@ -40,8 +41,22 @@ fn session_init_reports_actual_mode_external_id_and_cli_version() {
                 name: "claude-code".into(),
                 version: "2.1.300".into(),
             },
+            model: Some("claude-opus-5-5".into()),
         },
     );
+}
+
+#[test]
+fn session_init_model_may_be_omitted_on_input() {
+    let event: Event = serde_json::from_value(json!({
+        "type": "session_init",
+        "external_session_id": "sess-1",
+        "permission_mode": "ask_first",
+        "cli_permission_mode": "manual",
+        "cli": { "name": "echo-cli", "version": "1.0.0" }
+    }))
+    .unwrap();
+    assert!(matches!(event, Event::SessionInit { model: None, .. }), "{event:?}");
 }
 
 #[test]

@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"send_text","text":"Fix the broken link in the README."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Fix the broken link in the README."},"parent_tool_use_id":null}}]}
+{"after_input":11,"command":{"type":"send_text","text":"Also check the CHANGELOG."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Also check the CHANGELOG."},"parent_tool_use_id":null}}]}

@@ -23,6 +23,9 @@ pub enum Event {
         permission_mode: PermissionMode,
         cli_permission_mode: String,
         cli: CliInfo,
+        /// The model the CLI is using, when it says.
+        #[serde(default)]
+        model: Option<String>,
     },
     AgentText {
         text: String,

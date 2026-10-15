@@ -20,7 +20,7 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 
 | `type` | Fields |
 | --- | --- |
-| `session_init` | `external_session_id`, `permission_mode` (the mode the CLI actually started in: `explore` / `ask_first` / `auto_edit` / `full_auto` / `bypass`), `cli_permission_mode` (the CLI's own name for it), `cli: {name, version}` |
+| `session_init` | `external_session_id`, `permission_mode` (the mode the CLI actually started in: `explore` / `ask_first` / `auto_edit` / `full_auto` / `bypass`), `cli_permission_mode` (the CLI's own name for it), `cli: {name, version}`, `model` (when the CLI says) |
 | `agent_text` | `text` |
 | `tool_call_started` | `call_id`, `tool`, `input` (any JSON) |
 | `tool_call_finished` | `call_id`, `ok`, `output` |
