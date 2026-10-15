@@ -1,14 +1,24 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import {
+  ActionsContext,
+  createActionRegistry,
+  useHandler,
+  usePaletteSourceIn,
+  type ActionRegistry,
+  type PaletteItem,
+} from "./actions";
+import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from "./keymap";
+import { Palette, ShortcutsHelp } from "./Overlays";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, type RepositoryView, type State } from "./state";
 import type { Event } from "./schema/Event";
 
 type View = "dashboard" | "session" | "worktrees" | "tasks";
-const VIEWS: [View, string][] = [
-  ["dashboard", "Dashboard"],
-  ["session", "Session"],
-  ["worktrees", "Worktrees"],
-  ["tasks", "Tasks"],
+const VIEWS: [View, string, ActionId][] = [
+  ["dashboard", "Dashboard", "view.dashboard"],
+  ["session", "Session", "view.session"],
+  ["worktrees", "Worktrees", "view.worktrees"],
+  ["tasks", "Tasks", "view.tasks"],
 ];
 
 const TOAST_MS = 4000;
@@ -43,18 +53,19 @@ function savePrefs(prefs: Prefs) {
   }
 }
 
-function inTextField(target: EventTarget | null) {
-  const el = target as HTMLElement | null;
-  return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
-}
-
 export interface AppProps {
   core: CoreConnection;
   /** Native folder picker; resolves to null when cancelled. */
   pickFolder: () => Promise<string | null>;
+  /** Where shortcut and palette handlers are registered; tests pass one to observe actions. */
+  actions?: ActionRegistry;
 }
 
-export function App({ core, pickFolder }: AppProps) {
+type Overlay = "palette" | "help" | null;
+
+export function App({ core, pickFolder, actions }: AppProps) {
+  const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
+  const [overlay, setOverlay] = useState<Overlay>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [prefs, setPrefs] = useState(loadPrefs);
   const [sidebarOpen, setSidebarOpen] = useState(false); // overlay below 860 px
@@ -98,27 +109,74 @@ export function App({ core, pickFolder }: AppProps) {
     updatePrefs({ theme: dark ? "light" : "dark" });
   }, [prefs.theme, updatePrefs]);
 
+  const toggleDock = useCallback(
+    () => updatePrefs({ dockCollapsed: !prefs.dockCollapsed }),
+    [prefs.dockCollapsed, updatePrefs],
+  );
+
+  useHandler(registry, "palette.toggle", () => setOverlay((o) => (o === "palette" ? null : "palette")));
+  useHandler(registry, "help.open", () => setOverlay("help"));
+  useHandler(registry, "sidebar.toggle", toggleSidebar);
+  useHandler(registry, "dock.toggle", toggleDock);
+  useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
+  useHandler(registry, "view.session", () => updatePrefs({ view: "session" }));
+  useHandler(registry, "view.worktrees", () => updatePrefs({ view: "worktrees" }));
+  useHandler(registry, "view.tasks", () => updatePrefs({ view: "tasks" }));
+  // Esc is layered: close an overlay, else cancel an inline confirm, else interrupt the agent.
+  useHandler(registry, "escape", () => {
+    if (overlay) return setOverlay(null);
+    if (sidebarOpen) return setSidebarOpen(false);
+    return registry.run("confirm.cancel") || registry.run("session.interrupt");
+  });
+
+  usePaletteSourceIn(registry, () => {
+    const items: PaletteItem[] = [];
+    for (const r of state.repositories)
+      for (const w of r.worktrees) {
+        const branch = w.branch ?? "(detached)";
+        items.push({
+          id: w.path,
+          group: "Worktrees",
+          title: `${r.name}/${branch}`,
+          keywords: [branch],
+          detail: w.primary ? "primary" : "free",
+          run: () => updatePrefs({ view: "worktrees" }),
+        });
+      }
+    for (const [view, label, action] of VIEWS)
+      items.push({ id: view, group: "Views", title: label, keys: keysLabel(action), run: () => updatePrefs({ view }) });
+    for (const binding of BINDINGS)
+      if (binding.title && registry.has(binding.action))
+        items.push({
+          id: binding.action,
+          group: "Actions",
+          title: binding.title,
+          keys: keysLabel(binding.action),
+          run: () => registry.run(binding.action),
+        });
+    items.push({ id: "theme", group: "Actions", title: "Toggle theme", run: toggleTheme });
+    items.push({ id: "addRepository", group: "Actions", title: "Add repository", run: addRepository });
+    return items;
+  });
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        toggleSidebar();
-        return;
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey || inTextField(e.target)) return;
-      if (e.key === "`") updatePrefs({ dockCollapsed: !prefs.dockCollapsed });
-      const n = Number(e.key);
-      if (n >= 1 && n <= VIEWS.length) updatePrefs({ view: VIEWS[n - 1][0] });
-      if (e.key === "Escape") setSidebarOpen(false);
+      const binding = BINDINGS.find((b) => matchesChord(e, b.chord));
+      if (!binding || binding.scope === "composer" || binding.scope === "terminal") return;
+      // Single keys never fire while typing or under an overlay.
+      if (binding.scope === "outsideText" && (inTextField(e.target) || overlay)) return;
+      if (binding.scope === "global" && binding.action !== "escape") e.preventDefault();
+      if (registry.run(binding.action) && binding.action === "escape") e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prefs.dockCollapsed, toggleSidebar, updatePrefs]);
+  }, [registry, overlay]);
 
   const addRepository = async () => {
     const path = await pickFolder();
     if (path) core.send({ type: "addRepository", path });
   };
+  const closeOverlay = () => setOverlay(null);
 
   const worktreeCount = state.repositories.reduce((n, r) => n + r.worktrees.length, 0);
   const appClass = [
@@ -128,124 +186,147 @@ export function App({ core, pickFolder }: AppProps) {
   ].join(" ");
 
   return (
-    <div className={appClass}>
-      <header className="topbar">
-        <button className="iconbtn" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar" onClick={toggleSidebar}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
-            <path d="M6 2.5v11" />
-          </svg>
-        </button>
-        <div className="brand">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-            <path d="M3 15h5c3 0 4-2 5-4s2-4 5-4h-1" />
-            <path d="M3 7h5c3 0 4 2 5 4s2 4 5 4h-1" />
-            <circle cx="3" cy="7" r="1.3" fill="currentColor" stroke="none" />
-            <circle cx="3" cy="15" r="1.3" fill="currentColor" stroke="none" />
-          </svg>
-          <span className="lbl">Switchyard</span>
-        </div>
-        <nav className="views" aria-label="Views">
-          {VIEWS.map(([view, label], i) => (
-            <button
-              key={view}
-              className={`tab ${prefs.view === view ? "active" : ""}`}
-              title={`${label} (${i + 1})`}
-              aria-label={label}
-              aria-current={prefs.view === view ? "page" : undefined}
-              onClick={() => updatePrefs({ view })}
-            >
-              <ViewIcon view={view} />
-              <span className="lbl">{label}</span>
-              {view === "worktrees" && worktreeCount > 0 && <span className="n">{worktreeCount}</span>}
-            </button>
-          ))}
-        </nav>
-        <div className="spacer" />
-        <button className="iconbtn" title="Toggle theme" aria-label="Toggle theme" onClick={toggleTheme}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="8" cy="8" r="5.5" />
-            <path d="M8 2.5v11a5.5 5.5 0 000-11z" fill="currentColor" stroke="none" />
-          </svg>
-        </button>
-        <button className="btn primary" disabled title="Arrives with sessions">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M8 3v10M3 8h10" />
-          </svg>
-          <span className="lbl">New session</span>
-        </button>
-      </header>
-
-      <aside className="sidebar" aria-label="Repositories">
-        <div className="sidebar-head">
-          <h2>Repositories</h2>
-          <span className="spacer" />
-          <button className="btn ghost sm" title="Open a repository" onClick={addRepository}>
-            + Repo
+    <ActionsContext.Provider value={registry}>
+      <div className={appClass}>
+        <header className="topbar">
+          <button className="iconbtn" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar" onClick={toggleSidebar}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+              <path d="M6 2.5v11" />
+            </svg>
           </button>
-        </div>
-        <div className="sidebar-list">
-          {state.repositories.length === 0 ? (
-            <p className="empty">No repositories yet. Add one with + Repo.</p>
-          ) : (
-            state.repositories.map((r) => <RepositoryGroup key={r.id} repository={r} />)
-          )}
-        </div>
-        <div className="sidebar-foot">
-          <span>
-            {state.repositories.length} repos · {worktreeCount} worktrees
+          <div className="brand">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M3 15h5c3 0 4-2 5-4s2-4 5-4h-1" />
+              <path d="M3 7h5c3 0 4 2 5 4s2 4 5 4h-1" />
+              <circle cx="3" cy="7" r="1.3" fill="currentColor" stroke="none" />
+              <circle cx="3" cy="15" r="1.3" fill="currentColor" stroke="none" />
+            </svg>
+            <span className="lbl">Switchyard</span>
+          </div>
+          <nav className="views" aria-label="Views">
+            {VIEWS.map(([view, label, action]) => (
+              <button
+                key={view}
+                className={`tab ${prefs.view === view ? "active" : ""}`}
+                title={`${label} (${keysLabel(action)})`}
+                aria-label={label}
+                aria-current={prefs.view === view ? "page" : undefined}
+                onClick={() => updatePrefs({ view })}
+              >
+                <ViewIcon view={view} />
+                <span className="lbl">{label}</span>
+                {view === "worktrees" && worktreeCount > 0 && <span className="n">{worktreeCount}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="spacer" />
+          <button className="palette-btn" aria-label="Command palette" onClick={() => registry.run("palette.toggle")}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="M10.5 10.5L14 14" />
+            </svg>
+            <span className="q">Jump to session, worktree, task…</span>
+            <kbd>{keysLabel("palette.toggle")}</kbd>
+          </button>
+          <button
+            className="iconbtn"
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+            onClick={() => registry.run("help.open")}
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="6.5" />
+              <path d="M6 6.5a2 2 0 113 1.7c-.7.4-1 .8-1 1.5M8 12h.01" />
+            </svg>
+          </button>
+          <button className="iconbtn" title="Toggle theme" aria-label="Toggle theme" onClick={toggleTheme}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="5.5" />
+              <path d="M8 2.5v11a5.5 5.5 0 000-11z" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+          <button className="btn primary" disabled title="Arrives with sessions">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+            <span className="lbl">New session</span>
+          </button>
+        </header>
+
+        <aside className="sidebar" aria-label="Repositories">
+          <div className="sidebar-head">
+            <h2>Repositories</h2>
+            <span className="spacer" />
+            <button className="btn ghost sm" title="Open a repository" onClick={addRepository}>
+              + Repo
+            </button>
+          </div>
+          <div className="sidebar-list">
+            {state.repositories.length === 0 ? (
+              <p className="empty">No repositories yet. Add one with + Repo.</p>
+            ) : (
+              state.repositories.map((r) => <RepositoryGroup key={r.id} repository={r} />)
+            )}
+          </div>
+          <div className="sidebar-foot">
+            <span>
+              {state.repositories.length} repos · {worktreeCount} worktrees
+            </span>
+            <span>Local</span>
+          </div>
+        </aside>
+        {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
+
+        <main className="stage">
+          <div className="page">
+            <div className="pagehead">
+              <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
+            </div>
+            <p className="empty">Nothing here yet.</p>
+          </div>
+        </main>
+
+        <section className={`dock ${prefs.dockCollapsed ? "collapsed" : ""}`} aria-label="Terminals">
+          <div className="dock-head">
+            <div className="tabs" />
+            <button className="btn ghost sm" onClick={toggleDock}>
+              {prefs.dockCollapsed ? "Show" : "Hide"} <kbd>`</kbd>
+            </button>
+          </div>
+          <div className="term">
+            <p className="empty">No terminals open.</p>
+          </div>
+        </section>
+
+        <footer className="statusbar">
+          <span className="i">
+            <i className="dot running" />0 running
           </span>
-          <span>Local</span>
-        </div>
-      </aside>
-      {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
-
-      <main className="stage">
-        <div className="page">
-          <div className="pagehead">
-            <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
+          <span className="i">
+            <i className="dot waiting" />0 waiting
+          </span>
+          <div className="r">
+            <span className="i hide-sm">{state.repositories.length} repos</span>
+            <span className="i">$0.00 today</span>
           </div>
-          <p className="empty">Nothing here yet.</p>
-        </div>
-      </main>
+        </footer>
 
-      <section className={`dock ${prefs.dockCollapsed ? "collapsed" : ""}`} aria-label="Terminals">
-        <div className="dock-head">
-          <div className="tabs" />
-          <button className="btn ghost sm" onClick={() => updatePrefs({ dockCollapsed: !prefs.dockCollapsed })}>
-            {prefs.dockCollapsed ? "Show" : "Hide"} <kbd>`</kbd>
-          </button>
+        <div className="toasts" role="status" aria-live="polite">
+          {state.toasts.map((t) => (
+            <div key={t.id} className={`toast ${t.tone}`}>
+              <i />
+              <span className="tx">{t.text}</span>
+              <button className="x" aria-label="Dismiss" onClick={() => dispatch({ kind: "dismiss", id: t.id })}>
+                ×
+              </button>
+            </div>
+          ))}
         </div>
-        <div className="term">
-          <p className="empty">No terminals open.</p>
-        </div>
-      </section>
-
-      <footer className="statusbar">
-        <span className="i">
-          <i className="dot running" />0 running
-        </span>
-        <span className="i">
-          <i className="dot waiting" />0 waiting
-        </span>
-        <div className="r">
-          <span className="i hide-sm">{state.repositories.length} repos</span>
-          <span className="i">$0.00 today</span>
-        </div>
-      </footer>
-
-      <div className="toasts" role="status" aria-live="polite">
-        {state.toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.tone}`}>
-            <i />
-            <span className="tx">{t.text}</span>
-            <button className="x" aria-label="Dismiss" onClick={() => dispatch({ kind: "dismiss", id: t.id })}>
-              ×
-            </button>
-          </div>
-        ))}
+        {overlay === "palette" && <Palette onClose={closeOverlay} />}
+        {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
       </div>
-    </div>
+    </ActionsContext.Provider>
   );
 }
 
