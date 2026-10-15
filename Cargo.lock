@@ -357,6 +357,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-adapter"
+version = "0.1.0"
+dependencies = [
+ "adapter-protocol",
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3172,6 +3182,7 @@ name = "switchyard-core"
 version = "0.1.0"
 dependencies = [
  "adapter-protocol",
+ "codex-adapter",
  "flate2",
  "portable-pty",
  "rusqlite",

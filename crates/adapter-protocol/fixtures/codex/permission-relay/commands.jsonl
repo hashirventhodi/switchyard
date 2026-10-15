@@ -1,0 +1,7 @@
+{"after_input":0,"command":{"type":"send_text","text":"Run the tests, then fix what fails."},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
+{"after_input":11,"command":{"type":"answer_request","request_id":"0","verdict":{"decision":"allow_once"}},"expect_responses":[{"id":0,"result":{"decision":"accept"}}]}
+{"after_input":15,"command":{"type":"answer_request","request_id":"1","verdict":{"decision":"deny","message":"No network, please."}},"expect_responses":[{"id":1,"result":{"decision":"decline"}}]}
+{"after_input":18,"command":{"type":"answer_request","request_id":"2","verdict":{"decision":"allow_once"}},"expect_responses":[{"id":2,"result":{"decision":"accept"}}]}
+{"after_input":20,"command":{"type":"answer_request","request_id":"3","verdict":{"decision":"answer","text":"Ignore it"}},"expect_responses":[{"id":3,"result":{"answers":{"q-dist":{"answers":["Ignore it"]}}}}]}
+{"after_input":21,"command":{"type":"answer_request","request_id":"4","verdict":{"decision":"deny","message":null}},"expect_responses":[{"id":4,"result":{"action":"decline","content":null,"_meta":null}}]}
+{"after_input":21,"command":{"type":"answer_request","request_id":"0","verdict":{"decision":"allow_once"}},"expect_responses":[]}

@@ -69,18 +69,37 @@ fn session_init_carries_each_mcp_servers_state() {
             external_session_id: "sess-1".into(),
             permission_mode: PermissionMode::AskFirst,
             cli_permission_mode: "default".into(),
-            cli: CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
+            cli: CliInfo {
+                name: "claude-code".into(),
+                version: "2.1.300".into(),
+            },
             model: None,
             mcp_servers: vec![
-                McpServerStatus { name: "docs".into(), state: McpServerState::Connected, error: None },
+                McpServerStatus {
+                    name: "docs".into(),
+                    state: McpServerState::Connected,
+                    error: None,
+                },
                 McpServerStatus {
                     name: "github".into(),
                     state: McpServerState::Failed,
                     error: Some("spawn npx ENOENT".into()),
                 },
-                McpServerStatus { name: "linear".into(), state: McpServerState::NeedsAuth, error: None },
-                McpServerStatus { name: "slow".into(), state: McpServerState::Pending, error: None },
-                McpServerStatus { name: "off".into(), state: McpServerState::Disabled, error: None },
+                McpServerStatus {
+                    name: "linear".into(),
+                    state: McpServerState::NeedsAuth,
+                    error: None,
+                },
+                McpServerStatus {
+                    name: "slow".into(),
+                    state: McpServerState::Pending,
+                    error: None,
+                },
+                McpServerStatus {
+                    name: "off".into(),
+                    state: McpServerState::Disabled,
+                    error: None,
+                },
             ],
         },
     );
@@ -91,7 +110,11 @@ fn mcp_status_reports_servers_whose_state_changed() {
     round_trip_event(
         json!({ "type": "mcp_status", "servers": [{ "name": "slow", "state": "connected", "error": null }] }),
         Event::McpStatus {
-            servers: vec![McpServerStatus { name: "slow".into(), state: McpServerState::Connected, error: None }],
+            servers: vec![McpServerStatus {
+                name: "slow".into(),
+                state: McpServerState::Connected,
+                error: None,
+            }],
         },
     );
 }
@@ -106,7 +129,10 @@ fn session_init_model_may_be_omitted_on_input() {
         "cli": { "name": "echo-cli", "version": "1.0.0" }
     }))
     .unwrap();
-    assert!(matches!(event, Event::SessionInit { model: None, .. }), "{event:?}");
+    assert!(
+        matches!(event, Event::SessionInit { model: None, .. }),
+        "{event:?}"
+    );
 }
 
 #[test]

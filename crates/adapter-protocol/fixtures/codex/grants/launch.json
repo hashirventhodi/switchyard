@@ -1,0 +1,48 @@
+{
+  "cwd": "/wt/acme/feat-billing",
+  "permission_mode": "ask_first",
+  "config": {
+    "mcp_servers.docs.command": "npx",
+    "mcp_servers.docs.args": [
+      "-y",
+      "@acme/docs-mcp"
+    ],
+    "mcp_servers.linear.url": "https://mcp.linear.app/mcp"
+  },
+  "mcp_servers": [
+    "docs",
+    "linear"
+  ],
+  "mcp_rules": [
+    {
+      "server": "linear",
+      "tool": "list_issues",
+      "allow": true
+    },
+    {
+      "server": "linear",
+      "tool": "delete_issue",
+      "allow": false
+    },
+    {
+      "server": "linear",
+      "tool": "archive_issue",
+      "allow": false
+    },
+    {
+      "server": "docs",
+      "tool": "*",
+      "allow": true
+    },
+    {
+      "server": "github",
+      "tool": "*",
+      "allow": true
+    },
+    {
+      "server": "slack",
+      "tool": "post_message",
+      "allow": true
+    }
+  ]
+}

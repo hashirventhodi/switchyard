@@ -63,8 +63,12 @@ pub trait Adapter {
     fn manifest(&self) -> AdapterManifest;
     fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError>;
     fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError>;
+    /// Raw messages to write to the CLI on the adapter's own account (default: none).
+    fn replies(&mut self) -> Vec<String> { Vec::new() }
 }
 ```
+
+`replies` exists for JSON-RPC CLIs, where the adapter must answer the CLI rather than the host: send `initialized` and start a thread once `initialize` returns, start the queued turn once the thread exists, answer a server request it cannot handle with an error. Hosts call it after every `ingest` and write what it returns, in order.
 
 An adapter is a translator and never touches a process. The host feeds it the CLI's raw output one message at a time (for JSON-lines and JSON-RPC CLIs, one line) and writes the raw messages it returns back to the CLI. That keeps adapters deterministic under recordings, and lets an out-of-process adapter (a Node sidecar, a bridge to `codex app-server`) implement the trait over its own transport.
 
@@ -82,6 +86,7 @@ fixtures/
       input.jsonl
       expected-events.jsonl
       commands.jsonl        (optional)
+      writes.jsonl          (optional)
 ```
 
 ### `meta.json`
@@ -116,6 +121,16 @@ Commands the host sends during the run, each with the exact raw messages the CLI
 - `after_input`: send the command once this many lines of `input.jsonl` have been ingested (`0` means before the first line; at most the number of input lines, meaning after the last). Lines must be in non-decreasing `after_input` order; commands with the same value are sent in file order.
 - `command`: a protocol command.
 - `expect_responses`: the raw messages the adapter must return, in order. A raw message that parses as JSON is compared as JSON; anything else is compared as a JSON string. `[]` asserts the adapter writes nothing.
+
+### `writes.jsonl`: what the adapter writes on its own
+
+Every raw message the adapter returns from `replies`, in order, each with the input line whose ingestion produced it (1-based). A missing file means the adapter must write nothing on its own.
+
+```json
+{"after_input": 1, "message": {"method": "initialized"}}
+```
+
+Fixtures may carry other files the adapter's own test reads (the Codex adapter's `launch.json`: the working directory, permission mode and config it is started with).
 
 ## Running the conformance suite
 

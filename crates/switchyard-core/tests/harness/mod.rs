@@ -11,8 +11,8 @@
 //! recorded fixture's expected events, so core tests run on recorded sessions.
 //!
 //! Agent detection is fake too: `harness.probe` answers for the installed CLI's
-//! `--version` and the adapter's manifest (Claude Code 2.1.300, protocol `^0.1` unless a
-//! test changes them). `compat_log()` reads the compat log the core wrote on disk.
+//! `--version` and the adapter's manifest (Claude Code 2.1.300 and Codex 0.144.1, protocol
+//! `^0.1` unless a test changes them). `compat_log()` reads the compat log the core wrote on disk.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -360,7 +360,8 @@ impl ProcessTable for FakeProcesses {
     }
 }
 
-/// Fake agent detection. Starts as an installed, supported Claude Code with a matching adapter.
+/// Fake agent detection. Starts as an installed, supported Claude Code and Codex, each with
+/// a matching adapter. `cli_prints`, `adapter_*` and `probes` are about Claude Code.
 #[derive(Clone)]
 pub struct FakeProbe {
     inner: Arc<Mutex<FakeProbeInner>>,
@@ -370,6 +371,7 @@ struct FakeProbeInner {
     cli: Result<Option<String>, String>,
     manifest: Result<AdapterManifest, String>,
     probes: usize,
+    codex: Option<String>,
 }
 
 impl Default for FakeProbe {
@@ -380,6 +382,7 @@ impl Default for FakeProbe {
                 cli: Ok(Some("2.1.300 (Claude Code)".into())),
                 manifest: Ok(manifest),
                 probes: 0,
+                codex: Some("codex-cli 0.144.1".into()),
             })),
         }
     }
@@ -402,21 +405,34 @@ impl FakeProbe {
         self.inner.lock().unwrap().manifest = Err(reason.into());
     }
 
-    /// How many times the CLI version was probed.
+    /// What `codex --version` prints from now on; `None`: not installed.
+    pub fn codex_prints(&self, output: Option<&str>) {
+        self.inner.lock().unwrap().codex = output.map(str::to_owned);
+    }
+
+    /// How many times the Claude Code CLI version was probed.
     pub fn probes(&self) -> usize {
         self.inner.lock().unwrap().probes
     }
 }
 
 impl AgentProbe for FakeProbe {
-    fn cli_version(&self, _: AgentKind) -> Result<Option<String>, String> {
+    fn cli_version(&self, agent: AgentKind) -> Result<Option<String>, String> {
         let mut inner = self.inner.lock().unwrap();
-        inner.probes += 1;
-        inner.cli.clone()
+        match agent {
+            AgentKind::ClaudeCode => {
+                inner.probes += 1;
+                inner.cli.clone()
+            }
+            AgentKind::Codex => Ok(inner.codex.clone()),
+        }
     }
 
-    fn adapter_manifest(&self, _: AgentKind) -> Result<AdapterManifest, String> {
-        self.inner.lock().unwrap().manifest.clone()
+    fn adapter_manifest(&self, agent: AgentKind) -> Result<AdapterManifest, String> {
+        match agent {
+            AgentKind::ClaudeCode => self.inner.lock().unwrap().manifest.clone(),
+            AgentKind::Codex => Ok(codex_adapter::manifest()),
+        }
     }
 }
 

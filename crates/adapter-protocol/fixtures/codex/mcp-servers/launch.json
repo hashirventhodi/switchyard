@@ -1,0 +1,17 @@
+{
+  "cwd": "/wt/acme/feat-billing",
+  "permission_mode": "ask_first",
+  "config": {
+    "mcp_servers.docs.command": "npx",
+    "mcp_servers.docs.args": [
+      "-y",
+      "@acme/docs-mcp"
+    ],
+    "mcp_servers.search.url": "https://search.example.com/mcp"
+  },
+  "mcp_servers": [
+    "docs",
+    "search"
+  ],
+  "mcp_rules": []
+}

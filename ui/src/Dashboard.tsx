@@ -6,7 +6,7 @@ import { wants } from "./requests";
 import type { SessionStatus } from "./schema/SessionStatus";
 import type { SessionView, State } from "./state";
 import { PrBadge } from "./PullRequest";
-import { AGENT_LABEL, ModeWarning, Status } from "./status";
+import { AgentChip, ModeWarning, Status } from "./status";
 
 const ATTENTION: Record<SessionStatus, number> = { waiting: 0, failed: 1, running: 2, idle: 3, done: 4 };
 
@@ -94,7 +94,7 @@ function SessionCard(props: { session: SessionView; state: State; onOpen: () => 
         <Status status={session.status} />
       </div>
       <div className="proj">
-        {repo?.name ?? ""} · {AGENT_LABEL[session.agent]}
+        {repo?.name ?? ""} · <AgentChip agent={session.agent} />
       </div>
       <PrBadge state={state} worktreePath={session.worktreePath} />
       {session.facts.modeWarning && <ModeWarning text={session.facts.modeWarning} />}

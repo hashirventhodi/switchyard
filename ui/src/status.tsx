@@ -11,8 +11,21 @@ export const STATUS_LABEL: Record<SessionStatus, string> = {
   failed: "Error",
 };
 
-export const AGENT_LABEL: Record<AgentKind, string> = { claudeCode: "Claude Code" };
-export const AGENT_SHORT: Record<AgentKind, string> = { claudeCode: "CC" };
+export const AGENT_LABEL: Record<AgentKind, string> = { claudeCode: "Claude Code", codex: "OpenAI Codex" };
+export const AGENT_SHORT: Record<AgentKind, string> = { claudeCode: "CC", codex: "CX" };
+/** Each agent's identity hue (prototype tokens `--ag-*`): avatars, chips, dock tabs. */
+export const AGENT_COLOR: Record<AgentKind, string> = { claudeCode: "var(--ag-claude)", codex: "var(--ag-codex)" };
+export const AGENTS: AgentKind[] = ["claudeCode", "codex"];
+
+/** The agent's name with a swatch of its hue (the prototype's agent chip). */
+export function AgentChip({ agent }: { agent: AgentKind }) {
+  return (
+    <span className="agent-chip" data-agent={agent}>
+      <i style={{ background: AGENT_COLOR[agent] }} />
+      {AGENT_LABEL[agent]}
+    </span>
+  );
+}
 
 export const MODE_LABEL: Record<PermissionMode, string> = {
   explore: "Explore",

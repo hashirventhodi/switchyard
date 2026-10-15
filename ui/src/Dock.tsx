@@ -9,7 +9,7 @@ import type { Entry } from "./schema/Entry";
 import type { Shell } from "./schema/Shell";
 import type { ShellStreams } from "./shellStreams";
 import type { SessionView, State } from "./state";
-import { AGENT_SHORT, Status } from "./status";
+import { AGENT_COLOR, AGENT_SHORT, Status } from "./status";
 import type { CreateTerminal } from "./terminal";
 import { VirtualList } from "./VirtualList";
 import "./dock.css";
@@ -71,7 +71,9 @@ export function Dock(props: DockProps) {
               title={`Agent log: ${s.branch ?? s.worktreePath}`}
               onClick={() => setActive(`log:${s.id}`)}
             >
-              <span className="av">{AGENT_SHORT[s.agent]}</span>
+              <span className="av" style={{ background: AGENT_COLOR[s.agent] }}>
+                {AGENT_SHORT[s.agent]}
+              </span>
               <span className="nm">{s.branch ?? s.worktreePath}</span>
               <Status status={s.status} variant="dot" />
             </button>

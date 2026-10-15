@@ -1,12 +1,15 @@
 //! The desktop shell. All behaviour lives in switchyard-core; this file only bridges the
 //! core's command/event stream onto Tauri IPC: one `dispatch` command in, every core event
-//! out on `core://event`. It also tells the core where the Claude Code sidecar lives, and
+//! out on `core://event`. It also tells the core where the Claude Code sidecar and the
+//! `codex` executable live, and
 //! opens the core's install and update links in the user's browser (`open_link`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 
+use switchyard_core::agents::ByAgent;
+use switchyard_core::codex::CodexLauncher;
 use switchyard_core::compat::SystemProbe;
 use switchyard_core::forge::GhForge;
 use switchyard_core::sidecar::SidecarLauncher;
@@ -48,6 +51,16 @@ fn sidecar(app: &App) -> SidecarLauncher {
     SidecarLauncher { node, script, claude: None }
 }
 
+/// `codex app-server`: `SWITCHYARD_CODEX`, else the first `codex` in the probe's search
+/// directories (PATH plus the usual install places). `SWITCHYARD_RECORD_DIR` records raw
+/// JSON-RPC traffic for new conformance fixtures.
+fn codex(search_dirs: &[PathBuf]) -> CodexLauncher {
+    let codex = std::env::var_os("SWITCHYARD_CODEX").map(PathBuf::from).unwrap_or_else(|| {
+        search_dirs.iter().map(|d| d.join("codex")).find(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("codex"))
+    });
+    CodexLauncher { codex, record_dir: std::env::var_os("SWITCHYARD_RECORD_DIR").map(PathBuf::from) }
+}
+
 fn find_node() -> PathBuf {
     let path = std::env::var_os("PATH").unwrap_or_default();
     std::env::split_paths(&path)
@@ -64,13 +77,15 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             let (tx, rx) = mpsc::channel();
             let launcher = sidecar(app);
+            let search_dirs = SystemProbe::default_search_dirs();
+            let codex = codex(&search_dirs);
             let probe = SystemProbe {
-                search_dirs: SystemProbe::default_search_dirs(),
+                search_dirs,
                 node: launcher.node.clone(),
                 sidecar: launcher.script.clone(),
             };
             let runtime = Runtime {
-                agents: Arc::new(launcher),
+                agents: Arc::new(ByAgent { claude_code: Arc::new(launcher), codex: Arc::new(codex) }),
                 now_ms: system_now_ms,
                 probe: Arc::new(probe),
                 worktree_root: default_worktree_root(),

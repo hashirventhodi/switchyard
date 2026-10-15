@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"resume","external_session_id":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a06"},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
+{"after_input":0,"command":{"type":"send_text","text":"Continue where you left off."},"expect_responses":[]}

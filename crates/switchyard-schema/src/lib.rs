@@ -925,6 +925,8 @@ pub struct Worktree {
 #[ts(export)]
 pub enum AgentKind {
     ClaudeCode,
+    /// OpenAI Codex, driven through `codex app-server`.
+    Codex,
 }
 
 /// How much a Session asks before acting. Explore is read-only and the only mode allowed

@@ -2,11 +2,12 @@
 // free one), permission mode, initial prompt.
 import { useEffect, useState } from "react";
 import { slugBranch, type BranchKind } from "./branch";
+import type { AgentKind } from "./schema/AgentKind";
 import type { Command } from "./schema/Command";
 import type { PermissionMode } from "./schema/PermissionMode";
 import { sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
-import { MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
+import { AGENT_LABEL, AGENTS, MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
 
 // Explore is the only mode allowed on a primary worktree (ADR-0005).
 const MODES: PermissionMode[] = ["askFirst", "autoEdit", "fullAuto", "explore"];
@@ -39,7 +40,8 @@ export function NewSession(props: {
   const { state, preset = {}, onStart, send, onClose, openLink } = props;
   // An agent whose CLI is missing or outside this build's range cannot start (the core
   // refuses too); say why here, before the first session, not mid-session.
-  const blocked = agentProblem(state.agents, "claudeCode");
+  const [agent, setAgent] = useState<AgentKind>("claudeCode");
+  const blocked = agentProblem(state.agents, agent);
   const [mode, setMode] = useState<PermissionMode>(preset.mode ?? "askFirst");
   // Until the user (or the preset) picks one, the mode follows the repository's default.
   const [modeTouched, setModeTouched] = useState(preset.mode !== undefined);
@@ -90,7 +92,6 @@ export function NewSession(props: {
 
   const start = () => {
     if (!canStart) return;
-    const agent = "claudeCode";
     onStart(
       where === "new"
         ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, prompt }
@@ -122,8 +123,12 @@ export function NewSession(props: {
         <div className="modal-b">
           <label className="field">
             <span>Agent</span>
-            <select aria-label="Agent" value="claudeCode" onChange={() => {}}>
-              <option value="claudeCode">Claude Code</option>
+            <select aria-label="Agent" value={agent} onChange={(e) => setAgent(e.target.value as AgentKind)}>
+              {AGENTS.map((a) => (
+                <option key={a} value={a}>
+                  {AGENT_LABEL[a]}
+                </option>
+              ))}
             </select>
           </label>
           {blocked && (

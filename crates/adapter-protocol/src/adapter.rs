@@ -28,6 +28,16 @@ pub trait Adapter {
 
     /// One protocol command in; zero or more raw messages for the CLI out.
     fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError>;
+
+    /// Raw messages the adapter must write to the CLI on its own, in reply to what it
+    /// ingested rather than to a host command: a JSON-RPC CLI's handshake and follow-up
+    /// requests (start a thread once initialised, start a turn once the thread exists),
+    /// or an error answer to a server request the adapter cannot handle. Hosts call it
+    /// after every `ingest` and write what it returns, in order. Most adapters write
+    /// nothing on their own.
+    fn replies(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

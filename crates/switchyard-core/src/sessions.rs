@@ -742,6 +742,7 @@ pub(crate) fn status_label(status: SessionStatus) -> &'static str {
 fn agent_name(agent: AgentKind) -> &'static str {
     match agent {
         AgentKind::ClaudeCode => "Claude Code",
+        AgentKind::Codex => "Codex",
     }
 }
 
@@ -749,7 +750,10 @@ fn agent_name(agent: AgentKind) -> &'static str {
 fn summarise(tool: &str, input: &Value) -> String {
     let field = |name: &str| input.get(name).and_then(Value::as_str).map(str::to_owned);
     let summary = match tool {
-        "Bash" => field("command"),
+        "Bash" | "Shell" => field("command"),
+        "ApplyPatch" => input.get("paths").and_then(Value::as_array).map(|paths| {
+            paths.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")
+        }),
         "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => field("file_path").or_else(|| field("notebook_path")),
         "Grep" | "Glob" => field("pattern").map(|p| match field("path") {
             Some(path) => format!("{p} in {path}"),

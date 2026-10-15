@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"send_text","text":"Add a test for the billing queue."},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
+{"after_input":18,"command":{"type":"send_text","text":"Yes, add it."},"expect_responses":[{"method":"turn/start","id":5,"params":{"threadId":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a01","input":[{"type":"text","text":"Yes, add it.","text_elements":[]}]}}]}
