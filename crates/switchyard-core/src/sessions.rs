@@ -731,7 +731,8 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     }
     // A turn is when the agent commits and edits: re-read where its branch stands.
     if turn_ended {
-        crate::worktrees::refresh_one(inner, &worktree_path);
+        let kinds = crate::disk::Kinds { files: true, git: true, config: false };
+        crate::disk::worktree_changed(inner, &worktree_path, kinds);
     }
     if let Some((class, detail)) = failure {
         compat::record(inner, agent, class, cli_version.as_deref(), &detail);
