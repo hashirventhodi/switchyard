@@ -115,3 +115,17 @@ test("the activity feed lists what happened, newest first, with how long ago", (
   expect(lines[1]).toContain("3m ago");
   expect(lines[2]).toContain("Claude Code · fix/readme: started");
 });
+
+test("the sidebar counts what needs you, overall and per repository, and opens the queue", () => {
+  const { emit } = launch();
+  const sidebar = () => screen.getByRole("complementary", { name: "Repositories" });
+  expect(within(sidebar()).queryByRole("button", { name: /needs? you/ })).toBeNull();
+
+  act(() => emit({ type: "sessionStatusChanged", sessionId: "session-1", status: "waiting" }));
+  expect(within(sidebar()).getByRole("button", { name: "1 needs you" })).toBeTruthy();
+  expect(within(sidebar()).getByRole("group", { name: "acme" }).querySelector(".repo-row .needs-n")?.textContent).toBe("1 Needs you");
+
+  act(() => emit({ type: "sessionStatusChanged", sessionId: "session-2", status: "waiting" }));
+  fireEvent.click(within(sidebar()).getByRole("button", { name: "2 need you" }));
+  expect(screen.getByRole("dialog", { name: /Needs you/ })).toBeTruthy();
+});

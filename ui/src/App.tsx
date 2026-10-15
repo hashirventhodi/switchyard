@@ -462,6 +462,11 @@ export function App({
           <div className="sidebar-head">
             <h2>Repositories</h2>
             <span className="spacer" />
+            {waiting.length > 0 && (
+              <button className="needs" title="Open the queue of agents waiting on you" onClick={() => setOverlay("inbox")}>
+                {waiting.length} need{waiting.length === 1 ? "s" : ""} you
+              </button>
+            )}
             <button className="btn ghost sm" title="Open a repository" onClick={addRepository}>
               + Repo
             </button>
@@ -707,6 +712,7 @@ function ToastView(props: {
 function RepositoryGroup(props: { repository: RepositoryView; state: State; onOpenSession: (id: string) => void }) {
   const { repository, state, onOpenSession } = props;
   const [collapsed, setCollapsed] = useState(false);
+  const needsYou = repository.worktrees.filter((w) => sessionOn(state, w.path)?.status === "waiting").length;
   return (
     <div className={`repo ${collapsed ? "collapsed" : ""}`} role="group" aria-label={repository.name}>
       <button className="repo-row" title={repository.path} onClick={() => setCollapsed((c) => !c)}>
@@ -714,6 +720,7 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
           <path d="M3 4.5l3 3 3-3" />
         </svg>
         <span className="name">{repository.name}</span>
+        {needsYou > 0 && <span className="n needs-n">{needsYou} Needs you</span>}
         <span className="n">base {repository.baseBranch}</span>
       </button>
       <ul className="worktrees">
