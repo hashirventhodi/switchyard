@@ -333,6 +333,11 @@ fn no_core_code_path_calls_checkout_or_apply_on_the_working_tree() {
                 dirs.push(path);
                 continue;
             }
+            // The dangerous-command classifier names these verbs to recognise them in the
+            // agent's commands; it never runs git.
+            if path.ends_with("policy/dangerous.rs") {
+                continue;
+            }
             let text = std::fs::read_to_string(&path).unwrap();
             for verb in ["\"checkout\"", "\"apply\"", "\"restore\"", "\"stash\"", "\"--hard\"", "\"clean\""] {
                 if text.contains(verb) {

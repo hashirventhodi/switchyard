@@ -460,6 +460,7 @@ export function App({
                 session={shownSession}
                 send={core.send}
                 pending={state.requests[shownSession.id] ?? NONE}
+                policy={state.policies[shownSession.repositoryId]}
                 revealRequest={reveal}
                 branchState={
                   <BehindBadge
@@ -565,6 +566,7 @@ export function App({
             state={state}
             preset={newSessionPreset}
             onStart={startSession}
+            send={core.send}
             onClose={closeOverlay}
             openLink={openLink}
           />

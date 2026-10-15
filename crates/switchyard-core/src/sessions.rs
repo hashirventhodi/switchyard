@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, Weak};
 
-use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
+use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode};
 use serde_json::Value;
 use switchyard_schema::{
     AgentKind, ArchivedSession, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
@@ -15,7 +15,7 @@ use switchyard_schema::{
 };
 
 use crate::spend::{PriceTable, Usage};
-use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
+use crate::agents::{self, AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::processes::{self, Recorded};
 use crate::session_store::{self, Row, CHUNK};
@@ -53,6 +53,8 @@ struct SessionState {
     requests: HashMap<String, usize>,
     /// Every token_usage report, oldest first. Each holds running totals.
     usage: Vec<Usage>,
+    /// The mode the CLI was asked to run in, in protocol terms (bypass in a sandbox).
+    expected_mode: ProtocolMode,
     /// The running agent; `None` once its process is gone (exited, or a previous run of
     /// the app started it). Talking to the agent again relaunches it by `external_id`.
     agent: Option<Box<dyn AgentHandle>>,
@@ -63,8 +65,9 @@ struct SessionState {
     saved: Saved,
 }
 
-/// The stored row's changing parts: status, facts, external id, process, entry count.
-type RowFacts = (SessionStatus, SessionFacts, Option<String>, Option<Recorded>, usize);
+/// The stored row's changing parts: status, facts, expected mode, external id, process,
+/// entry count.
+type RowFacts = (SessionStatus, SessionFacts, ProtocolMode, Option<String>, Option<Recorded>, usize);
 
 /// What of a session is already in the store.
 #[derive(Default)]
@@ -192,7 +195,10 @@ fn begin(
     let id = format!("session-{}", inner.sessions.next_id + 1);
     // Grants reach the CLI as flags; the CLI's own settings files are never written.
     let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
-    let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, allowed_tools, disallowed_tools };
+    let sandboxed = policy::sandboxed(&repo);
+    let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
+    let spec =
+        LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -224,6 +230,7 @@ fn begin(
         raw_events: Vec::new(),
         requests: HashMap::new(),
         usage: Vec::new(),
+        expected_mode,
         agent: Some(handle),
         external_id: None,
         process,
@@ -324,11 +331,14 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     let repository_id = state.session.repository_id.clone();
     // Grants as they are now: some may have been made or revoked since the session began.
     let repository = policy::repository(inner, &repository_id);
-    let (allowed_tools, disallowed_tools) = match repository {
-        Some(repo) => policy::cli_rules(agent, &policy::resolve(inner, &repo)),
+    // The session's own mode (as last switched); the sandbox as the policy declares it now,
+    // so a sandbox withdrawn since never relaunches into bypass.
+    let ((allowed_tools, disallowed_tools), sandboxed) = match repository {
+        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, &repo)), policy::sandboxed(&repo)),
         None => Default::default(),
     };
-    let spec = LaunchSpec { agent, cwd: cwd.into(), permission_mode, allowed_tools, disallowed_tools };
+    let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
+    let spec = LaunchSpec { agent, cwd: cwd.into(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
     let mut handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.to_string())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -341,6 +351,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     let state = find(inner, id).expect("the session is still there");
     state.agent = Some(handle);
     state.process = process;
+    state.expected_mode = expected_mode;
     sent.map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))
 }
 
@@ -358,6 +369,7 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
     let row = (
         state.session.status,
         state.facts.clone(),
+        state.expected_mode,
         state.external_id.clone(),
         state.process.clone(),
         state.transcript.len(),
@@ -378,6 +390,7 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
                 &Row {
                     session: state.session.clone(),
                     facts: state.facts.clone(),
+                    expected_mode: Some(state.expected_mode),
                     external_id: state.external_id.clone(),
                     process: state.process.clone(),
                     entries: state.transcript.len(),
@@ -404,6 +417,51 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
         Err(_) => state.saved.chunks = chunks, // written again on the next flush
     }
     result
+}
+
+/// The `setPermissionMode` command: the composer's mode segment. Explore is chosen only
+/// at start (it is the only kind allowed on a primary worktree), and the Repository's
+/// ceiling caps the switch as it caps the start.
+pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
+    const COMMAND: &str = "setPermissionMode";
+    let Some(state) = find(inner, id) else {
+        return inner.refuse(COMMAND, format!("There is no session {id}"));
+    };
+    let (from, repository_id, status) = (state.session.permission_mode, state.session.repository_id.clone(), state.session.status);
+    if from == mode {
+        return;
+    }
+    if from == PermissionMode::Explore {
+        return inner.refuse(COMMAND, "An Explore session stays in Explore: start a new session to make changes".into());
+    }
+    if mode == PermissionMode::Explore {
+        return inner.refuse(COMMAND, "Explore is chosen when a session starts: start an Explore session instead".into());
+    }
+    if status == SessionStatus::Failed {
+        return inner.refuse(COMMAND, "The agent has stopped; start a new session".into());
+    }
+    let Some(repo) = policy::repository(inner, &repository_id) else {
+        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    };
+    if let Err(reason) = policy::admit_mode(&repo, mode) {
+        return inner.refuse(COMMAND, reason);
+    }
+    let expected = agents::protocol_mode(mode, policy::sandboxed(&repo));
+    let Some(state) = find(inner, id) else { return };
+    state.session.permission_mode = mode;
+    state.expected_mode = expected;
+    // A warning about the old mode no longer holds; the CLI does not re-report its mode.
+    let cleared = state.facts.mode_warning.take().is_some();
+    let mut events = vec![Event::SessionModeChanged { session_id: id.into(), permission_mode: mode }];
+    if cleared {
+        events.push(facts(state));
+    }
+    let text = format!("Permission mode: {} (was {}).", policy::mode_label(mode), policy::mode_label(from));
+    events.push(append(state, Entry::System { text }));
+    for event in events {
+        inner.emit(event);
+    }
+    send_to_agent(inner, id, AgentCommand::SetPermissionMode { permission_mode: expected });
 }
 
 /// The worktree path and status of session `id`, if it exists.
@@ -479,7 +537,15 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
-            AgentEvent::SessionInit { external_session_id, cli_permission_mode, cli, model, .. } => {
+            AgentEvent::SessionInit { external_session_id, permission_mode, cli_permission_mode, cli, model, .. } => {
+                state.facts.mode_warning = (permission_mode != state.expected_mode).then(|| {
+                    format!(
+                        "Asked for {}, but {} started in {} ({cli_permission_mode})",
+                        agents::mode_label(state.expected_mode),
+                        agent_name(state.session.agent),
+                        agents::mode_label(permission_mode),
+                    )
+                });
                 state.external_id = Some(external_session_id);
                 state.facts.model = model;
                 state.facts.cli_version = Some(cli.version);
@@ -531,8 +597,12 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 let table = PriceTable::read(&inner.data_dir);
                 out.push(spend_event(state, &usage, &table));
             }
-            AgentEvent::ClassifierDenial { tool, detail, .. } => {
-                out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}") }))
+            AgentEvent::ClassifierDenial { tool, detail, reason } => {
+                // Counted and noted; never a Permission request, so the status never moves.
+                state.facts.classifier_denials += 1;
+                let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
+                out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}{why}") }));
+                out.push(facts(state));
             }
         },
         AgentOutput::Unreadable { line } => {

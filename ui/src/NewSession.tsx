@@ -1,21 +1,15 @@
 // The New session modal: agent, where to run (a new worktree from base, or an existing
 // free one), permission mode, initial prompt.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { slugBranch, type BranchKind } from "./branch";
 import type { Command } from "./schema/Command";
 import type { PermissionMode } from "./schema/PermissionMode";
 import { sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
-import { MODE_LABEL, STATUS_LABEL } from "./status";
+import { MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
 
-// Auto edit and Full auto arrive with permission modes. Explore is the only mode allowed
-// on a primary worktree (ADR-0005).
-const MODES: { mode: PermissionMode; available: boolean }[] = [
-  { mode: "askFirst", available: true },
-  { mode: "autoEdit", available: false },
-  { mode: "fullAuto", available: false },
-  { mode: "explore", available: true },
-];
+// Explore is the only mode allowed on a primary worktree (ADR-0005).
+const MODES: PermissionMode[] = ["askFirst", "autoEdit", "fullAuto", "explore"];
 
 /** How the modal opens: on a given worktree, in a given mode, or for a new `fix/` branch. */
 export interface NewSessionPreset {
@@ -37,14 +31,18 @@ export function NewSession(props: {
   state: State;
   preset?: NewSessionPreset;
   onStart: (command: Command) => void;
+  /** Reads the chosen repository's policy (its default mode and ceiling). */
+  send: (command: Command) => void;
   onClose: () => void;
   openLink: OpenLink;
 }) {
-  const { state, preset = {}, onStart, onClose, openLink } = props;
+  const { state, preset = {}, onStart, send, onClose, openLink } = props;
   // An agent whose CLI is missing or outside this build's range cannot start (the core
   // refuses too); say why here, before the first session, not mid-session.
   const blocked = agentProblem(state.agents, "claudeCode");
   const [mode, setMode] = useState<PermissionMode>(preset.mode ?? "askFirst");
+  // Until the user (or the preset) picks one, the mode follows the repository's default.
+  const [modeTouched, setModeTouched] = useState(preset.mode !== undefined);
   const [where, setWhere] = useState<"new" | "existing">(preset.worktreePath ? "existing" : "new");
   const choices: Choice[] = state.repositories.flatMap((r) =>
     r.worktrees.map((w) => {
@@ -71,6 +69,18 @@ export function NewSession(props: {
   const [prompt, setPrompt] = useState("");
 
   const repository = state.repositories.find((r) => r.id === repositoryId);
+  const policyRepo =
+    where === "new" ? repositoryId : state.repositories.find((r) => r.worktrees.some((w) => w.path === worktree))?.id;
+  const policy = policyRepo ? state.policies[policyRepo] : undefined;
+  const modes = MODES.filter((m) => withinCeiling(m, policy?.ceiling ?? null));
+  useEffect(() => {
+    if (policyRepo) send({ type: "readPolicy", repositoryId: policyRepo });
+  }, [policyRepo, send]);
+  useEffect(() => {
+    if (!modeTouched && policy?.defaultMode) setMode(policy.defaultMode);
+  }, [modeTouched, policy?.defaultMode]);
+  // The core refuses a mode above the ceiling; never offer one.
+  const shownMode = modes.includes(mode) ? mode : (modes.find((m) => m !== "explore") ?? "explore");
   const shownBranch = branchTouched ? branch : slugBranch(prompt, preset.branchKind);
   const chosen = choices.find((c) => c.path === worktree);
   const replacing = where === "existing" ? chosen?.replaces : undefined;
@@ -83,10 +93,10 @@ export function NewSession(props: {
     const agent = "claudeCode";
     onStart(
       where === "new"
-        ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: mode, prompt }
+        ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, prompt }
         : replacing
-          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: mode, prompt }
-          : { type: "startSession", worktreePath: worktree, agent, permissionMode: mode, prompt },
+          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: shownMode, prompt }
+          : { type: "startSession", worktreePath: worktree, agent, permissionMode: shownMode, prompt },
     );
     onClose();
   };
@@ -186,19 +196,24 @@ export function NewSession(props: {
           )}
           <fieldset className="field seg">
             <legend>Permission mode</legend>
-            {MODES.map(({ mode: m, available }) => (
-              <label key={m} className={available ? "" : "off"} title={available ? undefined : "Arrives with permission modes"}>
+            {modes.map((m) => (
+              <label key={m}>
                 <input
                   type="radio"
                   name="mode"
                   value={m}
-                  disabled={!available}
-                  checked={mode === m}
-                  onChange={() => setMode(m)}
+                  checked={shownMode === m}
+                  onChange={() => {
+                    setModeTouched(true);
+                    setMode(m);
+                  }}
                 />
                 {MODE_LABEL[m]}
               </label>
             ))}
+            {policy?.ceiling && policy.ceiling !== "fullAuto" && (
+              <span className="hint">This repository's policy allows at most {MODE_LABEL[policy.ceiling]}.</span>
+            )}
           </fieldset>
           <label className="field">
             <span>Prompt</span>

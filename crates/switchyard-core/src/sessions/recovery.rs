@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use switchyard_schema::{ArchivedSession, Entry};
 
 use super::{append, archive, change_status, persist, requests, Cause, Saved, SessionState};
+use crate::agents;
+use crate::policy;
 use crate::processes;
 use crate::session_store;
 use crate::Inner;
@@ -42,8 +44,14 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
                 _ => {}
             }
         }
+        // Rows stored before the expected mode was kept: what the session's mode asks for
+        // under the policy as it is now.
+        let expected_mode = row.expected_mode.unwrap_or_else(|| {
+            let sandboxed = policy::repository(inner, &row.session.repository_id).is_some_and(|r| policy::sandboxed(&r));
+            agents::protocol_mode(row.session.permission_mode, sandboxed)
+        });
         let saved = Saved {
-            row: Some((row.session.status, row.facts.clone(), row.external_id.clone(), row.process.clone(), transcript.len())),
+            row: Some((row.session.status, row.facts.clone(), expected_mode, row.external_id.clone(), row.process.clone(), transcript.len())),
             entries: transcript.len(),
             chunks: Default::default(),
             usage: usage.len(),
@@ -56,6 +64,7 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             raw_events: Vec::new(),
             requests,
             usage,
+            expected_mode,
             agent: None,
             external_id: row.external_id,
             process: row.process,

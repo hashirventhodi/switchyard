@@ -47,4 +47,5 @@ export type ProtocolCommand =
   | { type: "send_text"; text: string }
   | { type: "answer_request"; request_id: string; verdict: Verdict }
   | { type: "interrupt" }
+  | { type: "set_permission_mode"; permission_mode: PermissionMode }
   | { type: "resume"; external_session_id: string };

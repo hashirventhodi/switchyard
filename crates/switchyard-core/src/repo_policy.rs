@@ -14,6 +14,7 @@
 //!     - mcp: { server: github, tool: get_issue }   # tool `*`: every tool of the server
 //!   deny:                     # wins over any allow, in any layer
 //!     - command: git push *
+//!   sandbox: true             # sessions run sandboxed: Full auto bypasses the CLI's checks
 //! ```
 //!
 //! Unknown top-level keys are ignored; a rule must name exactly one of `command`,
@@ -42,6 +43,10 @@ pub struct PermissionsPolicy {
     pub allow: Vec<RuleSpec>,
     #[serde(default)]
     pub deny: Vec<RuleSpec>,
+    /// Sessions run in a sandbox: only then does Full auto use the CLI's
+    /// bypass-everything mode.
+    #[serde(default)]
+    pub sandbox: bool,
 }
 
 /// A Permission mode as the file spells it.
