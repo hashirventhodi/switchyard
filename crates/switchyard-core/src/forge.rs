@@ -35,6 +35,26 @@ pub trait Forge: Send + Sync {
     fn create_pull_request(&self, dir: &Path, base: &str, branch: &str) -> Result<String, String>;
     /// The pull request for `branch` (an open one if any, else the newest), if there is one.
     fn pull_request(&self, dir: &Path, branch: &str) -> Result<Option<ForgePullRequest>, String>;
+    /// The repository's issues (open and recently closed), newest first, read from the
+    /// worktree at `dir`. Only the GitHub Issues TaskSource asks.
+    fn issues(&self, _dir: &Path) -> Result<Vec<ForgeIssue>, String> {
+        Err("no Forge is configured".into())
+    }
+    /// Close issue `number` with `comment`: the one thing ever written to the tracker.
+    fn close_issue(&self, _dir: &Path, _number: u32, _comment: &str) -> Result<(), String> {
+        Err("no Forge is configured".into())
+    }
+}
+
+/// An issue as the Forge reports it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ForgeIssue {
+    pub number: u32,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub open: bool,
+    pub labels: Vec<String>,
 }
 
 /// A pull request as polled, plus the commit its head was at.
@@ -134,7 +154,7 @@ fn detect(inner: &mut Inner) {
 
 /// Can the Forge be used? Detects again every time (the user may have installed, signed in
 /// or signed out since), announcing a change. `Err` is the reason for the user.
-fn admit(inner: &mut Inner) -> Result<(), String> {
+pub(crate) fn admit(inner: &mut Inner) -> Result<(), String> {
     let before = inner.forge.setup.clone();
     detect(inner);
     if inner.forge.setup != before {
@@ -149,6 +169,16 @@ fn admit(inner: &mut Inner) -> Result<(), String> {
             Err(format!("GitHub CLI (gh) is not signed in; run {login_hint}, then try again"))
         }
     }
+}
+
+/// Does the worktree at `path` have an open pull request, as last seen?
+pub(crate) fn has_open_pull_request(inner: &Inner, path: &str) -> bool {
+    inner
+        .forge
+        .tracks
+        .get(path)
+        .and_then(|t| t.pull_request.as_ref())
+        .is_some_and(|p| p.pull_request.state == PullRequestState::Open)
 }
 
 /// The worktree at `path` is gone: stop polling it.
@@ -341,14 +371,14 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
     }
     let pull_request = found.as_ref().map(|f| f.pull_request.clone());
     inner.emit(Event::PullRequestChanged { worktree_path: key.clone(), pull_request: pull_request.clone() });
-    match pull_request.map(|p| (p.state, p.number)) {
-        Some((PullRequestState::Closed, _)) => track_mut(inner, &key).stopped = true,
-        Some((PullRequestState::Merged, number)) => {
+    match pull_request.map(|p| (p.state, p.number, p.url)) {
+        Some((PullRequestState::Closed, ..)) => track_mut(inner, &key).stopped = true,
+        Some((PullRequestState::Merged, number, url)) => {
             track_mut(inner, &key).stopped = true;
-            merged(inner, &due, Some(number));
+            merged(inner, &due, Some((number, &url)));
         }
         // Opened outside Switchyard, or seen again after a relaunch.
-        Some((PullRequestState::Open, _)) => tasks::pull_request_open(inner, &key, &due.branch),
+        Some((PullRequestState::Open, ..)) => tasks::pull_request_open(inner, &key, &due.branch),
         _ => {}
     }
 }
@@ -358,16 +388,18 @@ fn track_mut<'a>(inner: &'a mut Inner, key: &str) -> &'a mut Track {
 }
 
 /// The branch is in base: clean the worktree up if it is free and clean, and say so.
-fn merged(inner: &mut Inner, due: &Due, pull_request: Option<u32>) {
+/// `pull_request`: its number and address (none for a Local merge). The tasks move first,
+/// while the worktree still names its branch's issue.
+fn merged(inner: &mut Inner, due: &Due, pull_request: Option<(u32, &str)>) {
     let path = due.path.to_string_lossy().into_owned();
+    tasks::merged(inner, &path, &due.branch, pull_request.map(|p| p.1));
     let result = worktrees::try_remove(inner, &path);
-    tasks::merged(inner, &path, &due.branch);
     inner.emit(Event::BranchMerged {
         repository_id: due.repository_id.clone(),
         worktree_path: path,
         branch: due.branch.clone(),
         base: due.base.clone(),
-        pull_request,
+        pull_request: pull_request.map(|p| p.0),
         removed: result.is_ok(),
         kept: result.err(),
     });
@@ -401,6 +433,7 @@ pub(crate) fn prune(inner: &mut Inner, repository_id: &str) {
         if found.pull_request.state != PullRequestState::Merged || !belongs(&wt.path, &found) {
             continue;
         }
+        tasks::merged(inner, &path, &branch, Some(&found.pull_request.url));
         if worktrees::try_remove(inner, &path).is_ok() {
             branches.push(branch);
         }

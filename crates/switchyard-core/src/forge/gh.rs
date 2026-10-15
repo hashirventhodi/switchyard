@@ -6,7 +6,7 @@ use std::process::Command as Process;
 use serde::Deserialize;
 use switchyard_schema::{Check, CheckStatus, ChecksState, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState};
 
-use super::{Forge, ForgePullRequest};
+use super::{Forge, ForgeIssue, ForgePullRequest};
 
 /// Runs `program` as `gh`. The app finds it with [`GhForge::find`]; tests point it at a fake.
 pub struct GhForge {
@@ -94,6 +94,48 @@ impl Forge for GhForge {
         let pick = list.iter().position(|p| p.state == "OPEN").unwrap_or(0);
         Ok(list.into_iter().nth(pick).map(GhPullRequest::into_forge))
     }
+
+    fn issues(&self, dir: &Path) -> Result<Vec<ForgeIssue>, String> {
+        let out = self.run_ok(
+            dir,
+            &["issue", "list", "--state", "all", "--limit", "200", "--json", "number,title,body,state,url,labels"],
+        )?;
+        let list: Vec<GhIssue> =
+            serde_json::from_str(&out).map_err(|e| format!("gh printed something unexpected: {e}"))?;
+        Ok(list
+            .into_iter()
+            .map(|i| ForgeIssue {
+                number: i.number,
+                title: i.title,
+                body: i.body,
+                url: i.url,
+                open: i.state != "CLOSED",
+                labels: i.labels.into_iter().map(|l| l.name).collect(),
+            })
+            .collect())
+    }
+
+    fn close_issue(&self, dir: &Path, number: u32, comment: &str) -> Result<(), String> {
+        self.run_ok(dir, &["issue", "close", &number.to_string(), "--comment", comment]).map(|_| ())
+    }
+}
+
+/// One issue as `gh issue list --json` prints it.
+#[derive(Deserialize)]
+struct GhIssue {
+    number: u32,
+    title: String,
+    #[serde(default)]
+    body: String,
+    state: String,
+    url: String,
+    #[serde(default)]
+    labels: Vec<GhLabel>,
+}
+
+#[derive(Deserialize)]
+struct GhLabel {
+    name: String,
 }
 
 fn missing() -> ForgeSetupState {

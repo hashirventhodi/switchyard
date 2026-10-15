@@ -244,6 +244,7 @@ impl Core {
             Command::PruneMerged { repository_id } => forge::prune(&mut inner, &repository_id),
             Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),
             Command::ReadTasks { repository_id } => tasks::read(&inner, &repository_id),
+            Command::SyncTasks { repository_id } => tasks::sync(&mut inner, &repository_id),
             Command::CreateTask { repository_id, title, description, kind, checklist } => {
                 tasks::create(&inner, &repository_id, tasks::NewTask { title, description, kind, checklist })
             }

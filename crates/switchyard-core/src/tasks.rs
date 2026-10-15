@@ -11,8 +11,10 @@
 //! What is Switchyard's own lives in the store, never in a source: which Session links to
 //! which Task, and the ticks on each task's checklist.
 
+mod github;
 mod local;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -22,8 +24,9 @@ use switchyard_schema::{
 };
 
 use crate::store::StoredRepository;
-use crate::{repo_policy, sessions, worktrees, Inner};
+use crate::{forge, git, repo_policy, sessions, worktrees, Inner};
 
+use github::GithubIssues;
 use local::LocalTasks;
 
 /// What a session started for a Task is told besides the task, when the Repository's
@@ -37,8 +40,9 @@ pub(crate) trait TaskSource {
     fn kind(&self) -> TaskSourceKind;
     /// Every task the source has for the repository, in the source's order.
     fn tasks(&self) -> Result<Vec<SourceTask>, String>;
-    /// Write a column change back (only ever forward).
-    fn move_to(&mut self, key: &str, column: TaskColumn) -> Result<(), String>;
+    /// Write a column change back (only ever forward). `pull_request` is the address of the
+    /// pull request that moved it, when there is one.
+    fn move_to(&mut self, key: &str, column: TaskColumn, pull_request: Option<&str>) -> Result<(), String>;
     /// Add a task to To do. Sources that only mirror a tracker refuse.
     fn create(&mut self, _new: NewTask) -> Result<SourceTask, String> {
         Err("tasks are created on the tracker, not in Switchyard".into())
@@ -79,13 +83,66 @@ CREATE TABLE IF NOT EXISTS task_checks (
 
 /// Create the tables tasks keep in the store (called when the store opens).
 pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
-    db.execute_batch(SCHEMA)
+    db.execute_batch(SCHEMA)?;
+    github::init(db)
 }
 
-/// The TaskSources of a repository. GitHub Issues joins here (#24).
-fn sources(inner: &Inner, repo: &StoredRepository) -> Vec<Box<dyn TaskSource>> {
-    let folder = worktrees::repository_folder(Path::new(&repo.path));
-    vec![Box::new(LocalTasks::new(&inner.data_dir, &folder))]
+/// The TaskSources of a repository: its local tasks, and its GitHub Issues when it has a
+/// remote.
+fn sources<'a>(inner: &'a Inner, repo: &StoredRepository) -> Vec<Box<dyn TaskSource + 'a>> {
+    let dir = Path::new(&repo.path);
+    let folder = worktrees::repository_folder(dir);
+    let mut list: Vec<Box<dyn TaskSource + 'a>> = vec![Box::new(LocalTasks::new(&inner.data_dir, &folder))];
+    if git::remote(dir).is_some() {
+        list.push(Box::new(GithubIssues {
+            db: inner.store.db(),
+            forge: inner.runtime.forge.clone(),
+            repository_id: repo.id.clone(),
+            dir: dir.to_path_buf(),
+            progress: issue_progress(inner, repo),
+        }));
+    }
+    list
+}
+
+/// How far the work on each open issue has got, by Switchyard's facts: In progress once a
+/// branch is linked to it (a session linked to it, or a worktree branch named for it), In
+/// review while that branch's worktree has an open pull request.
+fn issue_progress(inner: &Inner, repo: &StoredRepository) -> HashMap<u32, TaskColumn> {
+    let db = inner.store.db();
+    let issue_of = |task_id: &str| -> Option<u32> {
+        let key = task_id.strip_prefix(&format!("{}/github/", repo.id))?;
+        github::number_of(key)
+    };
+    let mut progress = HashMap::new();
+    let mut reach = |n: u32, column: TaskColumn| {
+        let at = progress.entry(n).or_insert(column);
+        *at = (*at).max(column);
+    };
+    let read = || -> rusqlite::Result<Vec<String>> {
+        let mut stmt = db.prepare("SELECT task_id FROM task_links")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.collect()
+    };
+    for n in read().unwrap_or_default().iter().filter_map(|t| issue_of(t)) {
+        reach(n, TaskColumn::InProgress);
+    }
+    for wt in git::worktrees(Path::new(&repo.path)).unwrap_or_default().into_iter().filter(|w| !w.primary) {
+        let Some(branch) = wt.branch else { continue };
+        let path = wt.path.to_string_lossy().into_owned();
+        let linked: Vec<u32> = sessions::ids_on_branch(inner, &path, &branch)
+            .iter()
+            .filter_map(|s| linked_task(db, s))
+            .filter_map(|t| issue_of(&t))
+            .chain(github::named_issue(&branch))
+            .collect();
+        let column =
+            if forge::has_open_pull_request(inner, &path) { TaskColumn::InReview } else { TaskColumn::InProgress };
+        for n in linked {
+            reach(n, column);
+        }
+    }
+    progress
 }
 
 fn source_name(kind: TaskSourceKind) -> &'static str {
@@ -169,6 +226,31 @@ pub(crate) fn read(inner: &Inner, repository_id: &str) {
         return inner.refuse("readTasks", format!("There is no repository {repository_id}"));
     };
     announce(inner, "readTasks", &repo);
+}
+
+/// [`Command::SyncTasks`](switchyard_schema::Command::SyncTasks): read the repository's
+/// issues through the Forge (nothing is written), then announce the board. When the Forge
+/// cannot be used the board stays as last synced and the refusal says why.
+pub(crate) fn sync(inner: &mut Inner, repository_id: &str) {
+    const COMMAND: &str = "syncTasks";
+    let Some(repo) = worktrees::repository(inner, repository_id) else {
+        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    };
+    let dir = Path::new(&repo.path).to_path_buf();
+    if git::remote(&dir).is_none() {
+        announce(inner, COMMAND, &repo);
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| repo.path.clone());
+        return inner.refuse(COMMAND, format!("{name} has no remote, so no GitHub issues; its tasks are local"));
+    }
+    let read = forge::admit(inner).and_then(|()| inner.runtime.forge.issues(&dir));
+    let failed = match read {
+        Ok(issues) => github::save(inner.store.db(), &repo.id, &issues).err(),
+        Err(reason) => Some(reason),
+    };
+    announce(inner, COMMAND, &repo);
+    if let Some(reason) = failed {
+        inner.refuse(COMMAND, format!("Could not sync GitHub issues: {reason}"));
+    }
 }
 
 /// [`Command::CreateTask`](switchyard_schema::Command::CreateTask): a local task in To do.
@@ -265,24 +347,27 @@ fn attach(inner: &Inner, command: &str, session_id: &str, repo: &StoredRepositor
         return inner.refuse(command, format!("Could not link the task: {e}"));
     }
     inner.emit(Event::TaskLinked { session_id: session_id.into(), task_id: Some(found.id.clone()) });
-    advance(inner, repo, found, TaskColumn::InProgress);
+    if advance(inner, repo, found, TaskColumn::InProgress, None) {
+        announce(inner, "moveTask", repo);
+    }
 }
 
-/// Move a task forward to `to` through its source; announce the board when it moved.
-fn advance(inner: &Inner, repo: &StoredRepository, found: &Task, to: TaskColumn) {
+/// Move a task forward to `to` through its source (`pull_request`: the address of the pull
+/// request that moved it). True when the board changed and should be announced.
+fn advance(inner: &Inner, repo: &StoredRepository, found: &Task, to: TaskColumn, pull_request: Option<&str>) -> bool {
     if found.column >= to {
-        return;
+        // An issue's In progress and In review follow Switchyard's own facts, so the event
+        // that moves it there already shows when it is read: announce it all the same.
+        return found.source == TaskSourceKind::Github && found.column == to && to != TaskColumn::Done;
     }
     let mut moved = false;
     for mut source in sources(inner, repo) {
         if source.kind() == found.source {
             // A source that cannot be written now keeps its column; the board says so.
-            moved = source.move_to(&found.key, to).is_ok();
+            moved = source.move_to(&found.key, to, pull_request).is_ok();
         }
     }
-    if moved {
-        announce(inner, "moveTask", repo);
-    }
+    moved
 }
 
 /// [`Command::StartTaskSession`](switchyard_schema::Command::StartTaskSession).
@@ -321,30 +406,44 @@ pub(crate) fn start_session(
     }
 }
 
-/// The tasks linked to any session, live or archived, that ran on `branch` at `path`.
+/// The tasks of `branch` at `path`: those linked to any session, live or archived, that ran
+/// there, and the issue the branch is named for (`fix/412-…`), as GitHub links them.
 fn tasks_on(inner: &Inner, path: &str, branch: &str) -> Vec<(StoredRepository, Task)> {
     let db = inner.store.db();
     let mut ids: Vec<String> =
         sessions::ids_on_branch(inner, path, branch).iter().filter_map(|s| linked_task(db, s)).collect();
+    if let (Some(n), Some((repo, _))) = (github::named_issue(branch), inner.find_worktree(path)) {
+        ids.push(task_id(&repo, TaskSourceKind::Github, &format!("#{n}")));
+    }
     ids.sort();
     ids.dedup();
     ids.iter().filter_map(|id| find(inner, id)).collect()
 }
 
-/// The worktree's pull request is open (opened from Switchyard, or found by the poller):
-/// its tasks move to In review.
-pub(crate) fn pull_request_open(inner: &Inner, path: &str, branch: &str) {
-    for (repo, found) in tasks_on(inner, path, branch) {
-        advance(inner, &repo, &found, TaskColumn::InReview);
+/// Move the tasks of `branch` at `path` to `to`, announcing each changed board once.
+fn advance_all(inner: &Inner, tasks: Vec<(StoredRepository, Task)>, to: TaskColumn, pull_request: Option<&str>) {
+    let mut changed: Vec<StoredRepository> = Vec::new();
+    for (repo, found) in tasks {
+        if advance(inner, &repo, &found, to, pull_request) && !changed.iter().any(|r| r.id == repo.id) {
+            changed.push(repo);
+        }
+    }
+    for repo in changed {
+        announce(inner, "moveTask", &repo);
     }
 }
 
-/// The Forge reports the worktree's branch Merged (or a Local merge finished): its tasks
-/// move to Done.
-pub(crate) fn merged(inner: &Inner, path: &str, branch: &str) {
-    for (repo, found) in tasks_on(inner, path, branch) {
-        advance(inner, &repo, &found, TaskColumn::Done);
-    }
+/// The worktree's pull request is open (opened from Switchyard, or found by the poller):
+/// its tasks move to In review.
+pub(crate) fn pull_request_open(inner: &Inner, path: &str, branch: &str) {
+    advance_all(inner, tasks_on(inner, path, branch), TaskColumn::InReview, None);
+}
+
+/// The Forge reports the worktree's branch Merged by `pull_request` (its address), or a
+/// Local merge finished: its tasks move to Done. Call it before the worktree is removed,
+/// so the branch's issue is still found.
+pub(crate) fn merged(inner: &Inner, path: &str, branch: &str, pull_request: Option<&str>) {
+    advance_all(inner, tasks_on(inner, path, branch), TaskColumn::Done, pull_request);
 }
 
 /// On attach: every link of a session the core still knows (live or archived).
