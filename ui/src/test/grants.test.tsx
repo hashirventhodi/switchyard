@@ -112,6 +112,7 @@ const policy: Policy = {
   defaultMode: "autoEdit",
   ceiling: "autoEdit",
   error: null,
+  request: null,
   grants: [
     { id: "repo-allow-1", layer: "repo", effect: "allow", rule: { type: "command", pattern: "pnpm *" } },
     { id: "repo-deny-1", layer: "repo", effect: "deny", rule: { type: "command", pattern: "git push *" } },
@@ -151,11 +152,43 @@ test("Context says when the policy file is broken and nothing is granted", () =>
     emit({
       type: "policyChanged",
       repositoryId: "repo-1",
-      policy: { defaultMode: null, ceiling: null, grants: [], error: ".switchyard/policy.yml is not valid: oops" },
+      policy: { defaultMode: null, ceiling: null, grants: [], error: ".switchyard/policy.yml is not valid: oops", request: null },
     }),
   );
 
   const grants = screen.getByRole("region", { name: "Grants" });
   expect(grants.textContent).toContain(".switchyard/policy.yml is not valid: oops");
   expect(grants.textContent).toContain("Nothing is granted until it is fixed");
+});
+
+test("a pending policy request is shown with what it asks for and acknowledged from Context", () => {
+  const { sent, emit } = launch();
+  fireEvent.click(screen.getByRole("tab", { name: "Context" }));
+  act(() =>
+    emit({
+      type: "policyChanged",
+      repositoryId: "repo-1",
+      policy: {
+        defaultMode: "askFirst",
+        ceiling: null,
+        grants: [],
+        error: null,
+        request: {
+          hash: "abc123",
+          allow: [{ id: "repo-allow-1", layer: "repo", effect: "allow", rule: { type: "command", pattern: "pnpm *" } }],
+          sandbox: true,
+          defaultMode: "fullAuto",
+          worktreesRoot: "../trees",
+          sandboxEvidence: null,
+        },
+      },
+    }),
+  );
+  const request = screen.getByRole("region", { name: "Policy request" });
+  expect(request.textContent).toContain("pnpm *");
+  expect(request.textContent).toContain("Default mode Full auto");
+  expect(request.textContent).toContain("../trees");
+  expect(request.textContent).toContain("Switchyard cannot verify this sandbox");
+  fireEvent.click(within(request).getByRole("button", { name: "Acknowledge" }));
+  expect(sent).toContainEqual({ type: "acknowledgePolicy", repositoryId: "repo-1", hash: "abc123" });
 });

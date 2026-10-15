@@ -78,6 +78,7 @@ impl Harness {
             forge: Arc::new(GhForge::new(fake_gh_in(&data_dir).program()).with_timeout(gh_timeout)),
             forge_poll_every: None,
             claude_home: data_dir.path().join("claude-home"),
+            sandbox_evidence: || None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -133,6 +134,7 @@ impl Harness {
             forge: Arc::new(GhForge::new(fake_gh_in(&data_dir).program()).with_timeout(gh_timeout)),
             forge_poll_every: None,
             claude_home: data_dir.path().join("claude-home"),
+            sandbox_evidence: || None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -167,6 +169,19 @@ impl Harness {
     /// The core's data directory (where a test may drop a `price-table.json`).
     pub fn data_dir(&self) -> &Path {
         self.data_dir.path()
+    }
+
+    /// Acknowledge whatever the repository's committed policy requests (ADR-0006), as a
+    /// user who read it would; for tests about what the policy then does.
+    pub fn acknowledge_policy(&mut self, repository_id: &str) {
+        let events = self.send(Command::ReadPolicy { repository_id: repository_id.into() });
+        let request = events.into_iter().find_map(|e| match e {
+            Event::PolicyChanged { policy, .. } => policy.request,
+            _ => None,
+        });
+        if let Some(request) = request {
+            self.send(Command::AcknowledgePolicy { repository_id: repository_id.into(), hash: request.hash });
+        }
     }
 
     /// The core itself, for tests that drive it from several threads at once.

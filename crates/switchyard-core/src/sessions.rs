@@ -203,7 +203,7 @@ fn begin(
     let id = format!("session-{}", inner.sessions.next_id + 1);
     // Grants reach the CLI as flags; the CLI's own settings files are never written.
     let (allowed_tools, disallowed_tools) = policy::cli_grants(agent, &policy::resolve(inner, &repo));
-    let sandboxed = policy::sandboxed(&repo);
+    let sandboxed = policy::sandboxed(inner, &repo);
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
     let spec = LaunchSpec {
         agent,
@@ -227,6 +227,7 @@ fn begin(
         archive::archive(inner, old);
     }
     inner.sessions.next_id += 1;
+    let state_repo = repo.id.clone();
     let session = Session {
         id: id.clone(),
         repository_id: repo.id,
@@ -255,6 +256,13 @@ fn begin(
     let state = inner.sessions.list.last_mut().expect("just pushed");
     let entry = append(state, Entry::User { text: prompt.into() });
     inner.emit(entry);
+    // What the committed policy asks for but the user has not acknowledged does not apply.
+    if let Some(line) = policy::repository(inner, &state_repo).and_then(|r| policy::pending_summary(inner, &r)) {
+        if let Some(state) = find(inner, &id) {
+            let entry = append(state, Entry::System { text: line });
+            inner.emit(entry);
+        }
+    }
     send_to_agent(inner, &id, AgentCommand::SendText { text: prompt.into() });
 }
 
@@ -350,7 +358,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     // The session's own mode (as last switched); the sandbox as the policy declares it now,
     // so a sandbox withdrawn since never relaunches into bypass.
     let ((allowed_tools, disallowed_tools), sandboxed) = match &repository {
-        Some(repo) => (policy::cli_grants(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
+        Some(repo) => (policy::cli_grants(agent, &policy::resolve(inner, repo)), policy::sandboxed(inner, repo)),
         None => Default::default(),
     };
     // The repository's MCP servers the user has enabled, as `.mcp.json` lists them now.
@@ -480,7 +488,7 @@ pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
     if let Err(reason) = policy::admit_mode(&repo, mode) {
         return inner.refuse(COMMAND, reason);
     }
-    let expected = agents::protocol_mode(mode, policy::sandboxed(&repo));
+    let expected = agents::protocol_mode(mode, policy::sandboxed(inner, &repo));
     let Some(state) = find(inner, id) else { return };
     state.session.permission_mode = mode;
     state.expected_mode = expected;

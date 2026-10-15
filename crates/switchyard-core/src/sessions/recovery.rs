@@ -47,7 +47,7 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
         // Rows stored before the expected mode was kept: what the session's mode asks for
         // under the policy as it is now.
         let expected_mode = row.expected_mode.unwrap_or_else(|| {
-            let sandboxed = policy::repository(inner, &row.session.repository_id).is_some_and(|r| policy::sandboxed(&r));
+            let sandboxed = policy::repository(inner, &row.session.repository_id).is_some_and(|r| policy::sandboxed(inner, &r));
             agents::protocol_mode(row.session.permission_mode, sandboxed)
         });
         let saved = Saved {

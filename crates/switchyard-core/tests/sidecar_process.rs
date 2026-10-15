@@ -74,7 +74,8 @@ fn the_sidecar_is_told_the_resolved_grants_as_cli_rules() {
     .unwrap();
     let worktree = repo.add_worktree("feat/x");
     let mut core = Harness::launch_with(fake_sidecar());
-    core.add_repository(&repo.path);
+    let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
+    core.acknowledge_policy(&repository_id);
 
     core.dispatch(start(&worktree));
     let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
@@ -144,7 +145,8 @@ fn full_auto_in_a_declared_sandbox_launches_the_sidecar_in_bypass() {
     std::fs::write(repo.path.join(".switchyard/policy.yml"), "permissions:\n  sandbox: true\n").unwrap();
     let worktree = repo.add_worktree("feat/x");
     let mut core = Harness::launch_with(fake_sidecar());
-    core.add_repository(&repo.path);
+    let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
+    core.acknowledge_policy(&repository_id);
 
     core.dispatch(Command::StartSession {
         worktree_path: worktree.to_string_lossy().into_owned(),

@@ -26,7 +26,8 @@ fn setup_with(policy: Option<&str>) -> Setup {
     }
     let worktrees = vec![repo.add_worktree("feat/billing"), repo.add_worktree("fix/readme")];
     let mut core = Harness::launch();
-    added_repository(&core.add_repository(&repo.path));
+    let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    core.acknowledge_policy(&repo_id);
     Setup { core, _repo: repo, worktrees }
 }
 

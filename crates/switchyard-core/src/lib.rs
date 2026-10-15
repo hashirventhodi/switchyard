@@ -67,6 +67,9 @@ pub struct Runtime {
     /// How often the core polls the Forge on its own; `None`: only when
     /// [`Core::poll_forge`] is called (tests tick it by hand).
     pub forge_poll_every: Option<std::time::Duration>,
+    /// What supports a repository's sandbox claim on this machine (a container or VM
+    /// Switchyard runs in), shown beside the request; `None`: nothing to show.
+    pub sandbox_evidence: fn() -> Option<String>,
     /// Claude Code's home (`~/.claude`): where it keeps each project's memory, read for
     /// Context.
     pub claude_home: PathBuf,
@@ -85,6 +88,7 @@ impl Default for Runtime {
             forge: Arc::new(NoForge),
             forge_poll_every: None,
             claude_home: context::default_claude_home(),
+            sandbox_evidence: policy::detect_sandbox,
         }
     }
 }
@@ -100,6 +104,8 @@ pub fn default_worktree_root() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     home.join(".switchyard").join("worktrees")
 }
+
+pub use policy::detect_sandbox;
 
 pub fn system_now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -251,6 +257,7 @@ impl Core {
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
             Command::ReadContext { worktree_path } => context::read_context(&inner, &worktree_path),
+            Command::AcknowledgePolicy { repository_id, hash } => policy::acknowledge(&inner, &repository_id, &hash),
             Command::ReadMcpServers { repository_id } => mcp::read(&inner, &repository_id),
             Command::EnableMcpServer { repository_id, name } => mcp::set_enabled(&inner, &repository_id, &name, true),
             Command::DisableMcpServer { repository_id, name } => mcp::set_enabled(&inner, &repository_id, &name, false),

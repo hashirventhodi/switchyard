@@ -21,6 +21,10 @@
 //!   - NPM_TOKEN               # (values live in the keychain or environment, never here)
 //! ```
 //!
+//! Committed, so a request (ADR-0006): denials and the ceiling apply at once; allow rules,
+//! `sandbox`, a `default_mode` above Ask first and `worktrees.root` apply only once the user
+//! acknowledged exactly them (`crate::policy::acknowledged`).
+//!
 //! Unknown top-level keys are ignored; a rule must name exactly one of `command`,
 //! `network` or `mcp`, so a misspelt denial is an error rather than silently dropped.
 

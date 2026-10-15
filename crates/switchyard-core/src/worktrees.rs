@@ -36,8 +36,10 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
     // The repository's policy may name its own root (for tooling that assumes worktrees
     // sit next to or inside the checkout); otherwise one folder per repository under ours.
     let parent = match repo_policy::load(dir) {
+        // A committed root is a request until acknowledged (ADR-0006).
         Ok(policy) => policy
             .worktree_root(dir)
+            .filter(|_| crate::policy::acknowledged(inner, &repo.id, &policy))
             .unwrap_or_else(|| inner.runtime.worktree_root.join(repository_folder(dir))),
         Err(reason) => {
             inner.refuse(command, format!("Could not create the worktree: {reason}"));

@@ -16,7 +16,7 @@ use std::path::Path;
 use adapter_protocol::RequestDetail;
 use switchyard_schema::command_name;
 use switchyard_schema::{
-    AgentKind, Event, Grant, GrantEffect, GrantRule, PermissionMode, Policy, PolicyLayer,
+    AgentKind, Event, Grant, GrantEffect, GrantRule, PermissionMode, Policy, PolicyLayer, PolicyRequest,
 };
 
 use crate::store::StoredRepository;
@@ -38,6 +38,8 @@ pub(crate) fn resolve(inner: &Inner, repo: &StoredRepository) -> Policy {
         Err(error) => return Policy { error: Some(error), ..Policy::default() },
     };
     let (allow, deny) = file.grants().unwrap_or_default();
+    // Committed allows are a request until acknowledged (ADR-0006); denials apply at once.
+    let pending = pending_request(inner, &repo.id, &file);
     let mut grants = Vec::new();
     let repo_grant = |kind: &str, i: usize, effect, rule| Grant {
         id: format!("repo-{kind}-{}", i + 1),
@@ -45,7 +47,11 @@ pub(crate) fn resolve(inner: &Inner, repo: &StoredRepository) -> Policy {
         effect,
         rule,
     };
-    grants.extend(allow.into_iter().enumerate().map(|(i, r)| repo_grant("allow", i, GrantEffect::Allow, r)));
+    let allow: Vec<Grant> =
+        allow.into_iter().enumerate().map(|(i, r)| repo_grant("allow", i, GrantEffect::Allow, r)).collect();
+    if pending.is_none() {
+        grants.extend(allow.iter().cloned());
+    }
     grants.extend(deny.into_iter().enumerate().map(|(i, r)| repo_grant("deny", i, GrantEffect::Deny, r)));
     match inner.store.grants(&repo.id) {
         Ok(local) => grants.extend(local.into_iter().map(|g| Grant {
@@ -56,12 +62,142 @@ pub(crate) fn resolve(inner: &Inner, repo: &StoredRepository) -> Policy {
         })),
         Err(e) => return Policy { error: Some(format!("cannot read your grants: {e}")), ..Policy::default() },
     }
+    let request = pending.map(|(hash, requested)| PolicyRequest {
+        hash,
+        allow,
+        sandbox: requested.sandbox,
+        default_mode: requested.default_mode,
+        worktrees_root: requested.worktrees_root,
+        sandbox_evidence: if requested.sandbox { (inner.runtime.sandbox_evidence)() } else { None },
+    });
+    let default_mode: Option<PermissionMode> = file.permissions.default_mode.map(Into::into);
     Policy {
-        default_mode: file.permissions.default_mode.map(Into::into),
+        // A requested default above Ask first waits; Ask first meanwhile.
+        default_mode: match &request {
+            Some(r) if r.default_mode.is_some() => Some(PermissionMode::AskFirst),
+            _ => default_mode,
+        },
         ceiling: file.permissions.ceiling.map(Into::into),
         grants,
         error: None,
+        request,
     }
+}
+
+/// The privilege-expanding parts of a committed policy file (ADR-0006).
+struct Requested {
+    allow: Vec<GrantRule>,
+    sandbox: bool,
+    default_mode: Option<PermissionMode>,
+    worktrees_root: Option<String>,
+}
+
+const POLICY_SUBJECT: &str = "policy";
+
+/// What the file requests and its hash; none when it requests nothing.
+fn requested(file: &repo_policy::RepoPolicy) -> Option<(String, Requested)> {
+    let (allow, _) = file.grants().unwrap_or_default();
+    let default_mode = file
+        .permissions
+        .default_mode
+        .map(PermissionMode::from)
+        .filter(|m| rank(*m) > rank(PermissionMode::AskFirst));
+    let requested = Requested {
+        allow,
+        sandbox: file.permissions.sandbox,
+        default_mode,
+        worktrees_root: file.worktrees.root.clone(),
+    };
+    if requested.allow.is_empty() && !requested.sandbox && requested.default_mode.is_none() && requested.worktrees_root.is_none() {
+        return None;
+    }
+    let canonical = serde_json::json!({
+        "allow": requested.allow,
+        "sandbox": requested.sandbox,
+        "defaultMode": requested.default_mode,
+        "worktreesRoot": requested.worktrees_root,
+    });
+    Some((crate::acknowledgements::hash(&canonical.to_string()), requested))
+}
+
+/// The file's request when the user has not acknowledged exactly it.
+fn pending_request(inner: &Inner, repository_id: &str, file: &repo_policy::RepoPolicy) -> Option<(String, Requested)> {
+    requested(file).filter(|(hash, _)| !crate::acknowledgements::holds(inner.store.db(), repository_id, POLICY_SUBJECT, hash))
+}
+
+/// Whether everything the file requests is acknowledged (or it requests nothing).
+pub(crate) fn acknowledged(inner: &Inner, repository_id: &str, file: &repo_policy::RepoPolicy) -> bool {
+    pending_request(inner, repository_id, file).is_none()
+}
+
+/// One line naming what a pending request holds back, for a session's transcript.
+pub(crate) fn pending_summary(inner: &Inner, repo: &StoredRepository) -> Option<String> {
+    let file = repo_policy::load(Path::new(&repo.path)).ok()?;
+    let (_, r) = pending_request(inner, &repo.id, &file)?;
+    let mut parts = Vec::new();
+    match r.allow.len() {
+        0 => {}
+        1 => parts.push("1 allow rule".to_string()),
+        n => parts.push(format!("{n} allow rules")),
+    }
+    if r.sandbox {
+        parts.push("a sandbox (no bypass in Full auto)".into());
+    }
+    if let Some(mode) = r.default_mode {
+        parts.push(format!("default mode {}", mode_label(mode)));
+    }
+    if r.worktrees_root.is_some() {
+        parts.push("its own worktree root".into());
+    }
+    Some(format!(
+        "The repository's committed policy requests {} that do not apply until you acknowledge it in Context.",
+        parts.join(", ")
+    ))
+}
+
+/// The `acknowledgePolicy` command.
+pub(crate) fn acknowledge(inner: &Inner, repository_id: &str, hash: &str) {
+    const COMMAND: &str = command_name::ACKNOWLEDGE_POLICY;
+    let Some(repo) = repository(inner, repository_id) else {
+        return inner.refuse(COMMAND, crate::no_repository(repository_id));
+    };
+    let file = match repo_policy::load(Path::new(&repo.path)) {
+        Ok(file) => file,
+        Err(error) => return inner.refuse(COMMAND, error),
+    };
+    let Some((current, _)) = requested(&file) else {
+        return inner.refuse(COMMAND, "The repository's policy requests nothing to acknowledge".into());
+    };
+    if current != hash {
+        return inner.refuse(
+            COMMAND,
+            "The repository's policy changed since you read it; read it again before acknowledging".into(),
+        );
+    }
+    if let Err(reason) = crate::acknowledgements::set(inner.store.db(), &repo.id, POLICY_SUBJECT, hash) {
+        return inner.refuse(COMMAND, format!("Could not acknowledge the policy: {reason}"));
+    }
+    emit(inner, &repo);
+}
+
+/// What on this machine supports a sandbox claim: Switchyard itself running in a
+/// container or VM. `None` when nothing is detected (the claim cannot be verified).
+pub fn detect_sandbox() -> Option<String> {
+    if Path::new("/.dockerenv").exists() {
+        return Some("Switchyard is running in a Docker container (/.dockerenv)".into());
+    }
+    if Path::new("/run/.containerenv").exists() {
+        return Some("Switchyard is running in a Podman container (/run/.containerenv)".into());
+    }
+    if let Ok(kind) = std::env::var("container") {
+        return Some(format!("Switchyard is running in a container ({kind})"));
+    }
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+        if ["docker", "kubepods", "lxc", "containerd"].iter().any(|k| cgroup.contains(k)) {
+            return Some("Switchyard is running in a container (/proc/1/cgroup)".into());
+        }
+    }
+    None
 }
 
 /// Deny wins across layers; then any allow; otherwise ask. File writes and questions are
@@ -265,9 +401,11 @@ pub(crate) fn admit_mode(repo: &StoredRepository, mode: PermissionMode) -> Resul
     }
 }
 
-/// Whether the repository's policy declares a sandbox (a broken file declares nothing).
-pub(crate) fn sandboxed(repo: &StoredRepository) -> bool {
-    repo_policy::load(Path::new(&repo.path)).is_ok_and(|file| file.permissions.sandbox)
+/// Whether the repository's policy declares a sandbox the user has acknowledged (a broken
+/// file declares nothing; an unacknowledged declaration is only a request, ADR-0006).
+pub(crate) fn sandboxed(inner: &Inner, repo: &StoredRepository) -> bool {
+    repo_policy::load(Path::new(&repo.path))
+        .is_ok_and(|file| file.permissions.sandbox && acknowledged(inner, &repo.id, &file))
 }
 
 pub(crate) fn mode_label(mode: PermissionMode) -> &'static str {

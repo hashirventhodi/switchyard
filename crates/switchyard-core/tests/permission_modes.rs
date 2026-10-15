@@ -30,7 +30,8 @@ fn setup(policy: Option<&str>) -> Setup {
     }
     let worktree = repo.add_worktree("feat/modes");
     let mut core = Harness::launch();
-    added_repository(&core.add_repository(&repo.path));
+    let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    core.acknowledge_policy(&repo_id);
     Setup { core, _repo: repo, worktree }
 }
 

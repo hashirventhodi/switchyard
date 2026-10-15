@@ -33,6 +33,8 @@ fn setup_with(policy: Option<&str>, n: usize) -> Setup {
     let worktrees = (0..n).map(|i| repo.add_worktree(&format!("feat/w{i}"))).collect();
     let mut core = Harness::launch();
     let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    // These tests are about what the committed policy does once the user acknowledged it.
+    core.acknowledge_policy(&repo_id);
     Setup { core, repo, repo_id, worktrees }
 }
 
@@ -372,6 +374,7 @@ fn the_repository_policy_file_supplies_grants_denials_a_default_mode_and_a_ceili
                 repo("repo-deny-1", GrantEffect::Deny, GrantRule::Command { pattern: "git push *".into() }),
             ],
             error: None,
+            request: None,
         }
     );
 

@@ -223,6 +223,15 @@ pub enum Command {
         #[ts(rename = "worktreePath")]
         worktree_path: String,
     },
+    /// Acknowledge the Repository's pending policy request, named by its hash (refused when
+    /// the policy has changed since): its allow rules, sandbox, default mode and worktree
+    /// root apply from then on, until the request changes (ADR-0006).
+    AcknowledgePolicy {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        hash: String,
+    },
     /// List the MCP servers the Repository's `.mcp.json` declares and which the user has
     /// enabled. Answered with [`Event::McpServersChanged`].
     ReadMcpServers {
@@ -481,6 +490,7 @@ pub mod command_name {
     pub const RESOLVE_CONFLICT: &str = "resolveConflict";
     pub const ASK_AGENT_TO_REBASE: &str = "askAgentToRebase";
     pub const READ_HISTORY: &str = "readHistory";
+    pub const ACKNOWLEDGE_POLICY: &str = "acknowledgePolicy";
     pub const READ_MCP_SERVERS: &str = "readMcpServers";
     pub const ENABLE_MCP_SERVER: &str = "enableMcpServer";
     pub const DISABLE_MCP_SERVER: &str = "disableMcpServer";
@@ -510,7 +520,7 @@ pub mod command_name {
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
 }
 
 impl Command {
@@ -543,6 +553,7 @@ impl Command {
             Command::ResolveConflict { .. } => command_name::RESOLVE_CONFLICT,
             Command::AskAgentToRebase { .. } => command_name::ASK_AGENT_TO_REBASE,
             Command::ReadHistory { .. } => command_name::READ_HISTORY,
+            Command::AcknowledgePolicy { .. } => command_name::ACKNOWLEDGE_POLICY,
             Command::ReadMcpServers { .. } => command_name::READ_MCP_SERVERS,
             Command::EnableMcpServer { .. } => command_name::ENABLE_MCP_SERVER,
             Command::DisableMcpServer { .. } => command_name::DISABLE_MCP_SERVER,
@@ -1092,6 +1103,31 @@ pub struct Policy {
     /// Why the repository's policy file could not be read. While it is broken nothing is
     /// granted (its denials are unknown), so every request asks.
     pub error: Option<String>,
+    /// What the committed policy file asks for that would expand privilege and the user has
+    /// not acknowledged (ADR-0006): none of it applies until then.
+    #[serde(default)]
+    pub request: Option<PolicyRequest>,
+}
+
+/// The privilege-expanding parts of a Repository's committed policy, awaiting the user's
+/// acknowledgement (ADR-0006).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PolicyRequest {
+    /// What [`Command::AcknowledgePolicy`] must name: a hash of exactly these parts.
+    pub hash: String,
+    /// The committed allow rules (not applied until acknowledged).
+    pub allow: Vec<Grant>,
+    /// The policy declares a sandbox (Full auto would bypass the CLI's checks).
+    pub sandbox: bool,
+    /// A default mode above Ask first (Ask first is used until acknowledged).
+    pub default_mode: Option<PermissionMode>,
+    /// A worktree root of the repository's own (Switchyard's is used until acknowledged).
+    pub worktrees_root: Option<String>,
+    /// What Switchyard detected that supports a sandbox claim (a container or VM it runs
+    /// in); none when it cannot verify one.
+    pub sandbox_evidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
