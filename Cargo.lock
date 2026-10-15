@@ -3155,6 +3155,7 @@ dependencies = [
  "adapter-protocol",
  "portable-pty",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "switchyard-schema",

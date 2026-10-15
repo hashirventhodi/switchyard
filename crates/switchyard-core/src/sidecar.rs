@@ -86,11 +86,10 @@ impl AgentLauncher for SidecarLauncher {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let event = serde_json::from_str(&line).unwrap_or_else(|e| adapter_protocol::Event::Error {
-                    message: format!("the sidecar wrote an unreadable line ({e}): {line}"),
-                    fatal: false,
-                });
-                sink(AgentOutput::Event(event));
+                match serde_json::from_str(&line) {
+                    Ok(event) => sink(AgentOutput::Event(event)),
+                    Err(_) => sink(AgentOutput::Unreadable { line }),
+                }
             }
             let _ = stderr_reader.join();
             let code = waited.lock().expect("child").wait().ok().and_then(|s| s.code());

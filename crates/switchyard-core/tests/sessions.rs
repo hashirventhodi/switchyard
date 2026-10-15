@@ -132,7 +132,6 @@ fn a_recorded_session_streams_into_the_transcript_and_walks_needs_you_then_finis
             cli_version: Some("2.1.300".into()),
             cli_permission_mode: Some("default".into()),
             turns: 1,
-            cost_usd: Some(0.0412),
         }
     );
 

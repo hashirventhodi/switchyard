@@ -8,8 +8,4 @@ cliPermissionMode: string | null,
 /**
  * Completed turns.
  */
-turns: number, 
-/**
- * Cost reported by the CLI so far, when it reports one.
- */
-costUsd: number | null, };
+turns: number, };

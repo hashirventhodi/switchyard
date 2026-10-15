@@ -1,11 +1,13 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
+import type { AgentSetup } from "./schema/AgentSetup";
 import type { Entry } from "./schema/Entry";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
 import type { Session } from "./schema/Session";
 import type { SessionFacts } from "./schema/SessionFacts";
 import type { Shell } from "./schema/Shell";
+import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 
 export interface RepositoryView extends Repository {
@@ -17,6 +19,8 @@ export interface SessionView extends Session {
   transcript: Chunked<Entry>;
   /** Raw adapter-protocol events (JSON), for the Agent log's debug view. */
   rawEvents: Chunked<string>;
+  /** Running spend totals as recorded, oldest first. */
+  spend: SpendSample[];
 }
 
 export interface Toast {
@@ -32,11 +36,13 @@ export interface State {
   /** Open shell terminals, in open order. */
   shells: Shell[];
   toasts: Toast[];
+  /** What the core detected about each agent CLI; empty until it reports. */
+  agents: AgentSetup[];
 }
 
-export const initialState: State = { repositories: [], sessions: {}, shells: [], toasts: [] };
+export const initialState: State = { repositories: [], sessions: {}, shells: [], toasts: [], agents: [] };
 
-const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0, costUsd: null };
+const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
 let toastSeq = 0;
 
@@ -66,12 +72,18 @@ export function reduce(state: State, event: Event): State {
       return { ...state, toasts: [...state.toasts, { id: ++toastSeq, tone: "bad", text: event.reason }] };
     case "sessionStarted": {
       const s = event.session;
-      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked(), rawEvents: emptyChunked() } } };
+      const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyChunked<string>(), spend: [] };
+      return { ...state, sessions: { ...state.sessions, [s.id]: view } };
     }
     case "sessionStatusChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
+    case "spendRecorded":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        spend: [...s.spend, { atMs: event.atMs, spend: event.spend }],
+      }));
     case "transcriptEntry":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
@@ -89,6 +101,8 @@ export function reduce(state: State, event: Event): State {
     case "shellOutput":
       // A byte stream for the terminal emulator (see shellStreams.ts), not renderer state.
       return state;
+    case "agentsChecked":
+      return { ...state, agents: event.agents };
   }
 }
 

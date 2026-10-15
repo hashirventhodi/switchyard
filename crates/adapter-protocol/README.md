@@ -28,7 +28,7 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 | `turn_complete` | (none): the agent awaits the next prompt |
 | `done` | `summary`: the agent declared its work complete |
 | `error` | `message`, `fatal` |
-| `token_usage` | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cost_usd` (only when the CLI reports one) |
+| `token_usage` | `input_tokens` (excluding cache reads), `output_tokens`, `cache_read_tokens`, `cost_usd` (only when the CLI reports one): running totals for the whole session, each report superseding the last |
 | `classifier_denial` | `tool`, `detail`, `reason`: never a Permission request |
 
 A `permission_request`'s `request` is tagged by `kind`, one of exactly five:

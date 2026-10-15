@@ -7,6 +7,7 @@ import { matches } from "./keymap";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
 import type { SessionView as Session } from "./state";
+import { sessionCost } from "./spend";
 import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, Status } from "./status";
 import { VirtualList } from "./VirtualList";
 
@@ -43,19 +44,20 @@ export function SessionView({ session, send }: { session: Session; send: (comman
 function SummaryStrip({ session }: { session: Session }) {
   const { facts } = session;
   const cliMode = facts.cliPermissionMode ? ` (CLI: ${facts.cliPermissionMode})` : "";
-  const cells: [string, string][] = [
+  const [cost, costDetail] = sessionCost(session);
+  const cells: [string, string, string?][] = [
     ["Agent", AGENT_LABEL[session.agent]],
     ["Model", facts.model ?? "—"],
     ["CLI", facts.cliVersion ?? "—"],
     ["Worktree", session.worktreePath],
     ["Mode", MODE_LABEL[session.permissionMode] + cliMode],
     ["Turns", String(facts.turns)],
-    ["Cost", "—"],
+    ["Cost", cost, costDetail],
   ];
   return (
     <div className="summary" aria-label="Summary">
-      {cells.map(([label, value]) => (
-        <div className="c" key={label} title={value}>
+      {cells.map(([label, value, detail]) => (
+        <div className="c" key={label} title={detail ?? value}>
           <div className="l">{label}</div>
           <div className="v">{value}</div>
         </div>

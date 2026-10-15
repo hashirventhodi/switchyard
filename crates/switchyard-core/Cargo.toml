@@ -11,6 +11,7 @@ switchyard-schema.workspace = true
 adapter-protocol = { path = "../adapter-protocol" }
 serde.workspace = true
 serde_json.workspace = true
+semver = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 portable-pty = "0.9"
 

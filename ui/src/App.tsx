@@ -13,7 +13,9 @@ import { NewSession } from "./NewSession";
 import { Dock } from "./Dock";
 import { shellStreams, type ShellStreams } from "./shellStreams";
 import { xtermTerminal, type CreateTerminal } from "./terminal";
+import { SetupPanel, type OpenLink } from "./Setup";
 import { SessionView } from "./SessionView";
+import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
 import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
@@ -76,11 +78,19 @@ export interface AppProps {
   actions?: ActionRegistry;
   /** The terminal emulator for shell tabs; tests pass a fake. */
   createTerminal?: CreateTerminal;
+  /** Opens an install or update link in the user's browser. */
+  openLink?: OpenLink;
 }
 
 type Overlay = "palette" | "help" | "newSession" | null;
 
-export function App({ core, pickFolder, actions, createTerminal = xtermTerminal }: AppProps) {
+export function App({
+  core,
+  pickFolder,
+  actions,
+  createTerminal = xtermTerminal,
+  openLink = (url) => window.open(url, "_blank"),
+}: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -363,6 +373,18 @@ export function App({ core, pickFolder, actions, createTerminal = xtermTerminal 
               <div className="pagehead">
                 <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
               </div>
+              {prefs.view === "dashboard" && (
+                <>
+                  <SetupPanel
+                    agents={state.agents}
+                    onCheck={() => core.send({ type: "checkAgents" })}
+                    openLink={openLink}
+                  />
+                  <div className="kpis">
+                    <SpendToday sessions={sessions} variant="kpi" />
+                  </div>
+                </>
+              )}
               <p className="empty">
                 {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
               </p>
@@ -394,7 +416,7 @@ export function App({ core, pickFolder, actions, createTerminal = xtermTerminal 
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
-            <span className="i">$0.00 today</span>
+            <SpendToday sessions={sessions} variant="status" />
           </div>
         </footer>
 
@@ -411,7 +433,7 @@ export function App({ core, pickFolder, actions, createTerminal = xtermTerminal 
         </div>
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
         {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
-        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} />}
+        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} openLink={openLink} />}
       </div>
     </ActionsContext.Provider>
   );

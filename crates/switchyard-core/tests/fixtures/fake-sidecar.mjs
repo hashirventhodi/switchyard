@@ -1,6 +1,6 @@
 // A stand-in for the Claude Code sidecar that speaks the adapter protocol on stdio without
 // any SDK or CLI: it reports its working directory and launch config, echoes prompts as a
-// finished turn, and exits on demand.
+// finished turn, writes unreadable lines on "garbage" and exits on "crash".
 import { createInterface } from "node:readline";
 
 const config = JSON.parse(process.argv[process.argv.indexOf("--config") + 1]);
@@ -21,6 +21,10 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (command.type === "send_text" && command.text === "crash") {
     process.stderr.write("fake sidecar: crashing as asked\n");
     process.exit(3);
+  }
+  if (command.type === "send_text" && command.text === "garbage") {
+    process.stdout.write("this is not json\n");
+    say({ type: "telepathy", thought: "hi" });
   }
   if (command.type === "send_text") {
     say({ type: "agent_text", text: `you said: ${command.text}` });
