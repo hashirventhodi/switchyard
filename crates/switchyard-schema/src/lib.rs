@@ -1362,13 +1362,17 @@ pub enum McpState {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Spend {
-    /// Input tokens, not counting cache reads.
+    /// Input tokens, not counting cache reads or writes.
     #[ts(type = "number")]
     pub input_tokens: u64,
     #[ts(type = "number")]
     pub output_tokens: u64,
     #[ts(type = "number")]
     pub cache_read_tokens: u64,
+    /// Tokens written to the prompt cache (priced apart from input).
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub cache_write_tokens: u64,
     /// Cost the CLI reported, in USD.
     pub reported_usd: Option<f64>,
     /// Cost estimated from the price table, in USD: only when the CLI reported none and the

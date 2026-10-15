@@ -86,7 +86,7 @@ export function SpendToday({ sessions, variant }: { sessions: SessionView[]; var
 export function sessionCost(session: SessionView): [string, string] {
   const latest = session.spend[session.spend.length - 1]?.spend;
   if (!latest) return ["—", "No usage reported yet"];
-  const tokens = `${count(latest.inputTokens)} in · ${count(latest.outputTokens)} out · ${count(latest.cacheReadTokens)} cached tokens`;
+  const tokens = `${count(latest.inputTokens)} in · ${count(latest.outputTokens)} out · ${count(latest.cacheReadTokens)} cache reads · ${count(latest.cacheWriteTokens ?? 0)} cache writes`;
   if (latest.reportedUsd !== null) return [usd(latest.reportedUsd), `Reported by the CLI: $${latest.reportedUsd} · ${tokens}`];
   if (latest.estimatedUsd !== null)
     return [

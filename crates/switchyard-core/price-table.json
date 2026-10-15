@@ -1,6 +1,6 @@
 {
   "version": "2026-10-15",
-  "note": "USD per million tokens. Used only for CLIs that report tokens without a cost (Claude Code reports its own cost). A key prices a model id equal to it or starting with it plus '-' (so 'gpt-5' prices 'gpt-5-2025-08-07' but not 'gpt-5.1'). Copy this file to <data dir>/price-table.json to override it; estimates are recomputed when read.",
+  "note": "USD per million tokens. Used only for CLIs that report tokens without a cost (Claude Code reports its own cost). A key prices a model id equal to it or starting with it plus '-' (so 'gpt-5' prices 'gpt-5-2025-08-07' but not 'gpt-5.1'). Copy this file to <data dir>/price-table.json to override it; estimates are recomputed when read. An optional cacheWrite prices cache writes; without it they cost what input costs.",
   "models": {
     "gpt-5": { "input": 1.25, "output": 10.0, "cacheRead": 0.125 },
     "gpt-5-codex": { "input": 1.25, "output": 10.0, "cacheRead": 0.125 },

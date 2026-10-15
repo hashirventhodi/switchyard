@@ -62,3 +62,26 @@ test("resume by the CLI's session id becomes a resume op", () => {
     { op: "resume", session_id: "sess-9" },
   ]);
 });
+
+test("a result's usage counts cache writes apart from input and cache reads", () => {
+  const t = new ClaudeTranslator();
+  const result = {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "ok",
+    total_cost_usd: 0.05,
+    modelUsage: {
+      a: { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 300, cacheCreationInputTokens: 4000 },
+      b: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 5 },
+    },
+  };
+  expect(t.ingest(JSON.stringify(result))[0]).toEqual({
+    type: "token_usage",
+    input_tokens: 11,
+    output_tokens: 22,
+    cache_read_tokens: 303,
+    cache_write_tokens: 4005,
+    cost_usd: 0.05,
+  });
+});

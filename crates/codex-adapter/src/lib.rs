@@ -426,6 +426,8 @@ impl CodexAdapter {
                     input_tokens: count("inputTokens").saturating_sub(cached),
                     output_tokens: count("outputTokens"),
                     cache_read_tokens: cached,
+                    // OpenAI caches prompts without a write charge or count.
+                    cache_write_tokens: 0,
                     cost_usd: None,
                 }]
             }

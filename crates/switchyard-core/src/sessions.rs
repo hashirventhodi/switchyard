@@ -669,12 +669,13 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     cause = Some(Cause::AgentFailed);
                 }
             }
-            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cost_usd } => {
+            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd } => {
                 let usage = Usage {
                     at_ms: (inner.runtime.now_ms)(),
                     input_tokens,
                     output_tokens,
                     cache_read_tokens,
+                    cache_write_tokens,
                     reported_usd: cost_usd,
                 };
                 state.usage.push(usage);

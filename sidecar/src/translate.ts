@@ -209,8 +209,9 @@ export class ClaudeTranslator {
         input: sum.input + (m.inputTokens ?? 0),
         output: sum.output + (m.outputTokens ?? 0),
         cacheRead: sum.cacheRead + (m.cacheReadInputTokens ?? 0),
+        cacheWrite: sum.cacheWrite + (m.cacheCreationInputTokens ?? 0),
       }),
-      { input: 0, output: 0, cacheRead: 0 },
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     );
     const events: ProtocolEvent[] = [
       {
@@ -218,6 +219,7 @@ export class ClaudeTranslator {
         input_tokens: usage.input,
         output_tokens: usage.output,
         cache_read_tokens: usage.cacheRead,
+        ...(usage.cacheWrite > 0 ? { cache_write_tokens: usage.cacheWrite } : {}),
         cost_usd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
       },
     ];

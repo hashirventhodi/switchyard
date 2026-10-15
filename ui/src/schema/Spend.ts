@@ -7,9 +7,13 @@
  */
 export type Spend = { 
 /**
- * Input tokens, not counting cache reads.
+ * Input tokens, not counting cache reads or writes.
  */
 inputTokens: number, outputTokens: number, cacheReadTokens: number, 
+/**
+ * Tokens written to the prompt cache (priced apart from input).
+ */
+cacheWriteTokens: number, 
 /**
  * Cost the CLI reported, in USD.
  */

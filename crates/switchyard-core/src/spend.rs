@@ -4,8 +4,8 @@
 //!
 //! The price table is `<data dir>/price-table.json` when present, else the one built into
 //! the app (`crates/switchyard-core/price-table.json`). Format:
-//! `{"version": "...", "models": {"<model id or family>": {"input", "output", "cacheRead"}}}`,
-//! prices in USD per million tokens.
+//! `{"version": "...", "models": {"<model id or family>": {"input", "output", "cacheRead", "cacheWrite"?}}}`,
+//! prices in USD per million tokens (cache writes cost what input costs when not named).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -23,6 +23,7 @@ pub(crate) struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
     pub reported_usd: Option<f64>,
 }
 
@@ -38,6 +39,9 @@ struct Prices {
     input: f64,
     output: f64,
     cache_read: f64,
+    /// Cache writes; priced as input when the table names no price for them.
+    #[serde(default)]
+    cache_write: Option<f64>,
 }
 
 impl PriceTable {
@@ -73,11 +77,13 @@ impl Usage {
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cache_read_tokens: self.cache_read_tokens,
+            cache_write_tokens: self.cache_write_tokens,
             reported_usd: self.reported_usd,
             estimated_usd: prices.map(|p| {
                 per_million(self.input_tokens, p.input)
                     + per_million(self.output_tokens, p.output)
                     + per_million(self.cache_read_tokens, p.cache_read)
+                    + per_million(self.cache_write_tokens, p.cache_write.unwrap_or(p.input))
             }),
             price_table_version: prices.map(|_| table.version.clone()),
         }

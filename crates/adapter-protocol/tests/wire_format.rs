@@ -235,7 +235,18 @@ fn lifecycle_usage_and_classifier_events() {
             input_tokens: 10,
             output_tokens: 5,
             cache_read_tokens: 2,
+            cache_write_tokens: 0,
             cost_usd: Some(0.01),
+        },
+    );
+    round_trip_event(
+        json!({ "type": "token_usage", "input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 2, "cache_write_tokens": 7, "cost_usd": null }),
+        Event::TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 2,
+            cache_write_tokens: 7,
+            cost_usd: None,
         },
     );
     round_trip_event(

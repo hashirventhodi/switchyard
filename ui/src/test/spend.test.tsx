@@ -36,7 +36,7 @@ function session(id: string, worktreePath: string, branch: string): Event {
   return { type: "sessionStarted", session: s };
 }
 
-const tokens = { inputTokens: 40, outputTokens: 310, cacheReadTokens: 24100 };
+const tokens = { inputTokens: 40, outputTokens: 310, cacheReadTokens: 24100, cacheWriteTokens: 2100 };
 const reported = (usd: number): Spend => ({ ...tokens, reportedUsd: usd, estimatedUsd: null, priceTableVersion: null });
 const estimated = (usd: number): Spend => ({ ...tokens, reportedUsd: null, estimatedUsd: usd, priceTableVersion: "test-1" });
 const spent = (sessionId: string, atMs: number, spend: Spend): Event => ({ type: "spendRecorded", sessionId, atMs, spend });
@@ -61,7 +61,7 @@ test("a CLI-reported cost is shown as is, without a tilde", () => {
   const cost = summaryCost();
   expect(cost.querySelector(".v")!.textContent).toBe("$0.06");
   expect(cost.title).toMatch(/Reported by the CLI: \$0\.0587/);
-  expect(cost.title).toMatch(/40 in · 310 out · 24,100 cached/);
+  expect(cost.title).toMatch(/40 in · 310 out · 24,100 cache reads · 2,100 cache writes/);
 });
 
 test("a token-only CLI's cost is an estimate, marked with a tilde and its price table", () => {
