@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { App } from "../App";
 import type { Entry } from "../schema/Entry";
 import type { Event } from "../schema/Event";
@@ -9,7 +9,10 @@ import type { SessionStatus } from "../schema/SessionStatus";
 import { fakeCore } from "./fakeCore";
 
 beforeEach(() => localStorage.clear());
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const acme = { id: "repo-1", name: "acme", path: "/src/acme", baseBranch: "main" };
 const repoEvents: Event[] = [
@@ -159,6 +162,9 @@ test("the transcript shows prose and tool rows: shell runs and failures expanded
 });
 
 test("the summary strip shows agent, model, CLI version, path, mode, turns, cost and elapsed", () => {
+  // Pin the clock so "Elapsed" does not depend on how fast the test runs.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(session.startedAtMs + 65_000);
   launch(
     { type: "sessionStarted", session },
     {
