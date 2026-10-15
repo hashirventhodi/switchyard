@@ -26,6 +26,7 @@ use switchyard_core::agents::{AgentHandle, AgentLauncher, AgentOutput, AgentSink
 use switchyard_core::compat::AgentProbe;
 use switchyard_core::processes::ProcessTable;
 use switchyard_core::forge::GhForge;
+use switchyard_core::watcher::{ChangeSink, Watch, Watcher};
 use switchyard_core::{Core, Runtime};
 use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Repository};
 use tempfile::TempDir;
@@ -51,6 +52,8 @@ pub struct Harness {
     pub secrets: FakeSecrets,
     /// The `gh` the core runs as its Forge CLI (missing until `gh.install()`).
     pub gh: FakeGh,
+    /// What the core watches on disk; `disk_changed` delivers a change by hand.
+    pub watcher: FakeWatcher,
 }
 
 impl Harness {
@@ -79,10 +82,11 @@ impl Harness {
             forge_poll_every: None,
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
+            watcher: Arc::new(FakeWatcher::default()),
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
-        Harness { core, events, data_dir, agents: FakeAgents::default(), probe, processes, gh, secrets }
+        Harness { core, events, data_dir, agents: FakeAgents::default(), probe, processes, gh, secrets, watcher: FakeWatcher::default() }
     }
 
     /// The Switchyard worktree root this core creates worktrees under (canonical path).
@@ -105,12 +109,18 @@ impl Harness {
     }
 
     fn launch_in(data_dir: TempDir, processes: FakeProcesses, secrets: FakeSecrets) -> Self {
-        Self::launch_at(data_dir, processes, secrets, || NOW_MS, GH_TIMEOUT)
+        Self::launch_at(data_dir, processes, secrets, || NOW_MS, GH_TIMEOUT, None)
+    }
+
+    /// A harness whose core watches the disk with `watcher` (the real one, say) instead of
+    /// the fake; collect what it causes with `wait_for`.
+    pub fn launch_watching(watcher: Arc<dyn Watcher>) -> Self {
+        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, GH_TIMEOUT, Some(watcher))
     }
 
     /// A harness whose `gh` is given up on after `timeout` (the app waits a minute).
     pub fn launch_with_gh_timeout(timeout: std::time::Duration) -> Self {
-        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, timeout)
+        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, timeout, None)
     }
 
     fn launch_at(
@@ -119,10 +129,12 @@ impl Harness {
         secrets: FakeSecrets,
         now_ms: fn() -> u64,
         gh_timeout: std::time::Duration,
+        real_watcher: Option<Arc<dyn Watcher>>,
     ) -> Self {
         let (tx, events) = channel();
         let probe = FakeProbe::default();
         let agents = FakeAgents::with_processes(processes.clone());
+        let watcher = FakeWatcher::default();
         let runtime = Runtime {
             agents: Arc::new(agents.clone()),
             now_ms,
@@ -135,10 +147,11 @@ impl Harness {
             forge_poll_every: None,
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
+            watcher: real_watcher.unwrap_or_else(|| Arc::new(watcher.clone())),
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
-        Harness { core, events, data_dir, agents, probe, processes, gh, secrets }
+        Harness { core, events, data_dir, agents, probe, processes, gh, secrets, watcher }
     }
 
     /// Quit and reopen: a new core on the same data directory. Agent processes the old core
@@ -153,7 +166,7 @@ impl Harness {
     pub fn relaunch_at(self, now_ms: fn() -> u64) -> Self {
         let Harness { core, data_dir, processes, secrets, .. } = self;
         drop(core);
-        Self::launch_at(data_dir, processes, secrets, now_ms, GH_TIMEOUT)
+        Self::launch_at(data_dir, processes, secrets, now_ms, GH_TIMEOUT, None)
     }
 
     /// Claude Code's home as this core reads it (project memory lives under it).
@@ -207,6 +220,14 @@ impl Harness {
     /// One tick of the Forge poller (the app ticks every few seconds); returns the events.
     pub fn poll_forge(&mut self) -> Vec<Event> {
         self.core.poll_forge();
+        self.drain()
+    }
+
+    /// The watcher reports that `paths` (absolute, or relative to the worktree) changed under
+    /// the watched `worktree`, already coalesced; returns the events it caused. Nothing is
+    /// delivered for a worktree the core is not watching.
+    pub fn disk_changed(&mut self, worktree: &Path, paths: &[&Path]) -> Vec<Event> {
+        self.watcher.deliver(worktree, paths);
         self.drain()
     }
 
@@ -274,6 +295,48 @@ fn export_dir_in(data_dir: &TempDir) -> PathBuf {
 
 fn fake_gh_in(data_dir: &TempDir) -> FakeGh {
     FakeGh::in_dir(data_dir.path().join("fake-gh"))
+}
+
+/// Fake disk watcher: remembers what the core watches; the test delivers changes by hand,
+/// synchronously and with no coalescing delay.
+#[derive(Clone, Default)]
+pub struct FakeWatcher {
+    watches: Arc<Mutex<Vec<(Watch, ChangeSink)>>>,
+}
+
+impl FakeWatcher {
+    /// The worktrees being watched, sorted.
+    pub fn watching(&self) -> Vec<PathBuf> {
+        let mut list: Vec<_> = self.watches.lock().unwrap().iter().map(|(w, _)| w.worktree.clone()).collect();
+        list.sort();
+        list
+    }
+
+    /// The directories watched for `worktree`.
+    pub fn roots(&self, worktree: &Path) -> Vec<PathBuf> {
+        let watches = self.watches.lock().unwrap();
+        watches.iter().find(|(w, _)| w.worktree == worktree).map(|(w, _)| w.roots.clone()).unwrap_or_default()
+    }
+
+    fn deliver(&self, worktree: &Path, paths: &[&Path]) {
+        let sink = self.watches.lock().unwrap().iter().find(|(w, _)| w.worktree == worktree).map(|(_, s)| s.clone());
+        if let Some(sink) = sink {
+            sink(paths.iter().map(|p| p.to_path_buf()).collect());
+        }
+    }
+}
+
+impl Watcher for FakeWatcher {
+    fn watch(&self, watch: Watch, sink: ChangeSink) -> Result<(), String> {
+        let mut watches = self.watches.lock().unwrap();
+        watches.retain(|(w, _)| w.worktree != watch.worktree);
+        watches.push((watch, sink));
+        Ok(())
+    }
+
+    fn unwatch(&self, worktree: &Path) {
+        self.watches.lock().unwrap().retain(|(w, _)| w.worktree != worktree);
+    }
 }
 
 /// Fake agent transport: records launches and commands; events are delivered by the test.

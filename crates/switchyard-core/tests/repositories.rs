@@ -1,7 +1,12 @@
 mod harness;
 
 use harness::{added_repository, Harness, TempRepo};
-use switchyard_schema::{Command, Event, Worktree};
+use switchyard_schema::{Command, Event, Worktree, WorktreeFacts};
+
+/// The facts pushed for a worktree with nothing ahead, behind or uncommitted.
+fn clean_facts(path: &std::path::Path) -> Event {
+    Event::WorktreeFactsChanged { worktree_path: path.to_str().unwrap().into(), facts: WorktreeFacts::default() }
+}
 
 #[test]
 fn adding_a_repository_reports_its_base_branch_and_every_worktree() {
@@ -35,6 +40,8 @@ fn adding_a_repository_reports_its_base_branch_and_every_worktree() {
                     primary: false,
                 },
             },
+            clean_facts(&repo.path),
+            clean_facts(&feature),
         ]
     );
 }
@@ -73,6 +80,8 @@ fn on_relaunch_repositories_are_replayed_with_worktrees_re_read_from_git() {
             Event::RepositoryAdded { repository: repository.clone() },
             worktree(&repo.path, "main", true),
             worktree(&fresh, "fix/typo", false),
+            clean_facts(&repo.path),
+            clean_facts(&fresh),
         ]
     );
 }
@@ -86,7 +95,7 @@ fn attaching_twice_replays_the_same_state() {
     let first = core.send(Command::Attach);
     let second = core.send(Command::Attach);
 
-    assert_eq!(first.len(), 6, "attached, agents, forge, repository, worktree, settings: {first:#?}");
+    assert_eq!(first.len(), 7, "attached, agents, forge, repository, worktree, its facts, settings: {first:#?}");
     assert_eq!(first, second);
 }
 

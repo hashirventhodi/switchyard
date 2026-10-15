@@ -28,11 +28,13 @@ mod spend;
 mod store;
 mod subprocess;
 mod tasks;
+pub mod watcher;
+mod disk;
 mod worktrees;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use switchyard_schema::command_name;
 use switchyard_schema::{Command, Event, Repository, Worktree};
@@ -73,6 +75,8 @@ pub struct Runtime {
     /// Claude Code's home (`~/.claude`): where it keeps each project's memory, read for
     /// Context.
     pub claude_home: PathBuf,
+    /// Tells the core when a Worktree changes on disk (ADR-0008).
+    pub watcher: Arc<dyn watcher::Watcher>,
 }
 
 impl Default for Runtime {
@@ -89,6 +93,7 @@ impl Default for Runtime {
             forge_poll_every: None,
             claude_home: context::default_claude_home(),
             sandbox_evidence: policy::detect_sandbox,
+            watcher: Arc::new(watcher::NoWatcher),
         }
     }
 }
@@ -128,6 +133,8 @@ pub(crate) struct Inner {
     compat: Compat,
     review: review::Decisions,
     forge: forge::Tracker,
+    /// The core itself, for callbacks that re-enter it from other threads (the watcher).
+    me: Weak<Mutex<Inner>>,
 }
 
 #[derive(Debug)]
@@ -155,6 +162,7 @@ impl Core {
             compat,
             review: Default::default(),
             forge: Default::default(),
+            me: Weak::new(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
@@ -162,6 +170,7 @@ impl Core {
         review::load(&mut inner);
         let every = inner.runtime.forge_poll_every;
         let inner = Arc::new(Mutex::new(inner));
+        inner.lock().expect("core lock").me = Arc::downgrade(&inner);
         if let Some(every) = every {
             let weak = Arc::downgrade(&inner);
             std::thread::spawn(move || loop {
@@ -320,6 +329,8 @@ impl Inner {
         for repo in stored {
             if let Err(reason) = self.announce(&repo) {
                 self.refuse(command_name::ATTACH, reason);
+            } else {
+                self.watch_and_refresh(&repo);
             }
         }
         sessions::replay(self);
@@ -351,10 +362,19 @@ impl Inner {
             Ok(repo) => {
                 if let Err(reason) = self.announce(&repo) {
                     self.refuse(COMMAND, reason);
+                } else {
+                    self.watch_and_refresh(&repo);
                 }
             }
             Err(e) => self.refuse(COMMAND, format!("cannot save the repository: {e}")),
         }
+    }
+
+    /// Watch each of an announced repository's worktrees and push their facts, so none
+    /// waits for a change to have them.
+    fn watch_and_refresh(&self, repo: &StoredRepository) {
+        disk::watch_repository(self, Path::new(&repo.path));
+        worktrees::refresh_repository(self, Path::new(&repo.path));
     }
 
     /// Read a stored repository's facts from git and emit them.

@@ -14,10 +14,13 @@ pub struct GitWorktree {
 #[derive(Debug)]
 pub struct GitError(pub String);
 
+/// Run git in `dir`. Optional locks are off, so reading (`git status`) never rewrites the
+/// index: the core watches the index, and its own reads must not look like a change.
 fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .map_err(|e| GitError(format!("could not run git: {e}")))?;
     if out.status.success() {
@@ -276,6 +279,34 @@ pub fn ahead_behind(dir: &Path, base: &str) -> Result<(u32, u32), GitError> {
     let behind = counts.next().unwrap_or(0);
     let ahead = counts.next().unwrap_or(0);
     Ok((ahead, behind))
+}
+
+/// Which of `paths` (relative to the worktree at `dir`) git ignores, as given.
+pub fn ignored(dir: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, GitError> {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .args(["check-ignore", "--stdin", "-z"])
+        .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(path.to_string_lossy().as_bytes());
+        input.push(0);
+    }
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
+    let out = child.wait_with_output().map_err(|e| GitError(format!("could not run git: {e}")))?;
+    let _ = writer.join();
+    // Exit 1: none of them is ignored.
+    match out.status.code() {
+        Some(0) | Some(1) => Ok(nul_list(&String::from_utf8_lossy(&out.stdout)).into_iter().map(PathBuf::from).collect()),
+        _ => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
+    }
 }
 
 /// Run git in `dir` with extra environment and no optional index writes.

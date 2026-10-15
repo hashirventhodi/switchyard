@@ -72,6 +72,7 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
     let worktree = Worktree { path: path.to_string_lossy().into_owned(), branch: Some(branch.into()), primary: false };
     inner.emit(Event::WorktreeAdded { repository_id: repo.id.clone(), worktree: worktree.clone() });
     emit_facts(inner, &path, &base);
+    crate::disk::watch(inner, &path);
     Some(worktree)
 }
 
@@ -143,6 +144,7 @@ pub(crate) fn try_remove(inner: &mut Inner, worktree_path: &str) -> Result<(), S
     review::forget(inner, worktree_path);
     shells::close_worktree(inner, worktree_path);
     crate::forge::forget(inner, worktree_path);
+    crate::disk::unwatch(inner, Path::new(worktree_path));
     inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
     Ok(())
 }
@@ -151,13 +153,17 @@ pub(crate) fn try_remove(inner: &mut Inner, worktree_path: &str) -> Result<(), S
 pub(crate) fn refresh(inner: &Inner) {
     let Ok(repos) = inner.store.repositories() else { return };
     for repo in repos {
-        let dir = Path::new(&repo.path);
-        let Ok(list) = git::worktrees(dir) else { continue };
-        let Some(primary) = list.first() else { continue };
-        let base = git::base_branch(dir, primary);
-        for wt in &list {
-            emit_facts(inner, &wt.path, &base);
-        }
+        refresh_repository(inner, Path::new(&repo.path));
+    }
+}
+
+/// Re-read the facts of every worktree of the repository at `dir` and emit them.
+pub(crate) fn refresh_repository(inner: &Inner, dir: &Path) {
+    let Ok(list) = git::worktrees(dir) else { return };
+    let Some(primary) = list.first() else { return };
+    let base = git::base_branch(dir, primary);
+    for wt in &list {
+        emit_facts(inner, &wt.path, &base);
     }
 }
 
