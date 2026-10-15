@@ -1,6 +1,6 @@
 // The Worktrees view: one card per worktree with its path, base, ahead/behind, dirty count
 // and occupying session (free ones dashed), plus the New worktree modal.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAction } from "./actions";
 import type { NewSessionPreset } from "./NewSession";
 import type { Command } from "./schema/Command";
@@ -22,8 +22,6 @@ export function WorktreesView(props: {
   openLink?: OpenLink;
 }) {
   const { state, send, onNewWorktree } = props;
-  // Git is the source of truth: re-read facts whenever the view opens.
-  useEffect(() => send({ type: "refreshWorktrees" }), [send]);
 
   return (
     <div className="page">

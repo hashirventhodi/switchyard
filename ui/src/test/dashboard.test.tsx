@@ -51,9 +51,8 @@ function launch(...events: Event[]) {
   return fake;
 }
 
-test("Changed files counts the uncommitted files awaiting review across worktrees, read on mount", () => {
-  const { sent } = launch(facts("/wt/fix", 3), facts("/wt/feat", 2), facts("/src/acme", 7));
-  expect(sent).toContainEqual({ type: "refreshWorktrees" });
+test("Changed files counts the uncommitted files awaiting review across worktrees, from pushed facts", () => {
+  launch(facts("/wt/fix", 3), facts("/wt/feat", 2), facts("/src/acme", 7));
   const kpi = screen.getByLabelText("Changed files: 5");
   expect(kpi.textContent).toContain("awaiting review");
 });
