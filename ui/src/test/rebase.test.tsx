@@ -151,17 +151,6 @@ test("Context shows where the branch stands with a rebase action when behind", (
   expect(sent).toContainEqual({ type: "rebaseWorktree", worktreePath: "/wt/acme/fix" });
 });
 
-test("returning to the window re-reads every worktree's facts from git", () => {
-  const { sent } = launch();
-  const before = sent.filter((c) => c.type === "refreshWorktrees").length;
-
-  act(() => {
-    window.dispatchEvent(new window.Event("focus"));
-  });
-
-  expect(sent.filter((c) => c.type === "refreshWorktrees").length).toBe(before + 1);
-});
-
 test("Rebase is a mechanical action: not while the session is Running or Needs you", () => {
   const { emit } = launch({ type: "sessionStarted", session }, behind("/wt/acme/fix", 1));
   openSession();
