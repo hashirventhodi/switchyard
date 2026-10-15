@@ -17,6 +17,7 @@ import { SessionView, type Draft } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
 import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
+import { PrBadge, ShipActions } from "./PullRequest";
 import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { Dashboard } from "./Dashboard";
@@ -462,9 +463,21 @@ export function App({
                 pending={state.requests[shownSession.id] ?? NONE}
                 revealRequest={reveal}
                 branchState={
-                  <BehindBadge
-                    facts={branchOf(state, shownSession.worktreePath).facts}
-                    base={branchOf(state, shownSession.worktreePath).repository?.baseBranch}
+                  <>
+                    <BehindBadge
+                      facts={branchOf(state, shownSession.worktreePath).facts}
+                      base={branchOf(state, shownSession.worktreePath).repository?.baseBranch}
+                    />
+                    <PrBadge state={state} worktreePath={shownSession.worktreePath} />
+                  </>
+                }
+                ship={
+                  <ShipActions
+                    state={state}
+                    worktreePath={shownSession.worktreePath}
+                    send={core.send}
+                    openLink={openLink}
+                    primary={shownSession.status === "done"}
                   />
                 }
                 draft={bench.draft}
@@ -495,13 +508,24 @@ export function App({
               onNewSession={openNewSession}
               onNewWorktree={() => setOverlay("newWorktree")}
               onOpenShell={openShell}
+              openLink={openLink}
             />
           ) : prefs.view === "dashboard" ? (
             <Dashboard
               state={state}
               onOpenSession={(id) => openSession(id, true)}
               onOpenInbox={() => setOverlay("inbox")}
-              setup={<SetupPanel agents={state.agents} onCheck={() => core.send({ type: "checkAgents" })} openLink={openLink} />}
+              setup={
+                <SetupPanel
+                  agents={state.agents}
+                  forge={state.forge}
+                  onCheck={() => {
+                    core.send({ type: "checkAgents" });
+                    core.send({ type: "checkForge" });
+                  }}
+                  openLink={openLink}
+                />
+              }
               spend={<SpendToday sessions={sessions} variant="kpi" />}
             />
           ) : (
@@ -655,6 +679,7 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                   <span className="meta">
                     {AGENT_SHORT[occupant.agent]} · <Status status={occupant.status} variant="dot" />
                     <BehindBadge facts={state.worktreeFacts[w.path]} />
+                    <PrBadge state={state} worktreePath={w.path} />
                   </span>
                 </button>
               ) : (
@@ -664,6 +689,7 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                   <span className="meta">
                     free
                     <BehindBadge facts={state.worktreeFacts[w.path]} />
+                    <PrBadge state={state} worktreePath={w.path} />
                   </span>
                 </>
               )}

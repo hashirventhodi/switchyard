@@ -10,6 +10,7 @@ import "./review.css";
 import "./relay.css";
 import "./history.css";
 import "./archive.css";
+import "./pullRequest.css";
 
 async function pickFolder(): Promise<string | null> {
   if (!insideTauri()) return window.prompt("Repository path") || null;

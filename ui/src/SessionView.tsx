@@ -22,6 +22,9 @@ export interface SessionViewProps {
   revealRequest?: number;
   /** Where the worktree's branch stands against base (↓N behind), beside the title. */
   branchState?: ReactNode;
+  /** How the branch leaves the worktree (Open pull request, Local merge), on the header and
+   * the Finished box. */
+  ship?: ReactNode;
   /** Text drafted elsewhere (Ask agent in review) for the composer; a new seq replaces it. */
   draft?: Draft;
   /** The review pane beside this one is hidden (⌘⇧D). */
@@ -75,6 +78,7 @@ export function SessionView(props: SessionViewProps) {
             Resume
           </button>
         )}
+        {props.ship}
         <button
           className="btn sm ghost"
           title="Write the transcript as JSONL, one entry per line"
@@ -99,6 +103,12 @@ export function SessionView(props: SessionViewProps) {
         answerInChat={() => composer.current?.focus()}
         reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
       />
+      {session.status === "done" && (
+        <div className="endbox done" role="group" aria-label="Finished">
+          <span className="tx">The agent says it is done.</span>
+          {props.ship}
+        </div>
+      )}
       <Composer session={session} send={send} pending={pending} input={composer} draft={draft} />
     </section>
   );

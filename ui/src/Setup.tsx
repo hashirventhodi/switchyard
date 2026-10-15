@@ -3,7 +3,9 @@
 // cannot start. Links open in the user's browser through `openLink`; nothing here fetches.
 import type { AgentKind } from "./schema/AgentKind";
 import type { AgentSetup } from "./schema/AgentSetup";
+import type { ForgeSetup } from "./schema/ForgeSetup";
 import type { Link } from "./schema/Link";
+import { ForgeProblem } from "./PullRequest";
 
 /** Opens a link in the user's browser. */
 export type OpenLink = (url: string) => void;
@@ -43,11 +45,12 @@ export function AgentProblem({ setup, openLink }: { setup: AgentSetup; openLink:
   );
 }
 
-/** The Dashboard's setup state; renders nothing when every agent is ready. */
-export function SetupPanel(props: { agents: AgentSetup[]; onCheck: () => void; openLink: OpenLink }) {
-  const { agents, onCheck, openLink } = props;
+/** The Dashboard's setup state; renders nothing when every agent and gh are ready. */
+export function SetupPanel(props: { agents: AgentSetup[]; forge?: ForgeSetup | null; onCheck: () => void; openLink: OpenLink }) {
+  const { agents, forge, onCheck, openLink } = props;
   const problems = agents.filter((a) => a.state.type !== "ready");
-  if (problems.length === 0) return null;
+  const forgeProblem = forge && forge.state.type !== "ready" ? forge : null;
+  if (problems.length === 0 && !forgeProblem) return null;
   return (
     <section className="setup" aria-label="Setup">
       <div className="setup-head">
@@ -60,6 +63,7 @@ export function SetupPanel(props: { agents: AgentSetup[]; onCheck: () => void; o
       {problems.map((a) => (
         <AgentProblem key={a.agent} setup={a} openLink={openLink} />
       ))}
+      {forgeProblem && <ForgeProblem forge={forgeProblem} openLink={openLink} />}
     </section>
   );
 }

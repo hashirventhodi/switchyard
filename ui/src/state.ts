@@ -18,6 +18,8 @@ import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { Commit } from "./schema/Commit";
+import type { ForgeSetup } from "./schema/ForgeSetup";
+import type { PullRequest } from "./schema/PullRequest";
 
 export interface RepositoryView extends Repository {
   worktrees: Worktree[];
@@ -81,6 +83,10 @@ export interface State {
   archivedTranscript: { sessionId: string; entries: Entry[] } | null;
   /** The user settings the core keeps; null until it reports them. */
   settings: Settings | null;
+  /** Whether pull requests can be opened (gh installed, signed in); null until the core reports. */
+  forge: ForgeSetup | null;
+  /** The pull request for each worktree's branch, by worktree path, as last polled. */
+  pullRequests: Record<string, PullRequest>;
 }
 
 export interface WorktreeHistory {
@@ -103,6 +109,8 @@ export const initialState: State = {
   archived: {},
   archivedTranscript: null,
   settings: null,
+  forge: null,
+  pullRequests: {},
 };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
@@ -126,6 +134,7 @@ export function reduce(state: State, event: Event): State {
         toasts: state.toasts.filter((t) => !t.request),
         archived: {},
         archivedTranscript: null,
+        pullRequests: {},
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -144,11 +153,13 @@ export function reduce(state: State, event: Event): State {
       const repo = state.repositories.find((r) => r.id === event.repositoryId);
       const gone = repo?.worktrees.find((w) => w.path === event.worktreePath);
       const { [event.worktreePath]: _dropped, ...worktreeFacts } = state.worktreeFacts;
+      const { [event.worktreePath]: _pr, ...pullRequests } = state.pullRequests;
       const text = `Removed worktree ${gone?.branch ?? event.worktreePath}`;
       return resultToast(
         {
           ...state,
           worktreeFacts,
+          pullRequests,
           repositories: state.repositories.map((r) =>
             r.id === event.repositoryId ? { ...r, worktrees: r.worktrees.filter((w) => w.path !== event.worktreePath) } : r,
           ),
@@ -254,6 +265,33 @@ export function reduce(state: State, event: Event): State {
       return { ...state, settings: event.settings };
     case "policyChanged":
       return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
+    case "forgeChecked":
+      return { ...state, forge: event.forge };
+    case "pullRequestChanged": {
+      const { [event.worktreePath]: _old, ...others } = state.pullRequests;
+      const pullRequests = event.pullRequest ? { ...others, [event.worktreePath]: event.pullRequest } : others;
+      return { ...state, pullRequests };
+    }
+    case "pullRequestOpened": {
+      const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
+      return resultToast(state, `Opened PR #${event.pullRequest.number} for ${worktree?.branch ?? event.worktreePath}`, "ok");
+    }
+    case "branchMerged": {
+      const { branch, base, pullRequest, removed, kept } = event;
+      const what = pullRequest === null ? `Merged ${branch} into ${base}` : `PR #${pullRequest} merged`;
+      // One toast for the whole cleanup, not one for the merge and one for the removal.
+      const quiet = withoutRemovedToasts(state, [branch]);
+      return removed
+        ? resultToast(quiet, `${what} · removed worktree ${branch}`, "ok")
+        : resultToast(quiet, `${what} · kept ${branch}: ${kept ?? "it could not be removed"}`, "warn");
+    }
+    case "mergedPruned": {
+      const n = event.branches.length;
+      const quiet = withoutRemovedToasts(state, event.branches);
+      return n === 0
+        ? resultToast(quiet, "No merged worktrees to prune")
+        : resultToast(quiet, `Pruned ${n} merged worktree${n === 1 ? "" : "s"}: ${event.branches.join(", ")}`, "ok");
+    }
   }
 }
 
@@ -279,6 +317,12 @@ function trackRequest(state: State, sessionId: string, index: number, entry: Ent
     requests: { ...state.requests, [sessionId]: list.filter((r) => !gone(r)) },
     toasts: state.toasts.filter((t) => !gone(t.request)),
   };
+}
+
+/** Drop the "Removed worktree" toasts a merge cleanup or prune is about to sum up. */
+function withoutRemovedToasts(state: State, branches: string[]): State {
+  const texts = new Set(branches.map((b) => `Removed worktree ${b}`));
+  return { ...state, toasts: state.toasts.filter((t) => t.request || !texts.has(t.text)) };
 }
 
 function addToast(state: State, toast: Omit<Toast, "id">): State {
