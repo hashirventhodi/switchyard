@@ -9,6 +9,10 @@
 //! core sends, and `harness.agent_says(n, event)` delivers a protocol event from the n-th
 //! launched agent (0-based), returning the core events it caused. `agent_replays` feeds a
 //! recorded fixture's expected events, so core tests run on recorded sessions.
+//!
+//! Agent detection is fake too: `harness.probe` answers for the installed CLI's
+//! `--version` and the adapter's manifest (Claude Code 2.1.300, protocol `^0.1` unless a
+//! test changes them). `compat_log()` reads the compat log the core wrote on disk.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -17,7 +21,9 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 
 use adapter_protocol::Event as AgentEvent;
+use adapter_protocol::AdapterManifest;
 use switchyard_core::agents::{AgentHandle, AgentLauncher, AgentOutput, AgentSink, LaunchSpec};
+use switchyard_core::compat::AgentProbe;
 use switchyard_core::{Core, Runtime};
 use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Repository};
 use tempfile::TempDir;
@@ -30,6 +36,7 @@ pub struct Harness {
     events: Receiver<Event>,
     data_dir: TempDir,
     pub agents: FakeAgents,
+    pub probe: FakeProbe,
 }
 
 impl Harness {
@@ -42,9 +49,10 @@ impl Harness {
     pub fn launch_with(launcher: Arc<dyn AgentLauncher>) -> Self {
         let data_dir = TempDir::new().unwrap();
         let (tx, events) = channel();
-        let core = Core::open_with(data_dir.path(), tx, Runtime { agents: launcher, now_ms: || NOW_MS })
-            .expect("core opens");
-        Harness { core, events, data_dir, agents: FakeAgents::default() }
+        let probe = FakeProbe::default();
+        let runtime = Runtime { agents: launcher, now_ms: || NOW_MS, probe: Arc::new(probe.clone()) };
+        let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
+        Harness { core, events, data_dir, agents: FakeAgents::default(), probe }
     }
 
     /// Collect events until `done` holds for the collected list (or panic after 20 s).
@@ -63,9 +71,10 @@ impl Harness {
 
     fn launch_in(data_dir: TempDir, agents: FakeAgents) -> Self {
         let (tx, events) = channel();
-        let runtime = Runtime { agents: Arc::new(agents.clone()), now_ms: || NOW_MS };
+        let probe = FakeProbe::default();
+        let runtime = Runtime { agents: Arc::new(agents.clone()), now_ms: || NOW_MS, probe: Arc::new(probe.clone()) };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
-        Harness { core, events, data_dir, agents }
+        Harness { core, events, data_dir, agents, probe }
     }
 
     /// Quit and reopen: a new core on the same data directory.
@@ -116,6 +125,18 @@ impl Harness {
     pub fn agent_says(&mut self, agent: usize, event: AgentEvent) -> Vec<Event> {
         self.agents.deliver(agent, AgentOutput::Event(event));
         self.drain()
+    }
+
+    /// The n-th agent writes a line that is not a protocol event.
+    pub fn agent_writes(&mut self, agent: usize, line: &str) -> Vec<Event> {
+        self.agents.deliver(agent, AgentOutput::Unreadable { line: line.into() });
+        self.drain()
+    }
+
+    /// Every record in the compat log, oldest first.
+    pub fn compat_log(&self) -> Vec<serde_json::Value> {
+        let text = std::fs::read_to_string(self.data_dir.path().join("compat-log.jsonl")).unwrap_or_default();
+        text.lines().map(|l| serde_json::from_str(l).expect("compat log lines are JSON")).collect()
     }
 
     pub fn agent_exits(&mut self, agent: usize, code: Option<i32>, stderr: &str) -> Vec<Event> {
@@ -180,6 +201,66 @@ impl AgentLauncher for FakeAgents {
         let commands = Arc::new(Mutex::new(Vec::new()));
         inner.launched.push((spec, sink, commands.clone()));
         Ok(Box::new(FakeHandle(commands)))
+    }
+}
+
+/// Fake agent detection. Starts as an installed, supported Claude Code with a matching adapter.
+#[derive(Clone)]
+pub struct FakeProbe {
+    inner: Arc<Mutex<FakeProbeInner>>,
+}
+
+struct FakeProbeInner {
+    cli: Result<Option<String>, String>,
+    manifest: Result<AdapterManifest, String>,
+    probes: usize,
+}
+
+impl Default for FakeProbe {
+    fn default() -> Self {
+        let manifest = AdapterManifest { name: "claude-code".into(), implements: "^0.1".parse().unwrap() };
+        FakeProbe {
+            inner: Arc::new(Mutex::new(FakeProbeInner {
+                cli: Ok(Some("2.1.300 (Claude Code)".into())),
+                manifest: Ok(manifest),
+                probes: 0,
+            })),
+        }
+    }
+}
+
+impl FakeProbe {
+    /// What `claude --version` prints from now on; `None`: not installed.
+    pub fn cli_prints(&self, output: Option<&str>) {
+        self.inner.lock().unwrap().cli = Ok(output.map(str::to_owned));
+    }
+
+    /// The adapter now declares it implements `range`.
+    pub fn adapter_implements(&self, range: &str) {
+        let manifest = AdapterManifest { name: "claude-code".into(), implements: range.parse().unwrap() };
+        self.inner.lock().unwrap().manifest = Ok(manifest);
+    }
+
+    /// Asking the adapter for its manifest fails (its runtime cannot start).
+    pub fn adapter_fails(&self, reason: &str) {
+        self.inner.lock().unwrap().manifest = Err(reason.into());
+    }
+
+    /// How many times the CLI version was probed.
+    pub fn probes(&self) -> usize {
+        self.inner.lock().unwrap().probes
+    }
+}
+
+impl AgentProbe for FakeProbe {
+    fn cli_version(&self, _: AgentKind) -> Result<Option<String>, String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.probes += 1;
+        inner.cli.clone()
+    }
+
+    fn adapter_manifest(&self, _: AgentKind) -> Result<AdapterManifest, String> {
+        self.inner.lock().unwrap().manifest.clone()
     }
 }
 

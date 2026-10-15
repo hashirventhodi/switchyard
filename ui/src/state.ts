@@ -1,5 +1,6 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
+import type { AgentSetup } from "./schema/AgentSetup";
 import type { Entry } from "./schema/Entry";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
@@ -30,9 +31,11 @@ export interface State {
   /** By id, in start order. */
   sessions: Record<string, SessionView>;
   toasts: Toast[];
+  /** What the core detected about each agent CLI; empty until it reports. */
+  agents: AgentSetup[];
 }
 
-export const initialState: State = { repositories: [], sessions: {}, toasts: [] };
+export const initialState: State = { repositories: [], sessions: {}, toasts: [], agents: [] };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
@@ -80,6 +83,8 @@ export function reduce(state: State, event: Event): State {
         ...s,
         transcript: put(s.transcript, event.index, event.entry),
       }));
+    case "agentsChecked":
+      return { ...state, agents: event.agents };
   }
 }
 

@@ -5,4 +5,4 @@ import type { PermissionMode } from "./PermissionMode";
 /**
  * A request from the renderer to the core.
  */
-export type Command = { "type": "attach" } | { "type": "addRepository", path: string, } | { "type": "startSession", worktreePath: string, agent: AgentKind, permissionMode: PermissionMode, prompt: string, } | { "type": "stopSession", sessionId: string, } | { "type": "sendPrompt", sessionId: string, text: string, };
+export type Command = { "type": "attach" } | { "type": "addRepository", path: string, } | { "type": "startSession", worktreePath: string, agent: AgentKind, permissionMode: PermissionMode, prompt: string, } | { "type": "stopSession", sessionId: string, } | { "type": "sendPrompt", sessionId: string, text: string, } | { "type": "checkAgents" };
