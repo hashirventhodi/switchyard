@@ -81,6 +81,9 @@ impl Core {
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
             Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &session_id, &text),
+            Command::AnswerRequest { session_id, request_id, verdict } => {
+                sessions::answer_request(&mut inner, &session_id, &request_id, verdict)
+            }
         }
     }
 }
