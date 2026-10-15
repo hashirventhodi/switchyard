@@ -71,6 +71,7 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
     let path = listed.map(|w| w.path).unwrap_or(target);
     let worktree = Worktree { path: path.to_string_lossy().into_owned(), branch: Some(branch.into()), primary: false };
     inner.emit(Event::WorktreeAdded { repository_id: repo.id.clone(), worktree: worktree.clone() });
+    crate::disk::remember_added(inner, &repo.id, &worktree);
     emit_facts(inner, &path, &base);
     crate::disk::watch(inner, &path);
     Some(worktree)
@@ -141,12 +142,18 @@ pub(crate) fn try_remove(inner: &mut Inner, worktree_path: &str) -> Result<(), S
     }
     // Checked above: whatever session is left there is not at work.
     let _ = sessions::archive_occupant(inner, worktree_path);
+    forget(inner, &repo.id, worktree_path);
+    Ok(())
+}
+
+/// A worktree git has removed: its reviews, shells, pull request tracking and watch go with
+/// it, and it is announced gone. Its session, if any, must be archived first.
+pub(crate) fn forget(inner: &mut Inner, repository_id: &str, worktree_path: &str) {
     review::forget(inner, worktree_path);
     shells::close_worktree(inner, worktree_path);
     crate::forge::forget(inner, worktree_path);
     crate::disk::unwatch(inner, Path::new(worktree_path));
-    inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
-    Ok(())
+    inner.emit(Event::WorktreeRemoved { repository_id: repository_id.into(), worktree_path: worktree_path.into() });
 }
 
 /// Re-read every known worktree's facts from git and emit them.

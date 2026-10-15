@@ -6,6 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use switchyard_schema::{Event, Worktree};
+
+use crate::store::StoredRepository;
 use crate::watcher::{ChangeSink, Watch};
 use crate::{git, sessions, worktrees, Inner};
 
@@ -51,8 +54,12 @@ pub(crate) fn watch(inner: &Inner, worktree: &Path) {
     let _ = inner.runtime.watcher.watch(watch, sink(inner, worktree));
 }
 
-pub(crate) fn unwatch(inner: &Inner, worktree: &Path) {
+/// Stop watching the Worktree at `worktree`; it is no longer one of its Repository's.
+pub(crate) fn unwatch(inner: &mut Inner, worktree: &Path) {
     inner.runtime.watcher.unwatch(worktree);
+    for list in inner.listed.values_mut() {
+        list.retain(|w| Path::new(&w.path) != worktree);
+    }
 }
 
 /// Where the watcher's reports re-enter the core: on the watcher's thread, like agent output.
@@ -96,8 +103,62 @@ pub(crate) fn worktree_changed(inner: &mut Inner, worktree_path: &str, kinds: Ki
 /// Working-tree files changed. Nothing beyond the facts yet.
 fn files_changed(_inner: &mut Inner, _worktree_path: &str) {}
 
-/// Git's records changed (a commit, a fetch, a checkout). Nothing beyond the facts yet.
-fn git_changed(_inner: &mut Inner, _worktree_path: &str) {}
+/// Git's records changed (a commit, a fetch, a checkout, a worktree added, removed or
+/// renamed in a shell): re-list the Repository's worktrees from git.
+fn git_changed(inner: &mut Inner, worktree_path: &str) {
+    let owner = inner.listed.iter().find(|(_, list)| list.iter().any(|w| w.path == worktree_path));
+    let Some(repository_id) = owner.map(|(id, _)| id.clone()) else { return };
+    let Some(repo) = worktrees::repository(inner, &repository_id) else { return };
+    relist(inner, &repo);
+}
+
+/// Remember an announced Repository's worktrees as git lists them now.
+pub(crate) fn remember_repository(inner: &mut Inner, repo: &StoredRepository) {
+    if let Some(list) = listed(repo) {
+        inner.listed.insert(repo.id.clone(), list);
+    }
+}
+
+/// Remember one worktree Switchyard added, so a re-list does not announce it again.
+pub(crate) fn remember_added(inner: &mut Inner, repository_id: &str, worktree: &Worktree) {
+    let list = inner.listed.entry(repository_id.to_string()).or_default();
+    list.retain(|w| w.path != worktree.path);
+    list.push(worktree.clone());
+}
+
+/// Compare git's worktrees with the ones last announced: announce one that is new or whose
+/// branch changed (and watch a new one); one git no longer lists is forgotten, its session
+/// stopped and archived.
+fn relist(inner: &mut Inner, repo: &StoredRepository) {
+    // A Repository git cannot read is left as it was.
+    let Some(now) = listed(repo) else { return };
+    let before = inner.listed.insert(repo.id.clone(), now.clone()).unwrap_or_default();
+    for gone in before.iter().filter(|w| !now.iter().any(|n| n.path == w.path)) {
+        sessions::archive_gone(inner, &gone.path);
+        worktrees::forget(inner, &repo.id, &gone.path);
+    }
+    for worktree in &now {
+        if before.contains(worktree) {
+            continue;
+        }
+        let new = !before.iter().any(|w| w.path == worktree.path);
+        inner.emit(Event::WorktreeAdded { repository_id: repo.id.clone(), worktree: worktree.clone() });
+        if new {
+            watch(inner, Path::new(&worktree.path));
+            worktrees::refresh_one(inner, &worktree.path);
+        }
+    }
+}
+
+/// The Repository's worktrees as git lists them, primary first; `None` when git cannot.
+fn listed(repo: &StoredRepository) -> Option<Vec<Worktree>> {
+    let list = git::worktrees(Path::new(&repo.path)).ok().filter(|l| !l.is_empty())?;
+    Some(
+        list.into_iter()
+            .map(|wt| Worktree { path: wt.path.to_string_lossy().into_owned(), branch: wt.branch, primary: wt.primary })
+            .collect(),
+    )
+}
 
 /// Configuration files changed. Nothing beyond the facts yet.
 fn config_changed(_inner: &mut Inner, _worktree_path: &str) {}
@@ -107,6 +168,11 @@ fn config_changed(_inner: &mut Inner, _worktree_path: &str) {}
 /// paths git does not ignore count.
 fn classify(worktree: &Path, paths: &[PathBuf]) -> Kinds {
     let mut kinds = Kinds::default();
+    // A Worktree whose folder is gone was removed (in a shell, say): what git lists changed.
+    if !worktree.exists() {
+        kinds.git = true;
+        return kinds;
+    }
     let common = git::common_dir(worktree);
     let canonical = worktree.canonicalize().ok();
     let mut files = Vec::new();
