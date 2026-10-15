@@ -77,6 +77,7 @@ impl Harness {
             secrets: Arc::new(secrets.clone()),
             forge: Arc::new(GhForge::new(fake_gh_in(&data_dir).program()).with_timeout(gh_timeout)),
             forge_poll_every: None,
+            claude_home: data_dir.path().join("claude-home"),
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -131,6 +132,7 @@ impl Harness {
             secrets: Arc::new(secrets.clone()),
             forge: Arc::new(GhForge::new(fake_gh_in(&data_dir).program()).with_timeout(gh_timeout)),
             forge_poll_every: None,
+            claude_home: data_dir.path().join("claude-home"),
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -150,6 +152,11 @@ impl Harness {
         let Harness { core, data_dir, processes, secrets, .. } = self;
         drop(core);
         Self::launch_at(data_dir, processes, secrets, now_ms, GH_TIMEOUT)
+    }
+
+    /// Claude Code's home as this core reads it (project memory lives under it).
+    pub fn claude_home(&self) -> PathBuf {
+        self.data_dir.path().join("claude-home")
     }
 
     /// Where `exportTranscript` writes files.

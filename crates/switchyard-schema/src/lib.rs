@@ -223,6 +223,13 @@ pub enum Command {
         #[ts(rename = "worktreePath")]
         worktree_path: String,
     },
+    /// Read the files an agent takes as instructions in a worktree (CLAUDE.md, AGENTS.md…)
+    /// and Claude Code's memory for it. Read-only; answered with [`Event::ContextRead`].
+    ReadContext {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// Answer a Session's pending Permission request. Every surface (toast, inbox, request
     /// card) sends this; the first answer wins and any later one is refused.
     AnswerRequest {
@@ -676,6 +683,13 @@ pub enum Event {
         base: String,
         commits: Vec<Commit>,
     },
+    /// The worktree's context files as they are on disk (replaces earlier ones for it).
+    ContextRead {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        files: Vec<ContextFile>,
+    },
     /// A Repository's Policy as it stands: sent after [`Command::ReadPolicy`], and whenever
     /// a local Grant is added or revoked. Replaces earlier policy for that Repository.
     PolicyChanged {
@@ -1099,6 +1113,32 @@ pub enum LineKind {
     Context,
     Added,
     Removed,
+}
+
+/// A file an agent reads as context: instructions in the worktree, or memory the CLI
+/// keeps for it. Shown read-only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ContextFile {
+    /// As the user knows it: `CLAUDE.md`, `.claude/CLAUDE.md`, `MEMORY.md`.
+    pub name: String,
+    /// Where it is on disk.
+    pub path: String,
+    pub kind: ContextKind,
+    pub text: String,
+    /// Only the start of a long file is sent.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ContextKind {
+    /// In the worktree; committed with the repository (or kept local beside it).
+    Instructions,
+    /// What the agent CLI remembers for this worktree, outside the repository.
+    Memory,
 }
 
 /// One commit on a worktree's branch.

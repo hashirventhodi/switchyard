@@ -6,6 +6,7 @@ import type { ArchivedSession } from "./schema/ArchivedSession";
 import type { Settings } from "./schema/Settings";
 import type { ChangedFile } from "./schema/ChangedFile";
 import type { ConflictFile } from "./schema/ConflictFile";
+import type { ContextFile } from "./schema/ContextFile";
 import type { Entry } from "./schema/Entry";
 import type { Policy } from "./schema/Policy";
 import type { Secret } from "./schema/Secret";
@@ -103,6 +104,8 @@ export interface State {
   houseRules: Record<string, string>;
   /** The Task each Session (live or archived) is linked to, by session id. */
   taskLinks: Record<string, string>;
+  /** Each worktree's context files (instructions and agent memory), by path, as last read. */
+  contextFiles: Record<string, ContextFile[]>;
   /** What happened, newest first (at most ACTIVITY_KEEP): the Dashboard's activity feed. */
   activity: Activity[];
 }
@@ -192,6 +195,7 @@ export const initialState: State = {
   taskLinks: {},
   conflicts: {},
   activity: [],
+  contextFiles: {},
 };
 
 const noFacts: SessionFacts = {
@@ -261,6 +265,8 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "contextRead":
+      return { ...state, contextFiles: { ...state.contextFiles, [event.worktreePath]: event.files } };
     case "worktreeHistory":
       return { ...state, history: { ...state.history, [event.worktreePath]: { base: event.base, commits: event.commits } } };
     case "worktreeRebased": {

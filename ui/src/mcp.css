@@ -4,3 +4,9 @@
 .ctx .kv .k small{font-family:var(--font-ui);color:var(--fg-2);margin-left:6px;font-size:11px}
 .ctx .kv .v.ok{color:var(--ok)}
 .ctx .kv .v.no{color:var(--fg-2)}
+
+/* Context's Instructions and Memory: read-only files, opened in place. */
+.context-files ul{list-style:none;margin:0;padding:0}
+.context-files .cf button.kv{width:100%;text-align:left}
+.context-files .cf-text{margin:4px 0 8px;padding:8px;max-height:280px;overflow:auto;background:var(--bg-2);border-radius:4px;font:11.5px/1.5 var(--font-mono);white-space:pre-wrap;word-break:break-word}
+.context-files .note{font-size:11px;color:var(--fg-2);margin:0 0 8px}

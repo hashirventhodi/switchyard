@@ -130,6 +130,7 @@ fn main() {
                 secrets: Arc::new(SystemSecrets),
                 forge: Arc::new(GhForge::find()),
                 forge_poll_every: Some(FORGE_POLL_EVERY),
+                claude_home: switchyard_core::context::default_claude_home(),
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Dispatcher::new(core));

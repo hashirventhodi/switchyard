@@ -8,6 +8,7 @@ import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView, State } from "./state";
 import { ContextArchive } from "./ContextArchive";
 import { ContextGrants } from "./ContextGrants";
+import { ContextFiles } from "./ContextFiles";
 import { ContextMcp } from "./ContextMcp";
 import { ContextTask } from "./ContextTask";
 import { HistoryPullRequest } from "./HistoryPullRequest";
@@ -106,6 +107,7 @@ export function BranchPane(props: {
               <BranchContext {...props} />
               <ContextGrants {...props} />
               <ContextMcp {...props} />
+              <ContextFiles {...props} />
               <ContextSecrets {...props} />
               <ContextArchive {...props} />
             </>

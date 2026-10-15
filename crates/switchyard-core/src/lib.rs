@@ -9,6 +9,7 @@
 pub mod agents;
 pub mod codex;
 pub mod compat;
+pub mod context;
 pub mod forge;
 mod git;
 pub mod mcp;
@@ -64,6 +65,9 @@ pub struct Runtime {
     /// How often the core polls the Forge on its own; `None`: only when
     /// [`Core::poll_forge`] is called (tests tick it by hand).
     pub forge_poll_every: Option<std::time::Duration>,
+    /// Claude Code's home (`~/.claude`): where it keeps each project's memory, read for
+    /// Context.
+    pub claude_home: PathBuf,
 }
 
 impl Default for Runtime {
@@ -78,6 +82,7 @@ impl Default for Runtime {
             secrets: Arc::new(secrets::NoSecrets),
             forge: Arc::new(NoForge),
             forge_poll_every: None,
+            claude_home: context::default_claude_home(),
         }
     }
 }
@@ -243,6 +248,7 @@ impl Core {
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
+            Command::ReadContext { worktree_path } => context::read_context(&inner, &worktree_path),
             Command::ReadSecrets { repository_id } => secrets::read(&inner, &repository_id),
             Command::GrantSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, true),
             Command::RevokeSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, false),
