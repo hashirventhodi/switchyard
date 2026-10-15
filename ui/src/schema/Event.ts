@@ -8,6 +8,7 @@ import type { SessionStatus } from "./SessionStatus";
 import type { Shell } from "./Shell";
 import type { Spend } from "./Spend";
 import type { Worktree } from "./Worktree";
+import type { WorktreeFacts } from "./WorktreeFacts";
 
 /**
  * Something the core reports. The renderer derives all of its state from these.
@@ -16,4 +17,4 @@ export type Event = { "type": "attached" } | { "type": "repositoryAdded", reposi
 /**
  * Milliseconds since the Unix epoch.
  */
-atMs: number, spend: Spend, } | { "type": "transcriptEntry", sessionId: string, index: number, entry: Entry, } | { "type": "agentEventReceived", sessionId: string, index: number, json: string, } | { "type": "shellOpened", shell: Shell, } | { "type": "shellOutput", shellId: string, data: string, } | { "type": "shellClosed", shellId: string, exitCode: number | null, } | { "type": "agentsChecked", agents: Array<AgentSetup>, };
+atMs: number, spend: Spend, } | { "type": "transcriptEntry", sessionId: string, index: number, entry: Entry, } | { "type": "agentEventReceived", sessionId: string, index: number, json: string, } | { "type": "shellOpened", shell: Shell, } | { "type": "shellOutput", shellId: string, data: string, } | { "type": "shellClosed", shellId: string, exitCode: number | null, } | { "type": "agentsChecked", agents: Array<AgentSetup>, } | { "type": "worktreeRemoved", repositoryId: string, worktreePath: string, } | { "type": "worktreeFactsChanged", worktreePath: string, facts: WorktreeFacts, };

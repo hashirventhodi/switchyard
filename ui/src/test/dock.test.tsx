@@ -108,6 +108,18 @@ test("the palette offers a shell on every worktree", () => {
   ]);
 });
 
+test("a Worktrees card's Terminal button opens a shell on that worktree and shows the dock", () => {
+  const { sent } = launch();
+  fireEvent.click(screen.getByRole("button", { name: "Hide `" }));
+  fireEvent.keyDown(document.body, { key: "3" });
+
+  const card = screen.getByRole("article", { name: "Worktree fix/readme" });
+  fireEvent.click(within(card).getByRole("button", { name: "Terminal" }));
+
+  expect(sent).toContainEqual({ type: "openShell", worktreePath: "/wt/acme/fix", cols: 80, rows: 24 });
+  expect(dock().className).not.toContain("collapsed");
+});
+
 test("a shell tab streams output, sends keystrokes, clears on Ctrl+L and follows the dock's size", () => {
   const { sent, emit, terminals } = launch();
 

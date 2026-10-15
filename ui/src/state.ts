@@ -9,6 +9,7 @@ import type { SessionFacts } from "./schema/SessionFacts";
 import type { Shell } from "./schema/Shell";
 import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
+import type { WorktreeFacts } from "./schema/WorktreeFacts";
 
 export interface RepositoryView extends Repository {
   worktrees: Worktree[];
@@ -38,9 +39,11 @@ export interface State {
   toasts: Toast[];
   /** What the core detected about each agent CLI; empty until it reports. */
   agents: AgentSetup[];
+  /** What the core last read from the VCS about each worktree, by path. */
+  worktreeFacts: Record<string, WorktreeFacts>;
 }
 
-export const initialState: State = { repositories: [], sessions: {}, shells: [], toasts: [], agents: [] };
+export const initialState: State = { repositories: [], sessions: {}, shells: [], toasts: [], agents: [], worktreeFacts: {} };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
@@ -68,6 +71,22 @@ export function reduce(state: State, event: Event): State {
             : r,
         ),
       };
+    case "worktreeRemoved": {
+      const repo = state.repositories.find((r) => r.id === event.repositoryId);
+      const gone = repo?.worktrees.find((w) => w.path === event.worktreePath);
+      const { [event.worktreePath]: _dropped, ...worktreeFacts } = state.worktreeFacts;
+      const text = `Removed worktree ${gone?.branch ?? event.worktreePath}`;
+      return {
+        ...state,
+        worktreeFacts,
+        repositories: state.repositories.map((r) =>
+          r.id === event.repositoryId ? { ...r, worktrees: r.worktrees.filter((w) => w.path !== event.worktreePath) } : r,
+        ),
+        toasts: [...state.toasts, { id: ++toastSeq, tone: "ok", text }],
+      };
+    }
+    case "worktreeFactsChanged":
+      return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
     case "commandRefused":
       return { ...state, toasts: [...state.toasts, { id: ++toastSeq, tone: "bad", text: event.reason }] };
     case "sessionStarted": {

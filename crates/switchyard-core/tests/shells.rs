@@ -148,6 +148,34 @@ fn closing_a_worktree_closes_its_shells_and_no_others() {
 }
 
 #[test]
+fn removing_a_worktree_closes_its_shells_after_git_removes_it() {
+    let (repo, worktree, mut core) = launch();
+    let other = repo.add_worktree("feat/y");
+    let a = open(&mut core, &worktree);
+    let b = open(&mut core, &other);
+
+    let events = core.send(Command::RemoveWorktree { worktree_path: worktree.to_string_lossy().into_owned() });
+
+    let removed = events.iter().position(|e| matches!(e, Event::WorktreeRemoved { .. }));
+    let shell_closed = events.iter().position(|e| matches!(e, Event::ShellClosed { shell_id, .. } if *shell_id == a));
+    assert!(removed.is_some() && shell_closed.is_some(), "{events:#?}");
+    assert_eq!(closed(&events, &b), None);
+}
+
+#[test]
+fn a_refused_worktree_removal_leaves_its_shells_open() {
+    let (_repo, worktree, mut core) = launch();
+    let shell = open(&mut core, &worktree);
+    std::fs::write(worktree.join("scratch.txt"), "wip").unwrap();
+
+    let events = core.send(Command::RemoveWorktree { worktree_path: worktree.to_string_lossy().into_owned() });
+
+    assert!(matches!(&events[..], [Event::CommandRefused { .. }]), "{events:#?}");
+    write(&mut core, &shell, "echo alive-$((2+3))\n");
+    output_until(&mut core, &shell, "alive-5");
+}
+
+#[test]
 fn a_shell_opens_only_on_a_known_worktree() {
     let (_repo, _worktree, mut core) = launch();
     let elsewhere = tempfile::TempDir::new().unwrap();

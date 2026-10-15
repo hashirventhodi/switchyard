@@ -9,11 +9,13 @@
 pub mod agents;
 pub mod compat;
 mod git;
+mod repo_policy;
 mod sessions;
 mod shells;
 pub mod sidecar;
 mod spend;
 mod store;
+mod worktrees;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -32,14 +34,24 @@ pub struct Runtime {
     pub agents: Arc<dyn AgentLauncher>,
     /// Wall clock, milliseconds since the Unix epoch.
     pub now_ms: fn() -> u64,
+    /// The Switchyard-owned directory new worktrees go under, outside every repository
+    /// (one subdirectory per repository, keyed by a hash of its path). A repository's
+    /// policy may name its own root instead.
+    pub worktree_root: PathBuf,
     /// Detects installed agent CLIs and asks adapters for their manifests.
     pub probe: Arc<dyn AgentProbe>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        Runtime { agents: Arc::new(NoAgents), now_ms: system_now_ms, probe: Arc::new(NoProbe) }
+        Runtime { agents: Arc::new(NoAgents), now_ms: system_now_ms, probe: Arc::new(NoProbe), worktree_root: default_worktree_root() }
     }
+}
+
+/// `~/.switchyard/worktrees`: short, ASCII, and outside every repository.
+pub fn default_worktree_root() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    home.join(".switchyard").join("worktrees")
 }
 
 pub fn system_now_ms() -> u64 {
@@ -113,6 +125,14 @@ impl Core {
             Command::ResizeShell { shell_id, cols, rows } => shells::resize(&mut inner, &shell_id, cols, rows),
             Command::CloseShell { shell_id } => shells::close(&mut inner, &shell_id),
             Command::CloseWorktreeShells { worktree_path } => shells::close_worktree(&mut inner, &worktree_path),
+            Command::CreateWorktree { repository_id, branch } => {
+                worktrees::create(&mut inner, "createWorktree", &repository_id, &branch);
+            }
+            Command::StartSessionOnNewWorktree { repository_id, branch, agent, permission_mode, prompt } => {
+                worktrees::start_session_on_new(&mut inner, &self.inner, &repository_id, &branch, agent, permission_mode, &prompt)
+            }
+            Command::RemoveWorktree { worktree_path } => worktrees::remove(&mut inner, &worktree_path),
+            Command::RefreshWorktrees => worktrees::refresh(&inner),
             Command::CheckAgents => compat::check(&mut inner),
         }
     }

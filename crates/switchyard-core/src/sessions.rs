@@ -183,6 +183,11 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
+/// The status of the session occupying the worktree at `path`, if any.
+pub(crate) fn occupant(inner: &Inner, path: &str) -> Option<SessionStatus> {
+    inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.status)
+}
+
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
 pub(crate) fn replay(inner: &Inner) {
     let table = PriceTable::read(&inner.data_dir);
@@ -343,7 +348,7 @@ fn facts(state: &SessionState) -> Event {
 }
 
 /// The label every surface shows for a status.
-fn status_label(status: SessionStatus) -> &'static str {
+pub(crate) fn status_label(status: SessionStatus) -> &'static str {
     match status {
         SessionStatus::Running => "Running",
         SessionStatus::Waiting => "Needs you",
