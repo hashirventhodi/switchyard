@@ -18,6 +18,7 @@ mod policy;
 mod repo_policy;
 mod session_store;
 mod review;
+pub mod secrets;
 mod sessions;
 mod shells;
 pub mod sidecar;
@@ -55,6 +56,8 @@ pub struct Runtime {
     pub processes: Arc<dyn ProcessTable>,
     /// Where "Export transcript" writes its JSONL files.
     pub export_dir: PathBuf,
+    /// Where secret values live: the OS keychain and the environment.
+    pub secrets: Arc<dyn secrets::SecretValues>,
     /// Where pull requests are opened and polled (GitHub through `gh`).
     pub forge: Arc<dyn Forge>,
     /// How often the core polls the Forge on its own; `None`: only when
@@ -71,6 +74,7 @@ impl Default for Runtime {
             worktree_root: default_worktree_root(),
             processes: Arc::new(SystemProcesses),
             export_dir: default_export_dir(),
+            secrets: Arc::new(secrets::NoSecrets),
             forge: Arc::new(NoForge),
             forge_poll_every: None,
         }
@@ -227,6 +231,14 @@ impl Core {
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
+            Command::ReadSecrets { repository_id } => secrets::read(&inner, &repository_id),
+            Command::GrantSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, true),
+            Command::RevokeSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, false),
+            Command::AddSecret { repository_id, name } => secrets::add(&mut inner, &repository_id, &name),
+            Command::RemoveSecret { repository_id, name } => secrets::remove(&mut inner, &repository_id, &name),
+            Command::SetSecretValue { repository_id, name, value } => {
+                secrets::set_value(&mut inner, &repository_id, &name, &value)
+            }
             Command::CheckForge => forge::check(&mut inner),
             Command::OpenPullRequest { worktree_path } => forge::open_pull_request(&mut inner, &worktree_path),
             Command::PruneMerged { repository_id } => forge::prune(&mut inner, &repository_id),

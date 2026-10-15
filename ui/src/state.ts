@@ -7,6 +7,7 @@ import type { ChangedFile } from "./schema/ChangedFile";
 import type { ConflictFile } from "./schema/ConflictFile";
 import type { Entry } from "./schema/Entry";
 import type { Policy } from "./schema/Policy";
+import type { Secret } from "./schema/Secret";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
 import type { Request } from "./schema/Request";
@@ -81,6 +82,8 @@ export interface State {
   history: Record<string, WorktreeHistory>;
   /** Each Repository's resolved Policy, by repository id, once the core has sent it. */
   policies: Record<string, Policy>;
+  /** Each Repository's secrets (names and flags, never values), by repository id, once read. */
+  secrets: Record<string, Secret[]>;
   /** Archived Sessions by repository id, oldest first. */
   archived: Record<string, ArchivedSession[]>;
   /** The archived transcript last read (the open reader), if any. */
@@ -121,6 +124,7 @@ export const initialState: State = {
   changes: {},
   history: {},
   policies: {},
+  secrets: {},
   archived: {},
   archivedTranscript: null,
   settings: null,
@@ -308,6 +312,8 @@ export function reduce(state: State, event: Event): State {
       return { ...state, settings: event.settings };
     case "policyChanged":
       return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
+    case "secretsChanged":
+      return { ...state, secrets: { ...state.secrets, [event.repositoryId]: event.secrets } };
     case "forgeChecked":
       return { ...state, forge: event.forge };
     case "pullRequestChanged": {

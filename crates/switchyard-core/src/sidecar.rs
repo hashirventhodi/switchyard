@@ -9,6 +9,9 @@
 //! Policy), "allow_bypass" (the repository's policy declares a sandbox), "mcp_servers" (the
 //! repository's MCP servers as the SDK's `mcpServers` map; the sidecar always runs the CLI
 //! with `--strict-mcp-config`, so these are the only servers it loads)}`.
+//!
+//! The process environment is the inherited one with [`LaunchSpec::env`] applied: granted
+//! secrets set, every other known secret name removed. Secret values never go in the config.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -46,7 +49,12 @@ impl AgentLauncher for SidecarLauncher {
             "allow_bypass": spec.sandboxed,
             "mcp_servers": crate::mcp::claude_servers(&spec.mcp_servers),
         });
-        let mut child = Command::new(&self.node)
+        let mut command = Command::new(&self.node);
+        // Granted secrets in, every other known secret out; the CLI the sidecar starts, and
+        // the MCP servers the CLI starts, inherit this environment. Values never go in the
+        // config argument.
+        spec.env.apply(&mut command);
+        let mut child = command
             .arg(&self.script)
             .arg("--config")
             .arg(config.to_string())

@@ -11,6 +11,7 @@ import "./relay.css";
 import "./history.css";
 import "./archive.css";
 import "./mcp.css";
+import "./secrets.css";
 import "./pullRequest.css";
 import "./tasks.css";
 

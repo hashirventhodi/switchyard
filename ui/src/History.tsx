@@ -12,6 +12,7 @@ import { ContextMcp } from "./ContextMcp";
 import { ContextTask } from "./ContextTask";
 import { HistoryPullRequest } from "./HistoryPullRequest";
 import type { OpenLink } from "./Setup";
+import { ContextSecrets } from "./ContextSecrets";
 
 /** "↓3" (warn colour) when the worktree is behind its base; nothing otherwise. */
 export function BehindBadge({ facts, base }: { facts?: WorktreeFacts; base?: string }) {
@@ -105,6 +106,7 @@ export function BranchPane(props: {
               <BranchContext {...props} />
               <ContextGrants {...props} />
               <ContextMcp {...props} />
+              <ContextSecrets {...props} />
               <ContextArchive {...props} />
             </>
           )}

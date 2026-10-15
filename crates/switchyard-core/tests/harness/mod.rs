@@ -44,13 +44,15 @@ pub struct Harness {
     pub probe: FakeProbe,
     /// The machine's process table: survives `relaunch`, as real processes outlive the app.
     pub processes: FakeProcesses,
+    /// The OS keychain and Switchyard's environment, as secrets see them: survives `relaunch`.
+    pub secrets: FakeSecrets,
     /// The `gh` the core runs as its Forge CLI (missing until `gh.install()`).
     pub gh: FakeGh,
 }
 
 impl Harness {
     pub fn launch() -> Self {
-        Self::launch_in(TempDir::new().unwrap(), FakeProcesses::default())
+        Self::launch_in(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default())
     }
 
     /// A harness whose core launches agents with `launcher` (a real process launcher, say).
@@ -60,6 +62,7 @@ impl Harness {
         let (tx, events) = channel();
         let probe = FakeProbe::default();
         let processes = FakeProcesses::default();
+        let secrets = FakeSecrets::default();
         let runtime = Runtime {
             agents: launcher,
             now_ms: || NOW_MS,
@@ -67,12 +70,13 @@ impl Harness {
             worktree_root: worktree_root_in(&data_dir),
             processes: Arc::new(processes.clone()),
             export_dir: export_dir_in(&data_dir),
+            secrets: Arc::new(secrets.clone()),
             forge: Arc::new(GhForge { program: fake_gh_in(&data_dir).program() }),
             forge_poll_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
-        Harness { core, events, data_dir, agents: FakeAgents::default(), probe, processes, gh }
+        Harness { core, events, data_dir, agents: FakeAgents::default(), probe, processes, gh, secrets }
     }
 
     /// The Switchyard worktree root this core creates worktrees under (canonical path).
@@ -94,11 +98,11 @@ impl Harness {
         seen
     }
 
-    fn launch_in(data_dir: TempDir, processes: FakeProcesses) -> Self {
-        Self::launch_at(data_dir, processes, || NOW_MS)
+    fn launch_in(data_dir: TempDir, processes: FakeProcesses, secrets: FakeSecrets) -> Self {
+        Self::launch_at(data_dir, processes, secrets, || NOW_MS)
     }
 
-    fn launch_at(data_dir: TempDir, processes: FakeProcesses, now_ms: fn() -> u64) -> Self {
+    fn launch_at(data_dir: TempDir, processes: FakeProcesses, secrets: FakeSecrets, now_ms: fn() -> u64) -> Self {
         let (tx, events) = channel();
         let probe = FakeProbe::default();
         let agents = FakeAgents::with_processes(processes.clone());
@@ -109,27 +113,28 @@ impl Harness {
             worktree_root: worktree_root_in(&data_dir),
             processes: Arc::new(processes.clone()),
             export_dir: export_dir_in(&data_dir),
+            secrets: Arc::new(secrets.clone()),
             forge: Arc::new(GhForge { program: fake_gh_in(&data_dir).program() }),
             forge_poll_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
-        Harness { core, events, data_dir, agents, probe, processes, gh }
+        Harness { core, events, data_dir, agents, probe, processes, gh, secrets }
     }
 
     /// Quit and reopen: a new core on the same data directory. Agent processes the old core
     /// started are still in the process table (the app crashed or was killed).
     pub fn relaunch(self) -> Self {
-        let Harness { core, data_dir, processes, .. } = self;
+        let Harness { core, data_dir, processes, secrets, .. } = self;
         drop(core);
-        Self::launch_in(data_dir, processes)
+        Self::launch_in(data_dir, processes, secrets)
     }
 
     /// Relaunch with the wall clock at `now_ms` from then on.
     pub fn relaunch_at(self, now_ms: fn() -> u64) -> Self {
-        let Harness { core, data_dir, processes, .. } = self;
+        let Harness { core, data_dir, processes, secrets, .. } = self;
         drop(core);
-        Self::launch_at(data_dir, processes, now_ms)
+        Self::launch_at(data_dir, processes, secrets, now_ms)
     }
 
     /// Where `exportTranscript` writes files.
@@ -520,4 +525,49 @@ pub fn worktree_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
         snap.push((f.to_string(), std::fs::read(dir.join(f)).unwrap_or_default()));
     }
     snap
+}
+
+/// A fake OS keychain plus a fake Switchyard environment: tests never touch the real
+/// keychain or depend on the real environment.
+#[derive(Clone, Default)]
+pub struct FakeSecrets {
+    inner: Arc<Mutex<FakeSecretsInner>>,
+}
+
+#[derive(Default)]
+struct FakeSecretsInner {
+    keychain: std::collections::BTreeMap<String, String>,
+    environment: std::collections::BTreeMap<String, String>,
+}
+
+impl FakeSecrets {
+    /// The keychain holds `value` for `name`.
+    pub fn in_keychain(&self, name: &str, value: &str) {
+        self.inner.lock().unwrap().keychain.insert(name.into(), value.into());
+    }
+
+    /// Switchyard was started with `name=value` in its environment.
+    pub fn in_environment(&self, name: &str, value: &str) {
+        self.inner.lock().unwrap().environment.insert(name.into(), value.into());
+    }
+
+    /// What the keychain holds for `name`.
+    pub fn keychain(&self, name: &str) -> Option<String> {
+        self.inner.lock().unwrap().keychain.get(name).cloned()
+    }
+}
+
+impl switchyard_core::secrets::SecretValues for FakeSecrets {
+    fn keychain_get(&self, name: &str) -> Result<Option<String>, String> {
+        Ok(self.keychain(name))
+    }
+
+    fn keychain_set(&self, name: &str, value: &str) -> Result<(), String> {
+        self.in_keychain(name, value);
+        Ok(())
+    }
+
+    fn environment(&self, name: &str) -> Option<String> {
+        self.inner.lock().unwrap().environment.get(name).cloned()
+    }
 }

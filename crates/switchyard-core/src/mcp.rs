@@ -15,8 +15,9 @@
 //!
 //! The model here is CLI-agnostic; each launcher maps it onto its CLI ([`claude_servers`]
 //! for the Claude Code sidecar, [`codex_config`] for Codex). Values are passed verbatim
-//! (`${VAR}` included): expanding them, and choosing which secrets an MCP server process
-//! may inherit, is the secrets grant's job.
+//! (`${VAR}` included) and never expanded by Switchyard: an MCP server process sees only the
+//! secrets granted to the repository, because the agent process it inherits from was spawned
+//! with only those (`crate::secrets`; [`codex_config_for_spawn`] for Codex).
 //!
 //! [`LaunchSpec::mcp_servers`]: crate::agents::LaunchSpec::mcp_servers
 
@@ -117,6 +118,38 @@ pub fn load(primary: &Path) -> Result<Vec<McpServer>, String> {
         .collect()
 }
 
+/// The environment variables the servers reference as `${NAME}` (or `${NAME:-default}`)
+/// in their command, arguments, environment, URL or headers: secrets they expect.
+pub fn secret_refs(servers: &[McpServer]) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut scan = |text: &str| {
+        let mut rest = text;
+        while let Some(start) = rest.find("${") {
+            rest = &rest[start + 2..];
+            let Some(end) = rest.find('}') else { break };
+            let name = rest[..end].split(":-").next().unwrap_or_default();
+            if crate::secrets::valid_name(name) {
+                names.insert(name.to_string());
+            }
+            rest = &rest[end + 1..];
+        }
+    };
+    for server in servers {
+        match &server.transport {
+            McpTransport::Stdio { command, args, env } => {
+                scan(command);
+                args.iter().for_each(|a| scan(a));
+                env.values().for_each(|v| scan(v));
+            }
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
+                scan(url);
+                headers.values().for_each(|v| scan(v));
+            }
+        }
+    }
+    names
+}
+
 /// The servers as the Claude Agent SDK's `mcpServers` option (the CLI's `--mcp-config`
 /// JSON), by name.
 pub fn claude_servers(servers: &[McpServer]) -> Value {
@@ -159,6 +192,40 @@ pub fn codex_config(servers: &[McpServer]) -> Vec<(String, Value)> {
                     out.push((key(&format!("http_headers.{}", toml_key(name))), json!(value)));
                 }
             }
+        }
+    }
+    out
+}
+
+/// [`codex_config`] for one spawn with its secrets ([`LaunchSpec::env`]). Codex starts a
+/// stdio MCP server with a minimal environment and does not expand `${VAR}`, so each stdio
+/// server is told to inherit the granted secrets by name (`env_vars`), and a `NAME:
+/// "${NAME}"` entry (a plain pass-through) is left to that rather than sent as a literal.
+/// Names only: no secret value is ever in these pairs, so they are safe as `-c` arguments.
+///
+/// [`LaunchSpec::env`]: crate::agents::LaunchSpec::env
+pub fn codex_config_for_spawn(servers: &[McpServer], env: &crate::secrets::SpawnEnv) -> Vec<(String, Value)> {
+    let granted: Vec<&String> = env.set.keys().collect();
+    let passed_through = |(name, value): (&String, &String)| *value == format!("${{{name}}}");
+    let servers: Vec<McpServer> = servers
+        .iter()
+        .map(|server| match &server.transport {
+            McpTransport::Stdio { command, args, env } => McpServer {
+                name: server.name.clone(),
+                transport: McpTransport::Stdio {
+                    command: command.clone(),
+                    args: args.clone(),
+                    env: env.iter().filter(|e| !passed_through(*e)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+                },
+            },
+            _ => server.clone(),
+        })
+        .collect();
+    let mut out = Vec::new();
+    for server in &servers {
+        out.extend(codex_config(std::slice::from_ref(server)));
+        if matches!(server.transport, McpTransport::Stdio { .. }) && !granted.is_empty() {
+            out.push((format!("mcp_servers.{}.env_vars", toml_key(&server.name)), json!(granted)));
         }
     }
     out

@@ -21,6 +21,7 @@ use crate::processes::{self, Recorded};
 use crate::session_store::{self, Row, CHUNK};
 use crate::mcp;
 use crate::policy;
+use crate::secrets;
 use crate::Inner;
 
 mod archive;
@@ -210,6 +211,7 @@ fn begin(
         allowed_tools,
         disallowed_tools,
         mcp_servers: mcp_servers.clone(),
+        env: secrets::spawn_env(inner, &repo),
     };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
@@ -364,6 +366,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         allowed_tools,
         disallowed_tools,
         mcp_servers: mcp_servers.clone(),
+        // Secrets as granted now: a revoke since the session began takes effect here.
+        env: repository.as_ref().map(|repo| secrets::spawn_env(inner, repo)).unwrap_or_default(),
     };
     let mut handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.to_string())) {
         Ok(handle) => handle,
@@ -537,6 +541,20 @@ pub(crate) fn ids_on_branch(inner: &Inner, path: &str, branch: &str) -> Vec<Stri
 /// Is there a session `id`, live or archived?
 pub(crate) fn known(inner: &Inner, id: &str) -> bool {
     inner.sessions.list.iter().any(|s| s.session.id == id) || inner.sessions.archived.iter().any(|a| a.session.id == id)
+}
+
+/// Note `text` in the transcript of every session of the repository whose agent process is
+/// running (a change it will only see at its next start).
+pub(crate) fn note_running(inner: &mut Inner, repository_id: &str, text: &str) {
+    let mut events = Vec::new();
+    for state in inner.sessions.list.iter_mut() {
+        if state.session.repository_id == repository_id && state.agent.is_some() {
+            events.push(append(state, Entry::System { text: text.into() }));
+        }
+    }
+    for event in events {
+        inner.emit(event);
+    }
 }
 
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).

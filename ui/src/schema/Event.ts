@@ -12,6 +12,7 @@ import type { PermissionMode } from "./PermissionMode";
 import type { Policy } from "./Policy";
 import type { PullRequest } from "./PullRequest";
 import type { Repository } from "./Repository";
+import type { Secret } from "./Secret";
 import type { Session } from "./Session";
 import type { SessionFacts } from "./SessionFacts";
 import type { SessionStatus } from "./SessionStatus";
@@ -49,4 +50,4 @@ base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryI
 /**
  * The pull request's number; `null` for a Local merge.
  */
-pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, } | { "type": "tasksChanged", repositoryId: string, tasks: Array<Task>, houseRules: string, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, };
+pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, } | { "type": "tasksChanged", repositoryId: string, tasks: Array<Task>, houseRules: string, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, };
