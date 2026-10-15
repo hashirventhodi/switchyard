@@ -86,7 +86,7 @@ fn attaching_twice_replays_the_same_state() {
     let first = core.send(Command::Attach);
     let second = core.send(Command::Attach);
 
-    assert_eq!(first.len(), 5, "attached, agents, repository, worktree, settings: {first:#?}");
+    assert_eq!(first.len(), 6, "attached, agents, forge, repository, worktree, settings: {first:#?}");
     assert_eq!(first, second);
 }
 

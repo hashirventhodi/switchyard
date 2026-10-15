@@ -170,6 +170,11 @@ fn plural(n: u32, one: &str, many: &str) -> String {
     }
 }
 
+/// "N uncommitted file(s)" and the pronoun that goes with it.
+fn uncommitted(n: u32) -> (String, &'static str) {
+    (plural(n, "uncommitted file", "uncommitted files"), if n == 1 { "it" } else { "them" })
+}
+
 pub(crate) fn open_pull_request(inner: &mut Inner, worktree_path: &str) {
     const COMMAND: &str = "openPullRequest";
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
@@ -190,8 +195,8 @@ pub(crate) fn open_pull_request(inner: &mut Inner, worktree_path: &str) {
     match git::dirty_count(&worktree.path) {
         Ok(0) => {}
         Ok(n) => {
-            let files = plural(n, "uncommitted file", "uncommitted files");
-            return inner.refuse(COMMAND, format!("{branch} has {files}; commit them before opening a pull request"));
+            let (files, them) = uncommitted(n);
+            return inner.refuse(COMMAND, format!("{branch} has {files}; commit {them} before opening a pull request"));
         }
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {branch}: {e}")),
     }
@@ -430,8 +435,8 @@ pub(crate) fn local_merge(inner: &mut Inner, worktree_path: &str) {
     match git::dirty_count(&worktree.path) {
         Ok(0) => {}
         Ok(n) => {
-            let files = plural(n, "uncommitted file", "uncommitted files");
-            return inner.refuse(COMMAND, format!("{branch} has {files}; commit them before merging"));
+            let (files, them) = uncommitted(n);
+            return inner.refuse(COMMAND, format!("{branch} has {files}; commit {them} before merging"));
         }
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {branch}: {e}")),
     }
@@ -442,8 +447,8 @@ pub(crate) fn local_merge(inner: &mut Inner, worktree_path: &str) {
     match git::dirty_count(&primary.path) {
         Ok(0) => {}
         Ok(n) => {
-            let files = plural(n, "uncommitted file", "uncommitted files");
-            return inner.refuse(COMMAND, format!("The primary worktree has {files}; commit them before merging into {base}"));
+            let (files, them) = uncommitted(n);
+            return inner.refuse(COMMAND, format!("The primary worktree has {files}; commit {them} before merging into {base}"));
         }
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read the primary worktree: {e}")),
     }

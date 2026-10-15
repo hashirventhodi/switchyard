@@ -30,8 +30,8 @@ use switchyard_core::{Core, Runtime};
 use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Repository};
 use tempfile::TempDir;
 
-mod gh;
-pub use gh::{gh_pr, FakeGh};
+pub mod gh;
+pub use gh::FakeGh;
 
 /// The fixed wall clock every harness core sees.
 pub const NOW_MS: u64 = 1_760_000_000_000;
