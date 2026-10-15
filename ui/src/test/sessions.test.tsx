@@ -158,7 +158,7 @@ test("the transcript shows prose and tool rows: shell runs and failures expanded
 
 test("the summary strip shows agent, model, CLI version, path, mode, turns, cost and elapsed", () => {
   launch(
-    { type: "sessionStarted", session },
+    { type: "sessionStarted", session : { ...session, startedAtMs: Date.now() - 65_000 } },
     {
       type: "sessionFactsChanged",
       sessionId: "session-1",

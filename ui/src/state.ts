@@ -5,6 +5,7 @@ import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
 import type { Session } from "./schema/Session";
 import type { SessionFacts } from "./schema/SessionFacts";
+import type { Shell } from "./schema/Shell";
 import type { Worktree } from "./schema/Worktree";
 
 export interface RepositoryView extends Repository {
@@ -14,6 +15,8 @@ export interface RepositoryView extends Repository {
 export interface SessionView extends Session {
   facts: SessionFacts;
   transcript: Chunked<Entry>;
+  /** Raw adapter-protocol events (JSON), for the Agent log's debug view. */
+  rawEvents: Chunked<string>;
 }
 
 export interface Toast {
@@ -26,10 +29,12 @@ export interface State {
   repositories: RepositoryView[];
   /** By id, in start order. */
   sessions: Record<string, SessionView>;
+  /** Open shell terminals, in open order. */
+  shells: Shell[];
   toasts: Toast[];
 }
 
-export const initialState: State = { repositories: [], sessions: {}, toasts: [] };
+export const initialState: State = { repositories: [], sessions: {}, shells: [], toasts: [] };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0, costUsd: null };
 
@@ -43,7 +48,7 @@ function updateSession(state: State, id: string, change: (s: SessionView) => Ses
 export function reduce(state: State, event: Event): State {
   switch (event.type) {
     case "attached":
-      return { ...state, repositories: [], sessions: {} };
+      return { ...state, repositories: [], sessions: {}, shells: [] };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
       return { ...state, repositories: [...others, { ...event.repository, worktrees: [] }] };
@@ -61,7 +66,7 @@ export function reduce(state: State, event: Event): State {
       return { ...state, toasts: [...state.toasts, { id: ++toastSeq, tone: "bad", text: event.reason }] };
     case "sessionStarted": {
       const s = event.session;
-      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked() } } };
+      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked(), rawEvents: emptyChunked() } } };
     }
     case "sessionStatusChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
@@ -72,6 +77,18 @@ export function reduce(state: State, event: Event): State {
         ...s,
         transcript: put(s.transcript, event.index, event.entry),
       }));
+    case "agentEventReceived":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        rawEvents: put(s.rawEvents, event.index, event.json),
+      }));
+    case "shellOpened":
+      return { ...state, shells: [...state.shells.filter((s) => s.id !== event.shell.id), event.shell] };
+    case "shellClosed":
+      return { ...state, shells: state.shells.filter((s) => s.id !== event.shellId) };
+    case "shellOutput":
+      // A byte stream for the terminal emulator (see shellStreams.ts), not renderer state.
+      return state;
   }
 }
 
