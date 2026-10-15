@@ -217,6 +217,29 @@ fn codex_gets_the_servers_as_config_overrides() {
 }
 
 #[test]
+fn codex_mcp_servers_inherit_the_granted_secrets_by_name_and_no_values() {
+    use switchyard_core::secrets::SpawnEnv;
+    let env = SpawnEnv {
+        set: BTreeMap::from([("NPM_TOKEN".into(), "npm-123".into())]),
+        remove: ["GITHUB_TOKEN".to_string()].into(),
+    };
+    let pairs: Vec<String> = switchyard_core::mcp::codex_config_for_spawn(&[docs(), github()], &env)
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![
+            r#"mcp_servers.docs.url="https://docs.example.com/mcp""#,
+            r#"mcp_servers.docs.http_headers.X-Team="acme""#,
+            r#"mcp_servers.github.command="npx""#,
+            r#"mcp_servers.github.args=["-y","@modelcontextprotocol/server-github"]"#,
+            r#"mcp_servers.github.env_vars=["NPM_TOKEN"]"#,
+        ]
+    );
+}
+
+#[test]
 fn context_names_a_servers_transport_without_its_arguments() {
     assert_eq!(github().summary(), "stdio · npx");
     let with_token = McpServer {
