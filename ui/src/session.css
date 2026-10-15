@@ -1,0 +1,64 @@
+/* Sessions: status colours (one per status, everywhere), the Session view, the New session
+   modal. Rules follow the prototype's .status-pill, .lane-head, .summary, .msg, .tl, .sys. */
+
+/* ---------- the five statuses ---------- */
+.st-running{--st:var(--ok);--st-soft:var(--ok-soft)}
+.st-waiting{--st:var(--warn);--st-soft:var(--warn-soft)}
+.st-idle{--st:var(--fg-2);--st-soft:var(--bg-3)}
+.st-done{--st:var(--accent);--st-soft:var(--accent-soft)}
+.st-failed{--st:var(--bad);--st-soft:var(--bad-soft)}
+.status-pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:11px;font-size:11.5px;font-weight:500;color:var(--st);background:var(--st-soft);white-space:nowrap;flex:none}
+.status-pill::before,.status-dot::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--st);flex:none}
+.status-dot{display:inline-flex;align-items:center;gap:5px;color:var(--st);font-size:11px;white-space:nowrap}
+.worktree .dot.st-running,.worktree .dot.st-waiting,.worktree .dot.st-idle,.worktree .dot.st-done,.worktree .dot.st-failed{background:var(--st)}
+.wt-open{display:contents;text-align:left;cursor:pointer}
+
+/* ---------- session view ---------- */
+.session{display:flex;flex-direction:column;min-height:0;height:100%}
+.lane-head{display:flex;align-items:center;gap:10px;padding:12px 20px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.lane-head .title{min-width:0;flex:1 1 200px}
+.lane-head h1{margin:0;font-size:15px;font-weight:600;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lane-head .av,.msg .av,.dtab .av{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font:600 10.5px var(--font-mono);color:#0b0d12;flex:none}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:10px 20px;border-bottom:1px solid var(--line)}
+.summary .c{background:var(--bg-1);border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;min-width:0}
+.summary .c .l{font-size:10.5px;color:var(--fg-2);text-transform:uppercase;letter-spacing:.06em}
+.summary .c .v{font:500 12px var(--font-mono);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.transcript{flex:1;overflow:auto;min-height:0;padding:12px 20px}
+.vspace{position:relative;max-width:860px}
+.vrow{position:absolute;left:0;right:0;padding:4px 0}
+.msg{display:grid;grid-template-columns:26px 1fr;gap:10px}
+.msg.user .av{background:var(--bg-4);color:var(--fg);font-size:9px}
+.msg .text{white-space:pre-wrap;line-height:1.55;max-width:70ch;overflow-wrap:anywhere}
+.tl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:3px 6px;margin-left:30px;border-radius:4px;font-size:12px;width:calc(100% - 30px);text-align:left}
+.tl:hover{background:var(--bg-2)}
+.tl .v{color:var(--fg);font-weight:500}
+.tl .v.bad{color:var(--bad)}
+.tl code{font-size:11.5px;color:var(--fg-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl .st{font:11px var(--font-mono);color:var(--fg-2)}
+.tl .st.ok{color:var(--ok)}.tl .st.failed{color:var(--bad)}.tl .st.running{color:var(--warn)}
+.tool-out{margin:2px 0 4px 36px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-1);padding:8px 10px;font:11.5px/1.5 var(--font-mono);color:var(--fg-1);white-space:pre-wrap;max-height:220px;overflow:auto}
+.sys{font-size:11.5px;color:var(--fg-2);padding:2px 0 2px 36px;font-style:italic;white-space:pre-wrap}
+
+.composer{display:flex;gap:8px;align-items:flex-end;padding:10px 20px 14px;border-top:1px solid var(--line)}
+.composer textarea{flex:1;resize:none;background:var(--bg-1);border:1px solid var(--line-2);border-radius:var(--radius);padding:8px 10px;min-height:38px}
+.composer textarea:disabled{opacity:.6}
+
+/* ---------- dock placeholder tabs ---------- */
+.dtab{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:var(--radius);color:var(--fg-1);font-size:12px;white-space:nowrap}
+.dtab .av{width:18px;height:18px;border-radius:5px;font-size:9px;background:var(--ag-claude)}
+.dtab .nm{font-family:var(--font-mono)}
+
+/* ---------- new session modal ---------- */
+.field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--fg-1);border:0;margin:0;padding:0}
+.field select,.field textarea{background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:6px 8px;color:var(--fg)}
+.field textarea{resize:vertical}
+.seg{flex-direction:row;flex-wrap:wrap;gap:6px}
+.seg legend{width:100%;margin-bottom:5px}
+.seg label{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line-2);border-radius:var(--radius)}
+.seg label.off{opacity:.5}
+.modal-f{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+
+@media (max-width:860px){
+  .lane-head,.summary,.transcript,.composer{padding-left:16px;padding-right:16px}
+}

@@ -9,8 +9,12 @@ import {
 } from "./actions";
 import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from "./keymap";
 import { Palette, ShortcutsHelp } from "./Overlays";
+import { NewSession } from "./NewSession";
+import { SessionView } from "./SessionView";
 import type { CoreConnection } from "./core";
-import { dismissToast, initialState, reduce, type RepositoryView, type State } from "./state";
+import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
+import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
+import type { Command } from "./schema/Command";
 import type { Event } from "./schema/Event";
 
 type View = "dashboard" | "session" | "worktrees" | "tasks";
@@ -61,7 +65,7 @@ export interface AppProps {
   actions?: ActionRegistry;
 }
 
-type Overlay = "palette" | "help" | null;
+type Overlay = "palette" | "help" | "newSession" | null;
 
 export function App({ core, pickFolder, actions }: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
@@ -69,6 +73,9 @@ export function App({ core, pickFolder, actions }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [prefs, setPrefs] = useState(loadPrefs);
   const [sidebarOpen, setSidebarOpen] = useState(false); // overlay below 860 px
+  const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  // The worktree of a session the user just asked for: it opens once the core confirms it.
+  const [pendingStart, setPendingStart] = useState<string | null>(null);
 
   const updatePrefs = useCallback((patch: Partial<Prefs>) => {
     setPrefs((p) => {
@@ -83,6 +90,27 @@ export function App({ core, pickFolder, actions }: AppProps) {
     core.send({ type: "attach" });
     return unsubscribe;
   }, [core]);
+
+  const sessions = Object.values(state.sessions);
+  const openSession = useCallback(
+    (id: string) => {
+      setSelectedSession(id);
+      updatePrefs({ view: "session" });
+    },
+    [updatePrefs],
+  );
+  useEffect(() => {
+    const started = pendingStart && sessions.find((s) => s.worktreePath === pendingStart);
+    if (started) {
+      setPendingStart(null);
+      openSession(started.id);
+    }
+  }, [pendingStart, sessions, openSession]);
+  const startSession = (command: Command) => {
+    if (command.type === "startSession") setPendingStart(command.worktreePath);
+    core.send(command);
+  };
+  const shownSession = (selectedSession && state.sessions[selectedSession]) || sessions[sessions.length - 1];
 
   useEffect(() => {
     if (prefs.theme) document.documentElement.dataset.theme = prefs.theme;
@@ -116,6 +144,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
 
   useHandler(registry, "palette.toggle", () => setOverlay((o) => (o === "palette" ? null : "palette")));
   useHandler(registry, "help.open", () => setOverlay("help"));
+  useHandler(registry, "session.new", () => setOverlay("newSession"));
   useHandler(registry, "sidebar.toggle", toggleSidebar);
   useHandler(registry, "dock.toggle", toggleDock);
   useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
@@ -131,6 +160,14 @@ export function App({ core, pickFolder, actions }: AppProps) {
 
   usePaletteSourceIn(registry, () => {
     const items: PaletteItem[] = [];
+    for (const s of sessions)
+      items.push({
+        id: s.id,
+        group: "Sessions",
+        title: s.branch ?? s.worktreePath,
+        detail: STATUS_LABEL[s.status],
+        run: () => openSession(s.id),
+      });
     for (const r of state.repositories)
       for (const w of r.worktrees) {
         const branch = w.branch ?? "(detached)";
@@ -246,7 +283,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
               <path d="M8 2.5v11a5.5 5.5 0 000-11z" fill="currentColor" stroke="none" />
             </svg>
           </button>
-          <button className="btn primary" disabled title="Arrives with sessions">
+          <button className="btn primary" title={`New session (${keysLabel("session.new")})`} onClick={() => registry.run("session.new")}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
               <path d="M8 3v10M3 8h10" />
             </svg>
@@ -266,7 +303,9 @@ export function App({ core, pickFolder, actions }: AppProps) {
             {state.repositories.length === 0 ? (
               <p className="empty">No repositories yet. Add one with + Repo.</p>
             ) : (
-              state.repositories.map((r) => <RepositoryGroup key={r.id} repository={r} />)
+              state.repositories.map((r) => (
+                <RepositoryGroup key={r.id} repository={r} state={state} onOpenSession={openSession} />
+              ))
             )}
           </div>
           <div className="sidebar-foot">
@@ -279,17 +318,32 @@ export function App({ core, pickFolder, actions }: AppProps) {
         {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
 
         <main className="stage">
-          <div className="page">
-            <div className="pagehead">
-              <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
+          {prefs.view === "session" && shownSession ? (
+            <SessionView key={shownSession.id} session={shownSession} send={core.send} />
+          ) : (
+            <div className="page">
+              <div className="pagehead">
+                <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
+              </div>
+              <p className="empty">
+                {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
+              </p>
             </div>
-            <p className="empty">Nothing here yet.</p>
-          </div>
+          )}
         </main>
 
         <section className={`dock ${prefs.dockCollapsed ? "collapsed" : ""}`} aria-label="Terminals">
           <div className="dock-head">
-            <div className="tabs" />
+            <div className="tabs">
+              {/* One Agent log tab per session; the log itself arrives with the terminal dock. */}
+              {sessions.map((s) => (
+                <div key={s.id} className="dtab" title={`Agent log: ${s.branch ?? s.worktreePath}`}>
+                  <span className="av">{AGENT_SHORT[s.agent]}</span>
+                  <span className="nm">{s.branch ?? s.worktreePath}</span>
+                  <Status status={s.status} variant="dot" />
+                </div>
+              ))}
+            </div>
             <button className="btn ghost sm" onClick={toggleDock}>
               {prefs.dockCollapsed ? "Show" : "Hide"} <kbd>`</kbd>
             </button>
@@ -301,10 +355,12 @@ export function App({ core, pickFolder, actions }: AppProps) {
 
         <footer className="statusbar">
           <span className="i">
-            <i className="dot running" />0 running
+            <i className="dot running" />
+            {sessions.filter((s) => s.status === "running").length} running
           </span>
           <span className="i">
-            <i className="dot waiting" />0 waiting
+            <i className="dot waiting" />
+            {sessions.filter((s) => s.status === "waiting").length} waiting
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
@@ -325,12 +381,14 @@ export function App({ core, pickFolder, actions }: AppProps) {
         </div>
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
         {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
+        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} />}
       </div>
     </ActionsContext.Provider>
   );
 }
 
-function RepositoryGroup({ repository }: { repository: RepositoryView }) {
+function RepositoryGroup(props: { repository: RepositoryView; state: State; onOpenSession: (id: string) => void }) {
+  const { repository, state, onOpenSession } = props;
   const [collapsed, setCollapsed] = useState(false);
   return (
     <div className={`repo ${collapsed ? "collapsed" : ""}`} role="group" aria-label={repository.name}>
@@ -342,16 +400,34 @@ function RepositoryGroup({ repository }: { repository: RepositoryView }) {
         <span className="n">base {repository.baseBranch}</span>
       </button>
       <ul className="worktrees">
-        {repository.worktrees.map((w) => (
-          <li key={w.path} className="worktree" title={w.path}>
-            <span className="dot" />
+        {repository.worktrees.map((w) => {
+          const occupant = sessionOn(state, w.path);
+          const branch = (
             <span className="branch">
               {w.branch ?? "(detached)"}
               {w.primary && <span className="tag">primary</span>}
             </span>
-            <span className="meta">free</span>
-          </li>
-        ))}
+          );
+          return (
+            <li key={w.path} className="worktree" title={w.path}>
+              {occupant ? (
+                <button className="wt-open" onClick={() => onOpenSession(occupant.id)}>
+                  <span className={`dot st-${occupant.status}`} />
+                  {branch}
+                  <span className="meta">
+                    {AGENT_SHORT[occupant.agent]} · <Status status={occupant.status} variant="dot" />
+                  </span>
+                </button>
+              ) : (
+                <>
+                  <span className="dot" />
+                  {branch}
+                  <span className="meta">free</span>
+                </>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
