@@ -72,7 +72,7 @@ const answered = (requestId = "req-1", state: RequestState = "allowed", request:
 
 const toasts = () => screen.getByRole("status").querySelectorAll(".toast");
 const openSession = () => fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByRole("button", { name: /fix\/readme/ }));
-const requestCard = () => screen.getByRole("group", { name: /Approval needed|Question for you/ });
+const requestCard = () => screen.getByRole("group", { name: /Permission request|Question for you/ });
 const currentView = () =>
   screen.getByRole("navigation", { name: "Views" }).querySelector("[aria-current=page]")?.getAttribute("aria-label");
 
@@ -100,17 +100,17 @@ test("a request turns every surface amber at once and raises one toast with agen
   expect(toasts()[0].textContent).toContain("pnpm test");
 });
 
-test("Approve on the toast answers the request without changing view; the answer clears every surface", () => {
+test("Run once on the toast answers the request without changing view; the answer clears every surface", () => {
   const { sent, emit } = launch(...asks());
 
-  fireEvent.click(within(toasts()[0] as HTMLElement).getByRole("button", { name: "Approve" }));
+  fireEvent.click(within(toasts()[0] as HTMLElement).getByRole("button", { name: "Run once" }));
 
   expect(sent).toContainEqual({ type: "answerRequest", sessionId: "session-1", requestId: "req-1", verdict: { type: "allowOnce" } });
   expect(currentView()).toBe("Dashboard");
   act(() => emit(...answered()));
   const s = surfaces();
   expect([s.inbox, s.kpi, s.statusbar, s.sidebar]).toEqual(["Needs you", "0", "0 Needs you", "running"]);
-  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Run once" })).toBeNull();
 });
 
 test("the request card in the session offers Run once, Always allow and Skip, then shows the verdict line", () => {
@@ -134,10 +134,10 @@ test("the request card in the session offers Run once, Always allow and Skip, th
 
 const always = (grant: string) => `Always allow ${grant} in this repo`;
 test.each<[string, Request, string, string, string[]]>([
-  ["command", pnpmTest, "Approval needed: command", "pnpm test", ["Run once", always("pnpm test *"), "Skip"]],
-  ["file write", { type: "fileWrite", path: "README.md", diff: "+hello" }, "Approval needed: file write", "README.md", ["Run once", "Skip"]],
-  ["network", { type: "network", domain: "docs.example.com", url: "https://docs.example.com/x" }, "Approval needed: network", "https://docs.example.com/x", ["Run once", always("docs.example.com"), "Skip"]],
-  ["MCP tool", { type: "mcpTool", server: "github", tool: "create_issue", input: '{"title":"x"}' }, "Approval needed: MCP tool", "github · create_issue", ["Run once", always("github · create_issue"), "Skip"]],
+  ["command", pnpmTest, "Permission request: command", "pnpm test", ["Run once", always("pnpm test *"), "Skip"]],
+  ["file write", { type: "fileWrite", path: "README.md", diff: "+hello" }, "Permission request: file write", "README.md", ["Run once", "Skip"]],
+  ["network", { type: "network", domain: "docs.example.com", url: "https://docs.example.com/x" }, "Permission request: network", "https://docs.example.com/x", ["Run once", always("docs.example.com"), "Skip"]],
+  ["MCP tool", { type: "mcpTool", server: "github", tool: "create_issue", input: '{"title":"x"}' }, "Permission request: MCP tool", "github · create_issue", ["Run once", always("github · create_issue"), "Skip"]],
 ])("a %s request renders its detail in a mono block with its answers", (_, request, heading, detail, buttons) => {
   launch(...asks(request));
   openSession();

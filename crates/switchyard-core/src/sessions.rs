@@ -201,7 +201,7 @@ fn begin(
     }
     let id = format!("session-{}", inner.sessions.next_id + 1);
     // Grants reach the CLI as flags; the CLI's own settings files are never written.
-    let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
+    let (allowed_tools, disallowed_tools) = policy::cli_grants(agent, &policy::resolve(inner, &repo));
     let sandboxed = policy::sandboxed(&repo);
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
     let spec = LaunchSpec {
@@ -349,7 +349,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     // The session's own mode (as last switched); the sandbox as the policy declares it now,
     // so a sandbox withdrawn since never relaunches into bypass.
     let ((allowed_tools, disallowed_tools), sandboxed) = match &repository {
-        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
+        Some(repo) => (policy::cli_grants(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
         None => Default::default(),
     };
     // The repository's MCP servers as its `.mcp.json` lists them now.

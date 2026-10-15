@@ -26,7 +26,7 @@ export interface SessionViewProps {
   branchState?: ReactNode;
   /** How the branch leaves the worktree (Open pull request, Local merge), on the header and
    * the Finished box. */
-  ship?: ReactNode;
+  pullRequestActions?: ReactNode;
   /** Text drafted elsewhere (Ask agent in review) for the composer; a new seq replaces it. */
   draft?: Draft;
   /** The review pane beside this one is hidden (⌘⇧D). */
@@ -87,7 +87,7 @@ export function SessionView(props: SessionViewProps) {
             Resume
           </button>
         )}
-        {props.ship}
+        {props.pullRequestActions}
         <button
           className="btn sm ghost"
           title="Write the transcript as JSONL, one entry per line"
@@ -115,7 +115,7 @@ export function SessionView(props: SessionViewProps) {
       <EndBox
         session={session}
         send={send}
-        ship={props.ship}
+        pullRequestActions={props.pullRequestActions}
         onReviewChanges={props.onReviewChanges}
         onOpenTerminal={props.onOpenTerminal}
       />
@@ -148,11 +148,11 @@ function lastEntry<T extends Entry["type"]>(
 function EndBox(props: {
   session: Session;
   send: (command: Command) => void;
-  ship?: ReactNode;
+  pullRequestActions?: ReactNode;
   onReviewChanges?: () => void;
   onOpenTerminal?: () => void;
 }) {
-  const { session, send, ship, onReviewChanges, onOpenTerminal } = props;
+  const { session, send, pullRequestActions, onReviewChanges, onOpenTerminal } = props;
   const prompt = (text: string) => send({ type: "sendPrompt", sessionId: session.id, text });
   const resume = (
     <button className="btn sm" onClick={() => send({ type: "resumeSession", sessionId: session.id })}>
@@ -194,7 +194,7 @@ function EndBox(props: {
           <span className="tx">The agent says it is done.</span>
           <div className="acts">
             {review}
-            {ship}
+            {pullRequestActions}
             {resume}
           </div>
         </div>

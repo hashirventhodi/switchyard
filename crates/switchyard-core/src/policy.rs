@@ -5,7 +5,7 @@
 //!
 //! Policy is resolved fresh for every decision: the file is in git and may change under
 //! us, and git is the source of truth. Resolved Grants are also translated into the CLI's
-//! own flags at spawn ([`cli_rules`]) so it stops asking; nothing is ever written into a
+//! own flags at spawn ([`cli_grants`]) so it stops asking; nothing is ever written into a
 //! CLI's settings files.
 
 mod dangerous;
@@ -36,7 +36,7 @@ pub(crate) fn resolve(inner: &Inner, repo: &StoredRepository) -> Policy {
         Ok(file) => file,
         Err(error) => return Policy { error: Some(error), ..Policy::default() },
     };
-    let (allow, deny) = file.rules().unwrap_or_default();
+    let (allow, deny) = file.grants().unwrap_or_default();
     let mut grants = Vec::new();
     let repo_grant = |kind: &str, i: usize, effect, rule| Grant {
         id: format!("repo-{kind}-{}", i + 1),
@@ -180,7 +180,7 @@ pub(crate) fn source(grant: &Grant) -> &'static str {
 /// Codex has no per-invocation rule for commands or domains, so only MCP tool rules reach
 /// it, as `mcp:<server>/<tool>` (`*` for every tool); the Codex launcher turns them into
 /// the thread's config ([`crate::codex`]). Switchyard answers everything else it asks.
-pub(crate) fn cli_rules(agent: AgentKind, policy: &Policy) -> (Vec<String>, Vec<String>) {
+pub(crate) fn cli_grants(agent: AgentKind, policy: &Policy) -> (Vec<String>, Vec<String>) {
     let translate = match agent {
         AgentKind::ClaudeCode => claude_rule,
         AgentKind::Codex => codex_rule,

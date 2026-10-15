@@ -90,10 +90,10 @@ test("statuses and counts follow each session on its own, and both requests are 
   const needsYou = within(screen.getByRole("region", { name: "Needs you" }));
   expect(needsYou.getByText("Wants to run: pnpm test")).toBeTruthy();
   expect(needsYou.getByText("Wants to run: pnpm lint")).toBeTruthy();
-  // One toast per request, each naming its agent; Approve answers without leaving the Dashboard.
+  // One toast per request, each naming its agent; Run once answers without leaving the Dashboard.
   const toasts = [...screen.getByRole("status").querySelectorAll<HTMLElement>(".toast")];
   expect(toasts.map((t) => t.textContent?.split(" wants")[0])).toEqual(["OpenAI Codex on feat/tests", "Claude Code on fix/docs"]);
-  for (const toast of toasts) fireEvent.click(within(toast).getByRole("button", { name: "Approve" }));
+  for (const toast of toasts) fireEvent.click(within(toast).getByRole("button", { name: "Run once" }));
 
   expect(sent).toContainEqual({ type: "answerRequest", sessionId: "session-2", requestId: "0", verdict: { type: "allowOnce" } });
   expect(sent).toContainEqual({ type: "answerRequest", sessionId: "session-1", requestId: "req-1", verdict: { type: "allowOnce" } });

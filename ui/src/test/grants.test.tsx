@@ -55,7 +55,7 @@ function launch(...events: Event[]) {
   return fake;
 }
 
-const requestCard = () => screen.getByRole("group", { name: /Approval needed/ });
+const requestCard = () => screen.getByRole("group", { name: /Permission request/ });
 
 test.each<[string, string]>([
   ["pnpm test --filter api", "pnpm test *"],

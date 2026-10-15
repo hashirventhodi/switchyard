@@ -18,7 +18,7 @@ import { NewWorktree, WorktreesView } from "./WorktreesView";
 import { NewTask, TasksView, type Linking } from "./TasksView";
 import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
-import { PrBadge, ShipActions } from "./PullRequest";
+import { PrBadge, PullRequestActions } from "./PullRequest";
 import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { Dashboard } from "./Dashboard";
@@ -522,8 +522,8 @@ export function App({
                     <PrBadge state={state} worktreePath={shownSession.worktreePath} />
                   </>
                 }
-                ship={
-                  <ShipActions
+                pullRequestActions={
+                  <PullRequestActions
                     state={state}
                     worktreePath={shownSession.worktreePath}
                     send={core.send}
@@ -641,9 +641,9 @@ export function App({
               key={t.id}
               toast={t}
               dismiss={dismiss}
-              approve={(r) => {
+              runOnce={(r) => {
                 answer(r.sessionId, r.requestId, { type: "allowOnce" });
-                dispatch({ kind: "result", text: `Approved in ${state.sessions[r.sessionId]?.branch ?? "the session"}.` });
+                dispatch({ kind: "result", text: `Ran once in ${state.sessions[r.sessionId]?.branch ?? "the session"}.` });
               }}
               open={(r) => openSession(r.sessionId, true)}
             />
@@ -681,14 +681,14 @@ export function App({
 
 const NONE: PendingRequest[] = [];
 
-/** One toast with its own timer. A request toast offers Approve (or Answer, for a question). */
+/** One toast with its own timer. A request toast offers Run once (or Answer, for a question). */
 function ToastView(props: {
   toast: Toast;
   dismiss: (id: number) => void;
-  approve: (request: PendingRequest) => void;
+  runOnce: (request: PendingRequest) => void;
   open: (request: PendingRequest) => void;
 }) {
-  const { toast, dismiss, approve, open } = props;
+  const { toast, dismiss, runOnce, open } = props;
   const { id, ms, request } = toast;
   useEffect(() => {
     const timer = setTimeout(() => dismiss(id), ms);
@@ -707,8 +707,8 @@ function ToastView(props: {
             Answer
           </button>
         ) : (
-          <button className="btn ok sm" onClick={() => approve(request)}>
-            Approve
+          <button className="btn ok sm" onClick={() => runOnce(request)}>
+            Run once
           </button>
         ))}
       <button className="x" aria-label="Dismiss" onClick={() => dismiss(id)}>
