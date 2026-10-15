@@ -4,8 +4,11 @@
 //! store (so they survive a relaunch) and discarded on commit. Hunks carry their own
 //! decisions and comments (Hunk feedback, see `feedback`), stored the same way.
 
+mod conflicts;
 mod diff;
 mod feedback;
+
+pub(crate) use conflicts::resolve as resolve_conflict;
 
 pub(crate) use feedback::{comment_hunk, decide_hunk, send_feedback, HunkReview};
 
@@ -117,16 +120,27 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
 /// The base branch's name and the files a dry-run merge of it into the worktree conflicts
 /// on (#17's conflicts fact; empty when not behind).
 fn base_conflicts(inner: &Inner, worktree_path: &str) -> (String, Vec<String>) {
-    let Some((repo, wt)) = inner.find_worktree(worktree_path) else { return (String::new(), Vec::new()) };
+    let (base, base_ref, behind) = base_of(inner, worktree_path);
+    let conflicts = if behind > 0 {
+        git::conflicting_files(Path::new(worktree_path), &base_ref).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    (base, conflicts)
+}
+
+/// The base branch's name, the commit-ish standing for it, and how far behind it the
+/// worktree is (empty names and 0 when unknown).
+fn base_of(inner: &Inner, worktree_path: &str) -> (String, String, u32) {
+    let Some((repo, wt)) = inner.find_worktree(worktree_path) else { return (String::new(), String::new(), 0) };
     let dir = Path::new(&repo.path);
     let Some(primary) = git::worktrees(dir).ok().and_then(|l| l.into_iter().next()) else {
-        return (String::new(), Vec::new());
+        return (String::new(), String::new(), 0);
     };
     let base = git::base_branch(dir, &primary);
     let base_ref = git::base_ref(&wt.path, &base);
     let behind = git::ahead_behind(&wt.path, &base_ref).map(|(_, b)| b).unwrap_or(0);
-    let conflicts = if behind > 0 { git::conflicting_files(&wt.path, &base_ref).unwrap_or_default() } else { Vec::new() };
-    (base, conflicts)
+    (base, base_ref, behind)
 }
 
 /// Look up a worktree of an added repository, refusing `command` when there is none.
@@ -153,6 +167,8 @@ fn emit_changes(inner: &mut Inner, command: &str, worktree_path: &str) {
         Ok(list) => {
             let files = list.into_iter().map(|(f, _)| f).collect();
             inner.emit(Event::ChangesRead { worktree_path: worktree_path.into(), files });
+            let (base, conflicts) = conflicts::read(inner, worktree_path);
+            inner.emit(Event::ConflictsRead { worktree_path: worktree_path.into(), base, files: conflicts });
             worktrees::refresh_one(inner, worktree_path);
         }
         Err(reason) => inner.refuse(command, reason),

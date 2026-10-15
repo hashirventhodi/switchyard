@@ -206,6 +206,9 @@ impl Core {
             Command::ExportTranscript { session_id } => sessions::export(&inner, &session_id),
             Command::UpdateSettings { settings } => sessions::update_settings(&mut inner, settings),
             Command::ReadChanges { worktree_path } => review::read(&mut inner, &worktree_path),
+            Command::ResolveConflict { worktree_path, path, hunk_id, side } => {
+                review::resolve_conflict(&mut inner, &worktree_path, &path, &hunk_id, side)
+            }
             Command::DecideFile { worktree_path, path, decision } => {
                 review::decide(&mut inner, &worktree_path, &path, decision)
             }

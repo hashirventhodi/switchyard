@@ -121,22 +121,51 @@ pub fn dirty_count(dir: &Path) -> Result<u32, GitError> {
 /// (`git merge-tree --write-tree`): it writes objects only, never the working tree, the
 /// index or any ref.
 pub fn conflicting_files(dir: &Path, base: &str) -> Result<Vec<String>, GitError> {
+    Ok(dry_run_merge(dir, base)?.map(|(_, files)| files).unwrap_or_default())
+}
+
+/// The dry-run merge of `base` into HEAD (see [`conflicting_files`]): `None` when it merges
+/// cleanly, otherwise the merged tree's id (conflicted files hold conflict markers there,
+/// HEAD's side first) and the conflicting files.
+pub fn dry_run_merge(dir: &Path, base: &str) -> Result<Option<(String, Vec<String>)>, GitError> {
     let out = Command::new("git")
-        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", base])
+        .args(["-c", "merge.conflictStyle=merge", "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", base])
         .current_dir(dir)
         .output()
         .map_err(|e| GitError(format!("could not run git: {e}")))?;
     // Exit 0: merges cleanly. Exit 1: conflicts, listed after the tree id. Else: an error.
     match out.status.code() {
-        Some(0) => Ok(Vec::new()),
+        Some(0) => Ok(None),
         Some(1) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let mut files: Vec<String> = stdout.lines().skip(1).filter(|l| !l.is_empty()).map(str::to_owned).collect();
+            let mut lines = stdout.lines();
+            let tree = lines.next().unwrap_or_default().trim().to_string();
+            let mut files: Vec<String> = lines.filter(|l| !l.is_empty()).map(str::to_owned).collect();
             files.dedup();
-            Ok(files)
+            Ok(Some((tree, files)))
         }
         _ => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
     }
+}
+
+/// The text of `path` in the tree `tree` (objects only; nothing is written).
+pub fn blob_text(dir: &Path, tree: &str, path: &str) -> Result<String, GitError> {
+    git(dir, &["cat-file", "blob", &format!("{tree}:{path}")])
+}
+
+/// True while a rebase is stopped in the worktree at `dir` (its conflict markers then put
+/// base's side first and the branch's second).
+pub fn rebase_in_progress(dir: &Path) -> bool {
+    ["rebase-merge", "rebase-apply"].iter().any(|name| {
+        git(dir, &["rev-parse", "--path-format=absolute", "--git-path", name])
+            .is_ok_and(|p| Path::new(p.trim()).exists())
+    })
+}
+
+/// Tell git a conflicted file is resolved, as `git add <path>` does: its working-tree
+/// content (now free of conflict markers) becomes the index entry. Nothing else is staged.
+pub fn mark_resolved(dir: &Path, path: &str) -> Result<(), GitError> {
+    git(dir, &["add", "--", path]).map(|_| ())
 }
 
 /// One commit as `log` reads it.

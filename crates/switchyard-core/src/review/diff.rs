@@ -242,13 +242,13 @@ fn unquote(p: &str) -> String {
 }
 
 /// 64-bit FNV-1a: stable across builds and platforms.
-struct Fnv(u64);
+pub(super) struct Fnv(pub(super) u64);
 
 impl Fnv {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Fnv(0xcbf2_9ce4_8422_2325)
     }
-    fn add(&mut self, bytes: &[u8]) {
+    pub(super) fn add(&mut self, bytes: &[u8]) {
         for b in bytes {
             self.0 ^= u64::from(*b);
             self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
