@@ -198,12 +198,16 @@ struct Ponging {
 
 impl Adapter for Ponging {
     fn manifest(&self) -> AdapterManifest {
-        AdapterManifest { name: "ponging".into(), implements: VersionReq::parse("^0.1").unwrap() }
+        AdapterManifest {
+            name: "ponging".into(),
+            implements: VersionReq::parse("^0.1").unwrap(),
+        }
     }
     fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError> {
         let value: serde_json::Value = serde_json::from_str(raw).unwrap();
         if let Some(n) = value.get("ping") {
-            self.pending.push(serde_json::json!({ "pong": n }).to_string());
+            self.pending
+                .push(serde_json::json!({ "pong": n }).to_string());
         }
         Ok(vec![])
     }
@@ -216,7 +220,8 @@ impl Adapter for Ponging {
 }
 
 fn ponging() -> Fixture {
-    Fixture::load(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ponging")).expect("fixture loads")
+    Fixture::load(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ponging"))
+        .expect("fixture loads")
 }
 
 #[test]
@@ -237,8 +242,14 @@ fn a_reply_written_after_the_wrong_input_line_fails_naming_the_writes() {
         .to_string();
 
     assert!(failure.contains("writes differ"), "{failure}");
-    assert!(failure.contains(r#"-{"after_input":2,"message":{"pong":2}}"#), "{failure}");
-    assert!(failure.contains(r#"+{"after_input":3,"message":{"pong":2}}"#), "{failure}");
+    assert!(
+        failure.contains(r#"-{"after_input":2,"message":{"pong":2}}"#),
+        "{failure}"
+    );
+    assert!(
+        failure.contains(r#"+{"after_input":3,"message":{"pong":2}}"#),
+        "{failure}"
+    );
 }
 
 #[test]

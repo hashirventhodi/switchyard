@@ -56,7 +56,10 @@ fn session_init_model_may_be_omitted_on_input() {
         "cli": { "name": "echo-cli", "version": "1.0.0" }
     }))
     .unwrap();
-    assert!(matches!(event, Event::SessionInit { model: None, .. }), "{event:?}");
+    assert!(
+        matches!(event, Event::SessionInit { model: None, .. }),
+        "{event:?}"
+    );
 }
 
 #[test]

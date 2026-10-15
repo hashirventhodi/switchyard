@@ -1,0 +1,4 @@
+{"after_input":1,"message":{"method":"initialized"}}
+{"after_input":1,"message":{"method":"config/read","id":2,"params":{"includeLayers":false,"cwd":"/wt/acme/feat-billing"}}}
+{"after_input":2,"message":{"method":"thread/start","id":3,"params":{"cwd":"/wt/acme/feat-billing","approvalPolicy":"untrusted","approvalsReviewer":"user","sandbox":"workspace-write","config":{"mcp_servers.docs.args":["-y","@acme/docs-mcp"],"mcp_servers.docs.command":"npx","mcp_servers.docs.default_tools_approval_mode":"approve","mcp_servers.github.enabled":false,"mcp_servers.linear.disabled_tools":["delete_issue","archive_issue"],"mcp_servers.linear.tools.list_issues.approval_mode":"approve"}}}}
+{"after_input":3,"message":{"method":"turn/start","id":4,"params":{"threadId":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a05","input":[{"type":"text","text":"File the flaky test in Linear.","text_elements":[]}]}}}
