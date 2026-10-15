@@ -239,3 +239,41 @@ fn ahead_and_behind_are_reread_after_every_agent_turn() {
 
     assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![] });
 }
+
+fn history(core: &mut Harness, path: &Path) -> (String, Vec<switchyard_schema::Commit>) {
+    let events = core.send(Command::ReadHistory { worktree_path: path.to_string_lossy().into_owned() });
+    match events.as_slice() {
+        [Event::WorktreeHistory { worktree_path, base, commits }] if Path::new(worktree_path) == path => {
+            (base.clone(), commits.clone())
+        }
+        other => panic!("expected the history of {path:?}, got {other:#?}"),
+    }
+}
+
+#[test]
+fn history_lists_the_branch_commits_above_base_newest_first() {
+    let (repo, mut core, path) = setup();
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+    commit(&path, "login.rs", "fn login() {}\n", "Add login");
+    commit(&path, "logout.rs", "fn logout() {}\n", "Add logout\n\nWith a body.");
+
+    let (base, commits) = history(&mut core, &path);
+
+    assert_eq!(base, "main");
+    let subjects: Vec<_> = commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["Add logout", "Add login"]);
+    assert_eq!(commits[0].hash, head(&path));
+    assert!(commits[0].hash.starts_with(&commits[0].short) && commits[0].short.len() < commits[0].hash.len());
+    assert_eq!(commits[0].author, "Test");
+    assert!(commits[0].at_ms > 0);
+}
+
+#[test]
+fn a_branch_with_no_commits_of_its_own_has_an_empty_history() {
+    let (_repo, mut core, path) = setup();
+
+    let (base, commits) = history(&mut core, &path);
+
+    assert_eq!(base, "main");
+    assert!(commits.is_empty());
+}

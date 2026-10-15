@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use switchyard_schema::{Event, SessionStatus};
+use switchyard_schema::{Commit, Event, SessionStatus};
 
 use crate::{git, sessions, worktrees, Inner};
 
@@ -91,6 +91,25 @@ pub(crate) fn ask_agent(inner: &mut Inner, session_id: &str) {
     sessions::send_prompt(inner, session_id, &text);
 }
 
+/// The most commits History shows; a branch with more is a branch to split.
+const HISTORY_LIMIT: usize = 200;
+
 pub(crate) fn history(inner: &Inner, worktree_path: &str) {
-    let _ = (inner, worktree_path);
+    const COMMAND: &str = "readHistory";
+    let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
+        return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
+    };
+    let Some(base) = base_of(Path::new(&repo.path)) else {
+        return inner.refuse(COMMAND, format!("{} is no longer a readable git repository", repo.path));
+    };
+    let onto = git::base_ref(&worktree.path, &base);
+    let commits = match git::log_above(&worktree.path, &onto, HISTORY_LIMIT) {
+        Ok(list) => list,
+        Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read the history: {e}")),
+    };
+    let commits = commits
+        .into_iter()
+        .map(|c| Commit { hash: c.hash, short: c.short, subject: c.subject, author: c.author, at_ms: c.time * 1000 })
+        .collect();
+    inner.emit(Event::WorktreeHistory { worktree_path: worktree_path.into(), base, commits });
 }

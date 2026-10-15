@@ -139,6 +139,36 @@ pub fn conflicting_files(dir: &Path, base: &str) -> Result<Vec<String>, GitError
     }
 }
 
+/// One commit as `log` reads it.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub hash: String,
+    pub short: String,
+    pub subject: String,
+    pub author: String,
+    /// Committer time, seconds since the Unix epoch.
+    pub time: u64,
+}
+
+/// Commits on HEAD that `base` lacks, newest first, capped at `limit`.
+pub fn log_above(dir: &Path, base: &str, limit: usize) -> Result<Vec<LogEntry>, GitError> {
+    let max = format!("--max-count={limit}");
+    let out = git(dir, &["log", &max, "--format=%H%x1f%h%x1f%an%x1f%ct%x1f%s", &format!("{base}..HEAD")])?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.splitn(5, '\u{1f}');
+            Some(LogEntry {
+                hash: f.next()?.into(),
+                short: f.next()?.into(),
+                author: f.next()?.into(),
+                time: f.next()?.parse().unwrap_or(0),
+                subject: f.next().unwrap_or_default().into(),
+            })
+        })
+        .collect())
+}
+
 /// How a rebase ended.
 #[derive(Debug)]
 pub enum Rebase {
