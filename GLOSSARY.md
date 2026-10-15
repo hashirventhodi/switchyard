@@ -132,3 +132,25 @@ _Avoid_: Crashed, broken
 
 **Ready to merge**:
 A property of a Worktree, not a Session status: clean tree, ahead of its base, not behind it. Derived from git, never stored.
+
+### Adapters
+
+**Adapter**:
+A translator between one CLI's structured output and the Adapter protocol: raw CLI messages in, events out; commands in, raw CLI messages out. Never starts or owns a process, and is deterministic over the same input, with no I/O beyond the lines it is given.
+_Avoid_: Driver, wrapper, integration
+
+**Host**:
+The part that owns an agent CLI's process and feeds its output to an Adapter: Switchyard's core, or the sidecar's driver.
+_Avoid_: Runner, supervisor
+
+**Adapter protocol**:
+The versioned wire format between Switchyard and an Adapter: events out, commands in. Pre-1.0, any wire-format change is a minor bump.
+_Avoid_: Adapter API, agent protocol
+
+**Fixture**:
+A recorded exchange between one CLI version and the Adapter protocol: the CLI's raw output, the events it must produce, and the replies owed to commands. Marked as captured (from a real CLI run) or synthesised (written from the CLI's published types).
+_Avoid_: Recording (for a synthesised one), golden file, snapshot
+
+**Conformant adapter**:
+An Adapter that passes the conformance runner against captured Fixtures from a named CLI version, under a named Adapter protocol version. Self-assessed; no authority signs off.
+_Avoid_: Certified adapter, compatible adapter
