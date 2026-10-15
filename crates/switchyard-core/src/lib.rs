@@ -147,6 +147,13 @@ impl Core {
                 review::decide(&mut inner, &worktree_path, &path, decision)
             }
             Command::CommitAccepted { worktree_path, message } => review::commit(&mut inner, &worktree_path, &message),
+            Command::DecideHunk { worktree_path, path, hunk_id, decision } => {
+                review::decide_hunk(&mut inner, &worktree_path, &path, &hunk_id, decision)
+            }
+            Command::CommentHunk { worktree_path, path, hunk_id, comment } => {
+                review::comment_hunk(&mut inner, &worktree_path, &path, &hunk_id, comment.as_deref())
+            }
+            Command::SendFeedback { worktree_path } => review::send_feedback(&mut inner, &worktree_path),
             Command::ReadPolicy { repository_id } => policy::read(&inner, &repository_id),
             Command::RevokeGrant { repository_id, grant_id } => policy::revoke(&inner, &repository_id, &grant_id),
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),

@@ -191,6 +191,9 @@ fn review_commands_and_events_use_camel_case() {
                 id: "00ff".into(),
                 header: "@@ -1 +1,2 @@".into(),
                 lines: vec![DiffLine { kind: LineKind::Added, old: None, new: Some(2), text: "x".into() }],
+                decision: Some(Decision::Reject),
+                comment: Some("why?".into()),
+                sent: false,
             }],
         }],
     };
@@ -200,7 +203,50 @@ fn review_commands_and_events_use_camel_case() {
             "path": "b.rs", "oldPath": "a.rs", "status": "renamed", "added": 1, "removed": 0,
             "binary": false, "decision": null,
             "hunks": [{"id": "00ff", "header": "@@ -1 +1,2 @@",
-                       "lines": [{"kind": "added", "old": null, "new": 2, "text": "x"}]}]
+                       "lines": [{"kind": "added", "old": null, "new": 2, "text": "x"}],
+                       "decision": "reject", "comment": "why?", "sent": false}]
         }]})
+    );
+}
+
+#[test]
+fn hunk_feedback_wire_format() {
+    use switchyard_schema::Decision;
+    let cmd = Command::DecideHunk {
+        worktree_path: "/wt/x".into(),
+        path: "a.rs".into(),
+        hunk_id: "00ff".into(),
+        decision: Some(Decision::Reject),
+    };
+    assert_eq!(
+        serde_json::to_value(cmd).unwrap(),
+        json!({"type": "decideHunk", "worktreePath": "/wt/x", "path": "a.rs", "hunkId": "00ff", "decision": "reject"})
+    );
+    let cmd = Command::CommentHunk { worktree_path: "/wt/x".into(), path: "a.rs".into(), hunk_id: "00ff".into(), comment: None };
+    assert_eq!(
+        serde_json::to_value(cmd).unwrap(),
+        json!({"type": "commentHunk", "worktreePath": "/wt/x", "path": "a.rs", "hunkId": "00ff", "comment": null})
+    );
+    assert_eq!(
+        serde_json::to_value(Command::SendFeedback { worktree_path: "/wt/x".into() }).unwrap(),
+        json!({"type": "sendFeedback", "worktreePath": "/wt/x"})
+    );
+    let event = Event::HunkReviewed {
+        worktree_path: "/wt/x".into(),
+        path: "a.rs".into(),
+        hunk_id: "00ff".into(),
+        decision: None,
+        comment: Some("c".into()),
+        sent: true,
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"type": "hunkReviewed", "worktreePath": "/wt/x", "path": "a.rs", "hunkId": "00ff",
+               "decision": null, "comment": "c", "sent": true})
+    );
+    let event = Event::FeedbackSent { worktree_path: "/wt/x".into(), session_id: "session-1".into(), hunks: 2 };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"type": "feedbackSent", "worktreePath": "/wt/x", "sessionId": "session-1", "hunks": 2})
     );
 }

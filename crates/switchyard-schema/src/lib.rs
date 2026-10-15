@@ -137,6 +137,41 @@ pub enum Command {
         worktree_path: String,
         message: String,
     },
+    /// Accept or Reject one hunk of a changed file (`null` clears it). Rejecting a hunk
+    /// clears an Accept on its file: a file with any rejected hunk is not committed until
+    /// the agent revises the hunk or the user accepts the whole file. Answered with
+    /// [`Event::HunkReviewed`].
+    DecideHunk {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        #[serde(rename = "hunkId")]
+        #[ts(rename = "hunkId")]
+        hunk_id: String,
+        decision: Option<Decision>,
+    },
+    /// Comment on one hunk for the agent (`null` or blank clears the comment). Answered with
+    /// [`Event::HunkReviewed`].
+    CommentHunk {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        #[serde(rename = "hunkId")]
+        #[ts(rename = "hunkId")]
+        hunk_id: String,
+        comment: Option<String>,
+    },
+    /// Send every rejected hunk and comment not yet sent to the agent of the worktree's
+    /// Session as one structured message. Switchyard changes no file; rejections keep
+    /// blocking their files until the agent revises them. Answered with
+    /// [`Event::HunkReviewed`] (now `sent`) per hunk and [`Event::FeedbackSent`].
+    SendFeedback {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// Rebase a clean, non-primary worktree's branch on its Repository's base. Refused while
     /// its Session is Running. A rebase that stops on conflicts is aborted, leaving the
     /// branch as it was, and refused with the conflicting files named.
@@ -342,6 +377,31 @@ pub enum Event {
         /// Paths committed (for a rename, the new path).
         files: Vec<String>,
     },
+    /// One hunk's review as it stands now (decision, comment, whether they were sent to the
+    /// agent). Replaces that hunk's earlier review.
+    HunkReviewed {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        #[serde(rename = "hunkId")]
+        #[ts(rename = "hunkId")]
+        hunk_id: String,
+        decision: Option<Decision>,
+        comment: Option<String>,
+        sent: bool,
+    },
+    /// Hunk feedback went to the Session's agent as one message.
+    FeedbackSent {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        /// How many hunks the message covered.
+        hunks: u32,
+    },
     /// A worktree's branch was rebased on `base` without conflicts.
     WorktreeRebased {
         #[serde(rename = "worktreePath")]
@@ -483,6 +543,12 @@ pub struct Hunk {
     /// The `@@ -a,b +c,d @@ context` line.
     pub header: String,
     pub lines: Vec<DiffLine>,
+    /// The hunk's own decision (a file decision overrides it).
+    pub decision: Option<Decision>,
+    /// The user's comment for the agent.
+    pub comment: Option<String>,
+    /// The rejection and comment as they stand were already sent to the agent.
+    pub sent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

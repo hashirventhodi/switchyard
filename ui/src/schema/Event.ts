@@ -29,7 +29,11 @@ commit: string,
 /**
  * Paths committed (for a rename, the new path).
  */
-files: Array<string>, } | { "type": "worktreeRebased", worktreePath: string, base: string, } | { "type": "worktreeHistory", worktreePath: string, 
+files: Array<string>, } | { "type": "hunkReviewed", worktreePath: string, path: string, hunkId: string, decision: Decision | null, comment: string | null, sent: boolean, } | { "type": "feedbackSent", worktreePath: string, sessionId: string, 
+/**
+ * How many hunks the message covered.
+ */
+hunks: number, } | { "type": "worktreeRebased", worktreePath: string, base: string, } | { "type": "worktreeHistory", worktreePath: string, 
 /**
  * The base branch the commits sit above.
  */

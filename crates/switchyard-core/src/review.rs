@@ -1,9 +1,13 @@
 //! Review: a worktree's uncommitted changes, file decisions, and committing accepted files
 //! whole. Switchyard never reverts anything and never stages part of a file. Decisions
 //! live in memory keyed by worktree + path, pinned to the diff they were taken on, and are
-//! discarded on commit.
+//! discarded on commit. Hunks carry their own decisions and comments (Hunk feedback, see
+//! `feedback`).
 
 mod diff;
+mod feedback;
+
+pub(crate) use feedback::{comment_hunk, decide_hunk, send_feedback};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,6 +20,23 @@ use crate::{git, worktrees, Inner};
 pub(crate) struct Decisions {
     /// worktree path → file path → (decision, fingerprint of the diff it was taken on).
     by_worktree: HashMap<String, HashMap<String, (Decision, u64)>>,
+    /// worktree path → hunk id → review. Hunk ids hash the hunk's own lines and index-side
+    /// path, so a review lapses exactly when the agent revises that hunk.
+    hunks: HashMap<String, HashMap<String, feedback::HunkReview>>,
+}
+
+/// A file's commit eligibility, from its own decision and its hunks'.
+fn committable(file: &ChangedFile) -> bool {
+    match file.decision {
+        Some(d) => d == Decision::Accept,
+        None => !file.hunks.is_empty() && file.hunks.iter().all(|h| h.decision == Some(Decision::Accept)),
+    }
+}
+
+/// A file with a rejected hunk and no decision of its own: not committable until the agent
+/// revises the hunk or the user accepts the whole file.
+fn blocked(file: &ChangedFile) -> bool {
+    file.decision.is_none() && file.hunks.iter().any(|h| h.decision == Some(Decision::Reject))
 }
 
 /// Read the worktree's changes from git, with the decisions that still apply.
@@ -43,10 +64,18 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
     let decided = inner.review.by_worktree.entry(worktree_path.to_string()).or_default();
     // A decision on a diff that has since changed (or a file no longer changed) is stale.
     decided.retain(|path, (_, fp)| parsed.iter().any(|p| &p.file.path == path && p.fingerprint == *fp));
+    let reviews = inner.review.hunks.entry(worktree_path.to_string()).or_default();
+    // A hunk the agent revised (or dropped) has a new id: its review no longer applies.
+    reviews.retain(|id, _| parsed.iter().any(|p| p.file.hunks.iter().any(|h| &h.id == id)));
     Ok(parsed
         .into_iter()
         .map(|mut p| {
             p.file.decision = decided.get(&p.file.path).map(|(d, _)| *d);
+            for hunk in &mut p.file.hunks {
+                if let Some(r) = reviews.get(&hunk.id) {
+                    r.apply(hunk);
+                }
+            }
             (p.file, p.fingerprint)
         })
         .collect())
@@ -97,6 +126,16 @@ fn emit_changes(inner: &mut Inner, command: &str, worktree_path: &str) {
     }
 }
 
+/// Why `file` cannot be decided now: it is unmerged, or a merge of base would conflict on it.
+fn conflict(inner: &Inner, worktree_path: &str, file: &ChangedFile) -> Option<String> {
+    let path = &file.path;
+    if file.status == FileStatus::Conflicted {
+        return Some(format!("{path} has a conflict; resolve it before deciding"));
+    }
+    let (base, conflicts) = base_conflicts(inner, worktree_path);
+    conflicts.iter().any(|c| c == path).then(|| format!("{path} conflicts with {base}; rebase before deciding"))
+}
+
 pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decision: Option<Decision>) {
     const COMMAND: &str = "decideFile";
     if known(inner, COMMAND, worktree_path).is_none() {
@@ -109,13 +148,9 @@ pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decisio
     let Some((file, fingerprint)) = list.into_iter().find(|(f, _)| f.path == path) else {
         return inner.refuse(COMMAND, format!("{path} has no uncommitted changes"));
     };
-    if file.status == FileStatus::Conflicted && decision.is_some() {
-        return inner.refuse(COMMAND, format!("{path} has a conflict; resolve it before deciding"));
-    }
     if decision.is_some() {
-        let (base, conflicts) = base_conflicts(inner, worktree_path);
-        if conflicts.iter().any(|c| c == path) {
-            return inner.refuse(COMMAND, format!("{path} conflicts with {base}; rebase before deciding"));
+        if let Some(reason) = conflict(inner, worktree_path, &file) {
+            return inner.refuse(COMMAND, reason);
         }
     }
     let decided = inner.review.by_worktree.entry(worktree_path.to_string()).or_default();
@@ -124,6 +159,10 @@ pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decisio
         None => decided.remove(path),
     };
     inner.emit(Event::FileDecided { worktree_path: worktree_path.into(), path: path.into(), decision });
+    if decision == Some(Decision::Accept) {
+        // Accepting the whole file overrides its hunk rejections.
+        feedback::clear_rejections(inner, worktree_path, &file);
+    }
 }
 
 pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
@@ -143,9 +182,14 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
     if let Some(path) = base_conflicts(inner, worktree_path).1.first() {
         return inner.refuse(COMMAND, format!("Resolve the conflict in {path} before committing"));
     }
-    let accepted: Vec<&ChangedFile> =
-        list.iter().map(|(f, _)| f).filter(|f| f.decision == Some(Decision::Accept)).collect();
+    let accepted: Vec<&ChangedFile> = list.iter().map(|(f, _)| f).filter(|f| committable(f)).collect();
     if accepted.is_empty() {
+        if let Some((f, _)) = list.iter().find(|(f, _)| blocked(f)) {
+            return inner.refuse(
+                COMMAND,
+                format!("{} has a rejected hunk: send feedback to the agent or accept the whole file", f.path),
+            );
+        }
         return inner.refuse(COMMAND, "Accept at least one file to commit".into());
     }
     let dir = Path::new(worktree_path);
@@ -168,6 +212,7 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("Could not commit: {e}")),
     };
     inner.review.by_worktree.remove(worktree_path);
+    inner.review.hunks.remove(worktree_path);
     inner.emit(Event::Committed {
         worktree_path: worktree_path.into(),
         branch: worktree.branch,
