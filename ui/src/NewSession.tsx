@@ -5,6 +5,8 @@ import { slugBranch, type BranchKind } from "./branch";
 import type { AgentKind } from "./schema/AgentKind";
 import type { Command } from "./schema/Command";
 import type { PermissionMode } from "./schema/PermissionMode";
+import type { Task } from "./schema/Task";
+import { taskBranch, taskPrompt } from "./tasks";
 import { sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { AGENT_LABEL, AGENTS, MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
@@ -18,6 +20,10 @@ export interface NewSessionPreset {
   mode?: PermissionMode;
   repositoryId?: string;
   branchKind?: BranchKind;
+  /** Assign to agent: the prompt and branch come from the task, and the session links to it. */
+  task?: Task;
+  /** The task's repository's house rules, appended to its prompt. */
+  houseRules?: string;
 }
 
 interface Choice {
@@ -46,7 +52,10 @@ export function NewSession(props: {
   // Until the user (or the preset) picks one, the mode follows the repository's default.
   const [modeTouched, setModeTouched] = useState(preset.mode !== undefined);
   const [where, setWhere] = useState<"new" | "existing">(preset.worktreePath ? "existing" : "new");
-  const choices: Choice[] = state.repositories.flatMap((r) =>
+  const task = preset.task;
+  // A task's session runs in the task's repository.
+  const repositories = task ? state.repositories.filter((r) => r.id === task.repositoryId) : state.repositories;
+  const choices: Choice[] = repositories.flatMap((r) =>
     r.worktrees.map((w) => {
       const name = `${r.name} / ${w.branch ?? "(detached)"}`;
       const occupant = sessionOn(state, w.path);
@@ -65,10 +74,13 @@ export function NewSession(props: {
   const [worktree, setWorktree] = useState(
     () => preset.worktreePath ?? choices.find((c) => !c.disabled && !c.replaces)?.path ?? choices.find((c) => !c.disabled)?.path ?? "",
   );
-  const [repositoryId, setRepositoryId] = useState(preset.repositoryId ?? state.repositories[0]?.id ?? "");
-  const [branch, setBranch] = useState("");
-  const [branchTouched, setBranchTouched] = useState(false);
-  const [prompt, setPrompt] = useState("");
+  const [repositoryId, setRepositoryId] = useState(
+    task?.repositoryId ?? preset.repositoryId ?? state.repositories[0]?.id ?? "",
+  );
+  // A task names the branch `<kind>/<key>-<slug>`; otherwise it follows the prompt until typed.
+  const [branch, setBranch] = useState(task ? taskBranch(task) : "");
+  const [branchTouched, setBranchTouched] = useState(!!task);
+  const [prompt, setPrompt] = useState(task ? taskPrompt(task, preset.houseRules) : "");
 
   const repository = state.repositories.find((r) => r.id === repositoryId);
   const policyRepo =
@@ -92,6 +104,16 @@ export function NewSession(props: {
 
   const start = () => {
     if (!canStart) return;
+    if (task) {
+      const target =
+        where === "new"
+          ? ({ type: "newWorktree", branch: shownBranch.trim() } as const)
+          : replacing
+            ? ({ type: "replace", sessionId: replacing.id } as const)
+            : ({ type: "worktree", worktreePath: worktree } as const);
+      onStart({ type: "startTaskSession", taskId: task.id, target, agent, permissionMode: shownMode, prompt });
+      return onClose();
+    }
     onStart(
       where === "new"
         ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, prompt }
@@ -131,6 +153,14 @@ export function NewSession(props: {
               ))}
             </select>
           </label>
+          {task && (
+            <div className="field" role="group" aria-label="Task">
+              <span>Task</span>
+              <span className="task-line">
+                {task.key} · {task.title}
+              </span>
+            </div>
+          )}
           {blocked && (
             <div className="setup-alert" role="alert">
               <AgentProblem setup={blocked} openLink={openLink} />
@@ -154,7 +184,7 @@ export function NewSession(props: {
               <label className="field">
                 <span>Repository</span>
                 <select aria-label="Repository" value={repositoryId} onChange={(e) => setRepositoryId(e.target.value)}>
-                  {state.repositories.map((r) => (
+                  {repositories.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
                     </option>

@@ -186,7 +186,7 @@ pub(crate) fn repository(inner: &Inner, id: &str) -> Option<StoredRepository> {
 
 /// `<name>-<hash>`: the repository folder's name, made short ASCII, plus a hash of its
 /// full path so two clones with the same folder name never share a directory.
-fn repository_folder(primary: &Path) -> String {
+pub(crate) fn repository_folder(primary: &Path) -> String {
     let name = primary.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let name = slug(&name);
     let hash = fnv1a(primary.to_string_lossy().as_bytes());

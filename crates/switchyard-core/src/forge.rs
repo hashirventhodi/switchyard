@@ -24,7 +24,7 @@ use switchyard_schema::{
 
 pub use gh::GhForge;
 
-use crate::{git, sessions, worktrees, Inner};
+use crate::{git, sessions, tasks, worktrees, Inner};
 
 /// The Forge as the core uses it. The app uses [`GhForge`]; tests run it against a fake `gh`.
 pub trait Forge: Send + Sync {
@@ -244,9 +244,9 @@ pub(crate) fn open_pull_request(inner: &mut Inner, worktree_path: &str) {
         worktree_path.to_string(),
         Track { pull_request: Some(opened), ..Track::default() },
     );
-    // Tasks (M4) move to In review here.
     inner.emit(Event::PullRequestOpened { worktree_path: worktree_path.into(), pull_request: pull_request.clone() });
     inner.emit(Event::PullRequestChanged { worktree_path: worktree_path.into(), pull_request: Some(pull_request) });
+    tasks::pull_request_open(inner, worktree_path, &branch);
 }
 
 /// A worktree branch due a poll.
@@ -346,6 +346,8 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
             track_mut(inner, &key).stopped = true;
             merged(inner, &due, Some(number));
         }
+        // Opened outside Switchyard, or seen again after a relaunch.
+        Some((PullRequestState::Open, _)) => tasks::pull_request_open(inner, &key, &due.branch),
         _ => {}
     }
 }
@@ -358,7 +360,7 @@ fn track_mut<'a>(inner: &'a mut Inner, key: &str) -> &'a mut Track {
 fn merged(inner: &mut Inner, due: &Due, pull_request: Option<u32>) {
     let path = due.path.to_string_lossy().into_owned();
     let result = worktrees::try_remove(inner, &path);
-    // Tasks (M4) move to Done here.
+    tasks::merged(inner, &path, &due.branch);
     inner.emit(Event::BranchMerged {
         repository_id: due.repository_id.clone(),
         worktree_path: path,

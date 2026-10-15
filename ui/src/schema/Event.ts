@@ -16,6 +16,7 @@ import type { SessionStatus } from "./SessionStatus";
 import type { Settings } from "./Settings";
 import type { Shell } from "./Shell";
 import type { Spend } from "./Spend";
+import type { Task } from "./Task";
 import type { Worktree } from "./Worktree";
 import type { WorktreeFacts } from "./WorktreeFacts";
 
@@ -46,4 +47,4 @@ base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryI
 /**
  * The pull request's number; `null` for a Local merge.
  */
-pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, };
+pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, } | { "type": "tasksChanged", repositoryId: string, tasks: Array<Task>, houseRules: string, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, };

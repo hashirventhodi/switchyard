@@ -9,6 +9,7 @@ import type { SessionView, State } from "./state";
 import { ContextArchive } from "./ContextArchive";
 import { ContextGrants } from "./ContextGrants";
 import { ContextMcp } from "./ContextMcp";
+import { ContextTask } from "./ContextTask";
 
 /** "↓3" (warn colour) when the worktree is behind its base; nothing otherwise. */
 export function BehindBadge({ facts, base }: { facts?: WorktreeFacts; base?: string }) {
@@ -43,6 +44,8 @@ export function BranchPane(props: {
   onToggleExpand?: () => void;
   /** Put text in the composer for the user to finish and send (Ask agent). */
   onAsk?: (text: string) => void;
+  /** Open Tasks to pick the session's task ("Pick one"; `relink` to change it). */
+  onPickTask?: (sessionId: string, relink: boolean) => void;
 }) {
   const { state, session, send, expanded = false, onToggleExpand, onAsk = () => {} } = props;
   const [tab, setTab] = useState<"changes" | "history" | "context">("changes");
@@ -90,6 +93,7 @@ export function BranchPane(props: {
             <HistoryTab {...props} />
           ) : (
             <>
+              <ContextTask {...props} />
               <BranchContext {...props} />
               <ContextGrants {...props} />
               <ContextMcp {...props} />

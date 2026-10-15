@@ -15,6 +15,7 @@ import { xtermTerminal, type CreateTerminal } from "./terminal";
 import { NewSession, type NewSessionPreset } from "./NewSession";
 import { SessionView, type Draft } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
+import { NewTask, TasksView, type Linking } from "./TasksView";
 import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { PrBadge, ShipActions } from "./PullRequest";
@@ -28,6 +29,7 @@ import {
   reduce,
   resultToast,
   sessionOn,
+  taskById,
   waitingSessions,
   type PendingRequest,
   type RepositoryView,
@@ -107,7 +109,7 @@ export interface AppProps {
   openLink?: OpenLink;
 }
 
-type Overlay = "palette" | "help" | "newSession" | "newWorktree" | "inbox" | null;
+type Overlay = "palette" | "help" | "newSession" | "newWorktree" | "newTask" | "inbox" | null;
 
 /** A session the user just asked for, by where it will run; it opens once the core confirms it. */
 type PendingStart = { worktreePath: string } | { repositoryId: string; branch: string };
@@ -192,8 +194,33 @@ export function App({
     if (command.type === "startSession") setPendingStart({ worktreePath: command.worktreePath });
     if (command.type === "startSessionOnNewWorktree")
       setPendingStart({ repositoryId: command.repositoryId, branch: command.branch });
+    if (command.type === "startTaskSession") {
+      const repositoryId = taskById(state, command.taskId)?.repositoryId;
+      const { target } = command;
+      if (target.type === "worktree") setPendingStart({ worktreePath: target.worktreePath });
+      if (target.type === "newWorktree" && repositoryId) setPendingStart({ repositoryId, branch: target.branch });
+    }
     core.send(command);
   };
+
+  // "Pick one" in Context: Tasks opens to link a task; once the link changes, back to the session.
+  const [linking, setLinking] = useState<(Linking & { from: string | undefined }) | null>(null);
+  const pickTask = useCallback(
+    (sessionId: string, relink: boolean) => {
+      setLinking({ sessionId, relink, from: state.taskLinks[sessionId] });
+      updatePrefs({ view: "tasks" });
+    },
+    [state.taskLinks, updatePrefs],
+  );
+  useEffect(() => {
+    if (linking && state.taskLinks[linking.sessionId] !== linking.from) {
+      setLinking(null);
+      openSession(linking.sessionId);
+    }
+  }, [linking, state.taskLinks, openSession]);
+  useEffect(() => {
+    if (prefs.view !== "tasks") setLinking(null);
+  }, [prefs.view]);
   const shownSession = (selectedSession && state.sessions[selectedSession]) || sessions[sessions.length - 1];
 
   useEffect(() => {
@@ -293,6 +320,15 @@ export function App({
           run: () => openShell(w.path),
         });
       }
+    for (const task of Object.values(state.tasks).flat())
+      items.push({
+        id: `task:${task.id}`,
+        group: "Tasks",
+        title: task.title,
+        keywords: [task.key],
+        detail: task.key,
+        run: () => updatePrefs({ view: "tasks" }),
+      });
     for (const [view, label, action] of VIEWS)
       items.push({ id: view, group: "Views", title: label, keys: keysLabel(action), run: () => updatePrefs({ view }) });
     for (const binding of BINDINGS)
@@ -306,8 +342,10 @@ export function App({
         });
     items.push({ id: "theme", group: "Actions", title: "Toggle theme", run: toggleTheme });
     items.push({ id: "addRepository", group: "Actions", title: "Add repository", run: addRepository });
-    if (state.repositories.length > 0)
+    if (state.repositories.length > 0) {
       items.push({ id: "newWorktree", group: "Actions", title: "New worktree", run: () => setOverlay("newWorktree") });
+      items.push({ id: "newTask", group: "Actions", title: "New local task", run: () => setOverlay("newTask") });
+    }
     return items;
   });
 
@@ -498,9 +536,20 @@ export function App({
                   onAsk={(text) =>
                     setBench((b) => ({ expanded: false, showChanges: false, draft: { text, seq: b.draft.seq + 1 } }))
                   }
+                  onPickTask={pickTask}
                 />
               )}
             </div>
+          ) : prefs.view === "tasks" ? (
+            <TasksView
+              state={state}
+              send={core.send}
+              onAssign={(task) => openNewSession({ task, houseRules: state.houseRules[task.repositoryId] })}
+              onOpenSession={(id) => openSession(id)}
+              onNewTask={() => setOverlay("newTask")}
+              linking={linking}
+              onCancelLinking={() => setLinking(null)}
+            />
           ) : prefs.view === "worktrees" ? (
             <WorktreesView
               state={state}
@@ -596,6 +645,7 @@ export function App({
           />
         )}
         {overlay === "newWorktree" && <NewWorktree state={state} send={core.send} onClose={closeOverlay} />}
+        {overlay === "newTask" && <NewTask state={state} send={core.send} onClose={closeOverlay} />}
         {overlay === "inbox" && (
           <Inbox
             state={state}

@@ -514,6 +514,31 @@ pub(crate) fn occupant_id(inner: &Inner, path: &str) -> Option<String> {
     inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.id.clone())
 }
 
+/// The live session `id`, as last emitted.
+pub(crate) fn live(inner: &Inner, id: &str) -> Option<Session> {
+    inner.sessions.list.iter().find(|s| s.session.id == id).map(|s| s.session.clone())
+}
+
+/// The ids of every live session.
+pub(crate) fn live_ids(inner: &Inner) -> Vec<String> {
+    inner.sessions.list.iter().map(|s| s.session.id.clone()).collect()
+}
+
+/// Every session, live or archived, that ran on `branch` in the worktree at `path`.
+pub(crate) fn ids_on_branch(inner: &Inner, path: &str, branch: &str) -> Vec<String> {
+    let live = inner.sessions.list.iter().map(|s| &s.session);
+    let archived = inner.sessions.archived.iter().map(|a| &a.session);
+    live.chain(archived)
+        .filter(|s| s.worktree_path == path && s.branch.as_deref() == Some(branch))
+        .map(|s| s.id.clone())
+        .collect()
+}
+
+/// Is there a session `id`, live or archived?
+pub(crate) fn known(inner: &Inner, id: &str) -> bool {
+    inner.sessions.list.iter().any(|s| s.session.id == id) || inner.sessions.archived.iter().any(|a| a.session.id == id)
+}
+
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
 pub(crate) fn replay(inner: &Inner) {
     let table = PriceTable::read(&inner.data_dir);
