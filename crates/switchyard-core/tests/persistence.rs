@@ -242,7 +242,7 @@ fn a_request_pending_at_the_crash_is_cancelled_with_a_system_line_and_cannot_be_
         request_id: "req-1".into(),
         verdict: Verdict::AllowOnce,
     });
-    refusal(&answer);
+    assert!(refusal(&answer).starts_with("That request was cancelled"), "{answer:#?}");
     assert!(core.agents.launches().is_empty());
 }
 

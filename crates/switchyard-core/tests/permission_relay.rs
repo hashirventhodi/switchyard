@@ -259,7 +259,7 @@ fn stop_cancels_every_pending_request() {
     }));
     assert!(events.contains(&Event::SessionStatusChanged { session_id: id.clone(), status: SessionStatus::Idle }));
     assert_eq!(core.agents.commands(0).last(), Some(&AgentCommand::Interrupt));
-    assert_eq!(refused(&answer(&mut core, &id, "req-1", Verdict::AllowOnce)), vec!["That request was already answered".to_string()]);
+    assert_eq!(refused(&answer(&mut core, &id, "req-1", Verdict::AllowOnce)), vec!["That request was cancelled (the session stopped or Switchyard restarted); nothing was sent to the agent".to_string()]);
     assert!(answers_sent(&core).is_empty());
 }
 

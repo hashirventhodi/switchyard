@@ -104,6 +104,12 @@ pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Ver
         return inner.refuse(COMMAND, format!("There is no request {request_id} in this session"));
     };
     let Entry::Request { request, state: request_state, .. } = &state.transcript[index] else { return };
+    if *request_state == RequestState::Cancelled {
+        return inner.refuse(
+            COMMAND,
+            "That request was cancelled (the session stopped or Switchyard restarted); nothing was sent to the agent".into(),
+        );
+    }
     if *request_state != RequestState::Pending {
         return inner.refuse(COMMAND, "That request was already answered".into());
     }
