@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use adapter_protocol::{CliInfo, Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode, RequestDetail};
 use harness::{added_repository, started_session, Harness, TempRepo, NOW_MS};
-use switchyard_schema::{AgentKind, Command, Entry, Event, PermissionMode, RequestState, SessionStatus, Settings, Verdict};
+use switchyard_schema::{
+    AgentKind, Command, Decision, Entry, Event, PermissionMode, RequestState, SessionStatus, Settings, Verdict,
+};
 
 fn setup() -> (Harness, TempRepo, PathBuf) {
     let repo = TempRepo::new("acme");
@@ -616,4 +618,60 @@ fn a_twenty_thousand_entry_session_reloads_in_under_a_second() {
 
     assert_eq!(transcript(&events, &id).len(), 20_002); // prompt, 20k lines, the pause note
     assert!(took < std::time::Duration::from_secs(1), "reload took {took:?}");
+}
+
+// ---- review decisions ----
+
+fn decision_after_read(core: &mut Harness, worktree: &Path, file: &str) -> Option<Decision> {
+    let events = core.send(Command::ReadChanges { worktree_path: path(worktree) });
+    let files = events
+        .into_iter()
+        .find_map(|e| match e {
+            Event::ChangesRead { files, .. } => Some(files),
+            _ => None,
+        })
+        .expect("changes read");
+    files.into_iter().find(|f| f.path == file).and_then(|f| f.decision)
+}
+
+fn decide(core: &mut Harness, worktree: &Path, file: &str, decision: Decision) {
+    core.send(Command::DecideFile { worktree_path: path(worktree), path: file.into(), decision: Some(decision) });
+}
+
+#[test]
+fn review_decisions_survive_a_relaunch() {
+    let (mut core, _repo, worktree) = setup();
+    std::fs::write(worktree.join("README"), "changed\n").unwrap();
+    std::fs::write(worktree.join("NOTES"), "new\n").unwrap();
+    decide(&mut core, &worktree, "README", Decision::Accept);
+    decide(&mut core, &worktree, "NOTES", Decision::Reject);
+
+    let mut core = core.relaunch();
+
+    assert_eq!(decision_after_read(&mut core, &worktree, "README"), Some(Decision::Accept));
+    assert_eq!(decision_after_read(&mut core, &worktree, "NOTES"), Some(Decision::Reject));
+}
+
+#[test]
+fn a_stored_decision_lapses_when_the_file_changed_while_the_app_was_closed() {
+    let (mut core, _repo, worktree) = setup();
+    std::fs::write(worktree.join("README"), "changed\n").unwrap();
+    decide(&mut core, &worktree, "README", Decision::Accept);
+
+    let mut core = core.relaunch();
+    std::fs::write(worktree.join("README"), "changed again\n").unwrap();
+
+    assert_eq!(decision_after_read(&mut core, &worktree, "README"), None);
+}
+
+#[test]
+fn an_undone_decision_stays_undone_after_a_relaunch() {
+    let (mut core, _repo, worktree) = setup();
+    std::fs::write(worktree.join("README"), "changed\n").unwrap();
+    decide(&mut core, &worktree, "README", Decision::Accept);
+    core.send(Command::DecideFile { worktree_path: path(&worktree), path: "README".into(), decision: None });
+
+    let mut core = core.relaunch();
+
+    assert_eq!(decision_after_read(&mut core, &worktree, "README"), None);
 }

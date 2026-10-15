@@ -1,9 +1,12 @@
 // Where a worktree's branch stands against its base: the ↓N badge, the Rebase action, and
 // the review pane's History and Context tabs (commits above the base marker; branch facts).
 import { useEffect, useState } from "react";
+import { usePaletteSource } from "./actions";
+import { ChangesTab, changesCount } from "./ChangesTab";
 import type { Command } from "./schema/Command";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView, State } from "./state";
+import { ContextGrants } from "./ContextGrants";
 
 /** "↓3" (warn colour) when the worktree is behind its base; nothing otherwise. */
 export function BehindBadge({ facts, base }: { facts?: WorktreeFacts; base?: string }) {
@@ -29,24 +32,68 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
  * The review pane beside the agent pane. History and Context here; the Changes tab joins
  * them (#19).
  */
-export function BranchPane(props: { state: State; session: SessionView; send: (command: Command) => void }) {
-  const [tab, setTab] = useState<"history" | "context">("history");
-  const { history } = props.state;
-  const count = history[props.session.worktreePath]?.commits.length;
+export function BranchPane(props: {
+  state: State;
+  session: SessionView;
+  send: (command: Command) => void;
+  /** The pane has the full width (Expand). */
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+  /** Put text in the composer for the user to finish and send (Ask agent). */
+  onAsk?: (text: string) => void;
+}) {
+  const { state, session, send, expanded = false, onToggleExpand, onAsk = () => {} } = props;
+  const [tab, setTab] = useState<"changes" | "history" | "context">("changes");
+  const path = session.worktreePath;
+  const count = state.history[path]?.commits.length;
+  const { repository, facts } = branchOf(state, path);
+  const changed = changesCount(state.changes[path], facts);
+  usePaletteSource(() =>
+    onToggleExpand
+      ? [{ id: "review.expand", group: "Actions", title: expanded ? "Show agent beside review" : "Expand review pane", run: onToggleExpand }]
+      : [],
+  );
+  const tabButton = (id: typeof tab, label: string, n?: number) => (
+    <button role="tab" className={`tab ${tab === id ? "active" : ""}`} aria-selected={tab === id} onClick={() => setTab(id)}>
+      {label} {n !== undefined && <span className="n">{n}</span>}
+    </button>
+  );
   return (
     <aside className="pane changes-pane" aria-label="Review">
-      <div className="pane-head"><div className="tabs" role="tablist">
-        <button role="tab" className={`tab ${tab === "history" ? "active" : ""}`} aria-selected={tab === "history"} onClick={() => setTab("history")}>
-          History {count !== undefined && <span className="n">{count}</span>}
-        </button>
-        <button role="tab" className={`tab ${tab === "context" ? "active" : ""}`} aria-selected={tab === "context"} onClick={() => setTab("context")}>
-          Context
-        </button>
+      <div className="pane-head">
+        <div className="tabs" role="tablist">
+          {tabButton("changes", "Changes", changed)}
+          {tabButton("history", "History", count)}
+          {tabButton("context", "Context")}
         </div>
+        <div className="spacer" />
+        {onToggleExpand && (
+          <button className="btn ghost sm" title="Expand review pane" aria-pressed={expanded} onClick={onToggleExpand}>
+            {expanded ? "Show agent" : "Expand"}
+          </button>
+        )}
       </div>
-      <div className="pane-body" role="tabpanel">
-        {tab === "history" ? <HistoryTab {...props} /> : <BranchContext {...props} />}
-      </div>
+      {tab === "changes" ? (
+        <ChangesTab
+          session={session}
+          files={state.changes[path]}
+          facts={facts}
+          base={repository?.baseBranch}
+          send={send}
+          onAsk={onAsk}
+        />
+      ) : (
+        <div className="pane-body" role="tabpanel">
+          {tab === "history" ? (
+            <HistoryTab {...props} />
+          ) : (
+            <>
+              <BranchContext {...props} />
+              <ContextGrants {...props} />
+            </>
+          )}
+        </div>
+      )}
     </aside>
   );
 }

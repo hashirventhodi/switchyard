@@ -1,7 +1,9 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
 import type { AgentSetup } from "./schema/AgentSetup";
+import type { ChangedFile } from "./schema/ChangedFile";
 import type { Entry } from "./schema/Entry";
+import type { Policy } from "./schema/Policy";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
 import type { Request } from "./schema/Request";
@@ -65,8 +67,12 @@ export interface State {
   agents: AgentSetup[];
   /** What the core last read from the VCS about each worktree, by path. */
   worktreeFacts: Record<string, WorktreeFacts>;
+  /** Uncommitted changes the core last read for each worktree, by path. */
+  changes: Record<string, ChangedFile[]>;
   /** The commits each worktree's branch has above its base, by path, as last read. */
   history: Record<string, WorktreeHistory>;
+  /** Each Repository's resolved Policy, by repository id, once the core has sent it. */
+  policies: Record<string, Policy>;
 }
 
 export interface WorktreeHistory {
@@ -83,7 +89,9 @@ export const initialState: State = {
   toasts: [],
   agents: [],
   worktreeFacts: {},
+  changes: {},
   history: {},
+  policies: {},
 };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
@@ -181,6 +189,21 @@ export function reduce(state: State, event: Event): State {
       return state;
     case "agentsChecked":
       return { ...state, agents: event.agents };
+    case "changesRead":
+      return { ...state, changes: { ...state.changes, [event.worktreePath]: event.files } };
+    case "fileDecided": {
+      const list = state.changes[event.worktreePath];
+      if (!list) return state;
+      const next = list.map((f) => (f.path === event.path ? { ...f, decision: event.decision } : f));
+      return { ...state, changes: { ...state.changes, [event.worktreePath]: next } };
+    }
+    case "committed": {
+      const n = event.files.length;
+      const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})`;
+      return resultToast(state, text, "ok");
+    }
+    case "policyChanged":
+      return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
   }
 }
 

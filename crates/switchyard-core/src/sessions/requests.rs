@@ -1,12 +1,14 @@
 //! The permission relay: an agent's Permission request becomes a request card in the
 //! transcript and puts its Session in Waiting; the first answer from any surface resolves
 //! it and goes back to the agent; a Session stays Waiting while any request is pending.
-//! Policy (answering without asking) arrives with Grants; until then every request asks.
+//! The PolicyEngine is consulted first: a request a Grant or denial already answers never
+//! surfaces, it is answered at once and noted as a system line.
 
 use adapter_protocol::{Command as AgentCommand, RequestDetail, Verdict as AgentVerdict};
 use switchyard_schema::{Entry, Event, Request, RequestState, SessionStatus, Verdict};
 
 use super::{append, change_status, send_to_agent, Cause, SessionState};
+use crate::policy::{self, Decision};
 use crate::Inner;
 
 /// What the agent is told when a request arrives on a session the user has stopped.
@@ -16,6 +18,11 @@ const STOPPED: &str = "The session was stopped.";
 pub(super) fn arrived(inner: &mut Inner, id: &str, request_id: String, detail: RequestDetail, reason: Option<String>) {
     let Some(state) = super::find(inner, id) else { return };
     let live = matches!(state.session.status, SessionStatus::Running | SessionStatus::Waiting);
+    let repository_id = state.session.repository_id.clone();
+    if live && answered_by_policy(inner, id, &repository_id, &request_id, &detail) {
+        return;
+    }
+    let Some(state) = super::find(inner, id) else { return };
     let entry = Entry::Request {
         request_id: request_id.clone(),
         request: request(detail),
@@ -38,6 +45,42 @@ pub(super) fn arrived(inner: &mut Inner, id: &str, request_id: String, detail: R
     }
 }
 
+/// Answer the request from policy, when a Grant or denial covers it. True when answered.
+fn answered_by_policy(inner: &mut Inner, id: &str, repository_id: &str, request_id: &str, detail: &RequestDetail) -> bool {
+    let Some(repo) = policy::repository(inner, repository_id) else { return false };
+    let (line, verdict) = match policy::decide(&policy::resolve(inner, &repo), detail) {
+        Decision::Ask => return false,
+        Decision::Allow(grant) => (
+            format!("Allowed without asking: {} ({} {})", asked(detail), policy::source(&grant), policy::describe(&grant.rule)),
+            AgentVerdict::AllowOnce,
+        ),
+        Decision::Deny(grant) => {
+            let rule = policy::describe(&grant.rule);
+            let who = policy::source(&grant);
+            (
+                format!("Denied without asking: {} ({who} denies {rule})", asked(detail)),
+                AgentVerdict::Deny { message: Some(format!("Denied by the {who} in Switchyard: {rule}")) },
+            )
+        }
+    };
+    let Some(state) = super::find(inner, id) else { return false };
+    let entry = append(state, Entry::System { text: line });
+    inner.emit(entry);
+    send_to_agent(inner, id, AgentCommand::AnswerRequest { request_id: request_id.into(), verdict });
+    true
+}
+
+/// The thing asked for, as a system line names it.
+fn asked(detail: &RequestDetail) -> String {
+    match detail {
+        RequestDetail::Command { command, .. } => command.clone(),
+        RequestDetail::Network { domain, .. } => domain.clone(),
+        RequestDetail::McpTool { server, tool, .. } => format!("{server} · {tool}"),
+        RequestDetail::FileWrite { path, .. } => path.clone(),
+        RequestDetail::Question { question, .. } => question.clone(),
+    }
+}
+
 /// The `answerRequest` command.
 pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Verdict) {
     const COMMAND: &str = "answerRequest";
@@ -56,6 +99,21 @@ pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Ver
         (Verdict::Answer { .. }, false) => return inner.refuse(COMMAND, "Only a question takes an answer".into()),
         (Verdict::AllowOnce, true) => return inner.refuse(COMMAND, "A question needs an answer".into()),
         _ => {}
+    }
+    if let Verdict::AllowAlways { pattern } = &verdict {
+        let (detail, repository_id) = (detail(request), state.session.repository_id.clone());
+        let rule = match policy::grant_for(&detail, pattern.as_deref()) {
+            Ok(rule) => rule,
+            Err(reason) => return inner.refuse(COMMAND, reason),
+        };
+        let Some(repo) = policy::repository(inner, &repository_id) else {
+            return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+        };
+        if let Err(reason) = policy::add_local(inner, &repo.id, &rule) {
+            return inner.refuse(COMMAND, reason);
+        }
+        resolve(inner, id, request_id, Verdict::AllowAlways { pattern: Some(policy::describe(&rule)) });
+        return policy::emit(inner, &repo);
     }
     resolve(inner, id, request_id, verdict);
 }
@@ -84,6 +142,7 @@ pub(super) fn resolve(inner: &mut Inner, id: &str, request_id: &str, verdict: Ve
     let Some(state) = super::find(inner, id) else { return };
     let (settled, answer, agent_verdict) = match verdict {
         Verdict::AllowOnce => (RequestState::Allowed, None, AgentVerdict::AllowOnce),
+        Verdict::AllowAlways { pattern } => (RequestState::AlwaysAllowed, pattern, AgentVerdict::AllowAlways),
         Verdict::Deny => (RequestState::Denied, None, AgentVerdict::Deny { message: None }),
         Verdict::Answer { text } => (RequestState::Answered, Some(text.clone()), AgentVerdict::Answer { text }),
     };
@@ -118,6 +177,19 @@ fn pending(state: &SessionState) -> impl Iterator<Item = (String, &Entry)> {
         entry @ Entry::Request { state: RequestState::Pending, .. } => Some((request_id.clone(), entry)),
         _ => None,
     })
+}
+
+/// A request card back in protocol terms, for the PolicyEngine.
+fn detail(request: &Request) -> RequestDetail {
+    match request.clone() {
+        Request::Command { command, cwd } => RequestDetail::Command { command, cwd },
+        Request::FileWrite { path, diff } => RequestDetail::FileWrite { path, diff },
+        Request::Network { domain, url } => RequestDetail::Network { domain, url },
+        Request::McpTool { server, tool, input } => {
+            RequestDetail::McpTool { server, tool, input: serde_json::from_str(&input).unwrap_or_default() }
+        }
+        Request::Question { question, options } => RequestDetail::Question { question, options },
+    }
 }
 
 fn request(detail: RequestDetail) -> Request {

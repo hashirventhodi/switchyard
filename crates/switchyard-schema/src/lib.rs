@@ -112,6 +112,31 @@ pub enum Command {
     /// Detect the installed agent CLIs again (after installing or updating one). The core
     /// answers with [`Event::AgentsChecked`].
     CheckAgents,
+    /// Read the worktree's uncommitted changes (working tree against the index, untracked
+    /// files as added) with the review decisions that still apply. The core answers with
+    /// [`Event::ChangesRead`] and the worktree's facts.
+    ReadChanges {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
+    /// Accept or Reject a changed file as a whole (`null` clears the decision). The decision
+    /// holds only while the file's diff stays as it was when decided.
+    DecideFile {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        decision: Option<Decision>,
+    },
+    /// Stage and commit every accepted file whole, with `message`. Undecided and rejected
+    /// files stay in the worktree untouched; every decision on the worktree is discarded.
+    CommitAccepted {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        message: String,
+    },
     /// Rebase a clean, non-primary worktree's branch on its Repository's base. Refused while
     /// its Session is Running. A rebase that stops on conflicts is aborted, leaving the
     /// branch as it was, and refused with the conflicting files named.
@@ -180,6 +205,23 @@ pub enum Command {
     },
     /// Change the user settings. Answered with [`Event::SettingsChanged`].
     UpdateSettings { settings: Settings },
+    /// Read a Repository's Policy (its committed `.switchyard/policy.yml` and the user's
+    /// local Grants for it) again. The core answers with [`Event::PolicyChanged`].
+    ReadPolicy {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Revoke one of the user's local Grants. Grants from the repository's policy file are
+    /// changed in the file, through a pull request, never here.
+    RevokeGrant {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        #[serde(rename = "grantId")]
+        #[ts(rename = "grantId")]
+        grant_id: String,
+    },
 }
 
 /// The user's answer to a Permission request.
@@ -189,6 +231,13 @@ pub enum Command {
 pub enum Verdict {
     /// Run once: approve this request without creating a Grant.
     AllowOnce,
+    /// Always allow: approve this request and keep a local Grant for the Repository, so the
+    /// next matching request in any of its Sessions is answered without asking. `pattern`
+    /// is the command pattern to grant (a command prefix plus a glob on the rest, e.g.
+    /// `pnpm test *`); the core suggests one when it is absent and refuses one that does
+    /// not cover the request. Network and MCP-tool grants are the request's domain or
+    /// server + tool. File writes and questions are never granted.
+    AllowAlways { pattern: Option<String> },
     /// Skip: the agent carries on without it.
     Deny,
     /// The answer to a question: one of its options, or the user's own words.
@@ -330,6 +379,32 @@ pub enum Event {
     },
     /// The user settings (on attach and after a change). Replaces earlier settings.
     SettingsChanged { settings: Settings },
+    /// A worktree's uncommitted changes as git reports them now. Replaces earlier ones.
+    ChangesRead {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        files: Vec<ChangedFile>,
+    },
+    /// The decision on one changed file, after [`Command::DecideFile`].
+    FileDecided {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        decision: Option<Decision>,
+    },
+    /// Accepted files were committed on the worktree's branch.
+    Committed {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        branch: Option<String>,
+        /// Abbreviated commit id.
+        commit: String,
+        /// Paths committed (for a rename, the new path).
+        files: Vec<String>,
+    },
     /// A worktree's branch was rebased on `base` without conflicts.
     WorktreeRebased {
         #[serde(rename = "worktreePath")]
@@ -347,6 +422,151 @@ pub enum Event {
         base: String,
         commits: Vec<Commit>,
     },
+    /// A Repository's Policy as it stands: sent after [`Command::ReadPolicy`], and whenever
+    /// a local Grant is added or revoked. Replaces earlier policy for that Repository.
+    PolicyChanged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        policy: Policy,
+    },
+}
+
+/// What may run without asking in a Repository, resolved across layers (organisation,
+/// the repository's committed policy file, the user's local Grants). A denial in any
+/// layer wins over an allow in any other.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Policy {
+    /// The Permission mode New session starts in, when the repository's policy names one.
+    pub default_mode: Option<PermissionMode>,
+    /// The most autonomous Permission mode a Session may run in, when the policy caps it.
+    pub ceiling: Option<PermissionMode>,
+    /// Every Grant and denial that applies: repository file first, then local.
+    pub grants: Vec<Grant>,
+    /// Why the repository's policy file could not be read. While it is broken nothing is
+    /// granted (its denials are unknown), so every request asks.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Grant {
+    pub id: String,
+    pub layer: PolicyLayer,
+    pub effect: GrantEffect,
+    pub rule: GrantRule,
+}
+
+/// Where a Grant comes from. Only local Grants can be revoked in Switchyard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PolicyLayer {
+    /// Organisation policy (modelled; not synced before M4).
+    Org,
+    /// The Repository's committed `.switchyard/policy.yml`.
+    Repo,
+    /// The user's own Grants for the Repository, made with Always allow.
+    Local,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum GrantEffect {
+    Allow,
+    Deny,
+}
+
+/// What a Grant matches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum GrantRule {
+    /// A command prefix plus a glob on the rest (`git push *`). No shell parsing; a
+    /// wildcard never matches an interpreter prefix (`bash -c`, `sh -c`, `eval`, `xargs`,
+    /// `env`, `npx`) or a chained command.
+    Command { pattern: String },
+    /// A network domain (`registry.npmjs.org`; `*.example.com` for its subdomains).
+    Network { domain: String },
+    /// An MCP server's tool (`*` for every tool of the server).
+    McpTool { server: String, tool: String },
+}
+
+/// A review decision on a changed file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Decision {
+    Accept,
+    Reject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    /// Unmerged in the index: git stopped on a conflict here.
+    Conflicted,
+}
+
+/// One file with uncommitted changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChangedFile {
+    pub path: String,
+    /// The path in the index, for a rename.
+    pub old_path: Option<String>,
+    pub status: FileStatus,
+    /// Lines added and removed.
+    pub added: u32,
+    pub removed: u32,
+    /// Git shows no text diff for the file.
+    pub binary: bool,
+    pub decision: Option<Decision>,
+    pub hunks: Vec<Hunk>,
+}
+
+/// One hunk of a file's diff. `id` is stable while the hunk's own lines are unchanged:
+/// it hashes the index-side path and range with the hunk's lines, so edits elsewhere in
+/// the file and renaming the file leave it alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Hunk {
+    pub id: String,
+    /// The `@@ -a,b +c,d @@ context` line.
+    pub header: String,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DiffLine {
+    pub kind: LineKind,
+    /// Line number on the index side (context and removed lines).
+    pub old: Option<u32>,
+    /// Line number on the working-tree side (context and added lines).
+    pub new: Option<u32>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LineKind {
+    Context,
+    Added,
+    Removed,
 }
 
 /// One commit on a worktree's branch.
@@ -596,6 +816,8 @@ pub enum RequestState {
     Pending,
     /// Run once.
     Allowed,
+    /// Always allow: approved and a local Grant kept; `answer` holds what was granted.
+    AlwaysAllowed,
     /// Skipped.
     Denied,
     /// A question the user answered.

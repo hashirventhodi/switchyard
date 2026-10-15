@@ -6,6 +6,7 @@ import "./tokens.css";
 import "./frame.css";
 import "./session.css";
 import "./worktrees.css";
+import "./review.css";
 import "./relay.css";
 import "./history.css";
 

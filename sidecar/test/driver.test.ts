@@ -120,6 +120,31 @@ test("runs the query in the worktree with the CLI's mode and streams translated 
   expect(events[4]).toEqual({ type: "done", summary: "echo hi" });
 });
 
+test("the resolved grants are passed as the CLI's allowed and disallowed tools, never as settings", async () => {
+  const stdin = lines();
+  const { query, calls } = fakeQuery(() => []);
+  const done = drive({
+    config: {
+      cwd: "/wt",
+      permission_mode: "ask_first",
+      claude_path: null,
+      allowed_tools: ["Bash(pnpm test:*)", "WebFetch(domain:registry.npmjs.org)"],
+      disallowed_tools: ["Bash(git push:*)"],
+    },
+    commands: stdin,
+    emit: () => {},
+    query,
+  });
+  stdin.push({ type: "send_text", text: "hi" });
+  stdin.close();
+  await done;
+
+  expect(calls.options.allowedTools).toEqual(["Bash(pnpm test:*)", "WebFetch(domain:registry.npmjs.org)"]);
+  expect(calls.options.disallowedTools).toEqual(["Bash(git push:*)"]);
+  // Nothing that would make the CLI write a settings file.
+  expect(calls.options).not.toHaveProperty("settings");
+});
+
 test("interrupt calls query.interrupt()", async () => {
   const stdin = lines();
   const { query, calls } = fakeQuery(() => []);

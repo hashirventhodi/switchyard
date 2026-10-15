@@ -19,6 +19,7 @@ use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::processes::{self, Recorded};
 use crate::session_store::{self, Row, CHUNK};
+use crate::policy;
 use crate::Inner;
 
 mod archive;
@@ -181,12 +182,17 @@ fn begin(
         };
         return refuse(inner, reason);
     }
+    if let Err(reason) = policy::admit_mode(&repo, permission_mode) {
+        return refuse(inner, reason);
+    }
     // Before the first session, not mid-session: an unsupported CLI never starts (#13).
     if let Err(reason) = compat::admit(inner, agent) {
         return refuse(inner, reason);
     }
     let id = format!("session-{}", inner.sessions.next_id + 1);
-    let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode };
+    // Grants reach the CLI as flags; the CLI's own settings files are never written.
+    let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
+    let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, allowed_tools, disallowed_tools };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -314,11 +320,15 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
             agent_name(agent)
         ));
     };
-    let spec = LaunchSpec {
-        agent,
-        cwd: state.session.worktree_path.clone().into(),
-        permission_mode: state.session.permission_mode,
+    let (cwd, permission_mode) = (state.session.worktree_path.clone(), state.session.permission_mode);
+    let repository_id = state.session.repository_id.clone();
+    // Grants as they are now: some may have been made or revoked since the session began.
+    let repository = policy::repository(inner, &repository_id);
+    let (allowed_tools, disallowed_tools) = match repository {
+        Some(repo) => policy::cli_rules(agent, &policy::resolve(inner, &repo)),
+        None => Default::default(),
     };
+    let spec = LaunchSpec { agent, cwd: cwd.into(), permission_mode, allowed_tools, disallowed_tools };
     let mut handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.to_string())) {
         Ok(handle) => handle,
         Err(reason) => {

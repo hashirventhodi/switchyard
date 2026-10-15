@@ -1,6 +1,7 @@
 //! Sessions in the SQLite store: one row per Session (live or archived), its transcript
 //! as deflate-compressed chunks of [`CHUNK`] entries (a replaced entry rewrites its chunk),
-//! its raw token usage (never estimates), the user settings, and the processes other than
+//! its raw token usage (never estimates), the user settings, review decisions (until
+//! commit; #19's `review` keeps them in memory too), and the processes other than
 //! agents (shell PTYs) the core started, by pid and start time.
 
 use std::io::Read;
@@ -52,6 +53,13 @@ CREATE TABLE IF NOT EXISTS processes (
     pid     INTEGER PRIMARY KEY,
     started TEXT NOT NULL,
     what    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review_decisions (
+    worktree_path TEXT NOT NULL,
+    path          TEXT NOT NULL,
+    decision      TEXT NOT NULL,
+    fingerprint   INTEGER NOT NULL,
+    PRIMARY KEY (worktree_path, path)
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -254,4 +262,37 @@ pub(crate) fn take_processes(db: &Connection) -> rusqlite::Result<Vec<Recorded>>
     };
     db.execute("DELETE FROM processes", [])?;
     Ok(list)
+}
+
+/// One worktree's review decisions: path -> (decision, fingerprint of the diff it was taken on).
+pub(crate) type WorktreeDecisions = std::collections::HashMap<String, (switchyard_schema::Decision, u64)>;
+
+/// Replace the stored decisions of the worktree at `worktree_path` with `decisions`.
+pub(crate) fn save_decisions(db: &Connection, worktree_path: &str, decisions: &WorktreeDecisions) -> rusqlite::Result<()> {
+    batch(db, |db| {
+        db.execute("DELETE FROM review_decisions WHERE worktree_path = ?1", params![worktree_path])?;
+        for (path, (decision, fingerprint)) in decisions {
+            db.execute(
+                "INSERT INTO review_decisions (worktree_path, path, decision, fingerprint) VALUES (?1, ?2, ?3, ?4)",
+                params![worktree_path, path, json(decision), *fingerprint as i64],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+/// Every stored decision, by worktree path.
+pub(crate) fn decisions(db: &Connection) -> rusqlite::Result<std::collections::HashMap<String, WorktreeDecisions>> {
+    let mut stmt = db.prepare("SELECT worktree_path, path, decision, fingerprint FROM review_decisions")?;
+    let rows = stmt.query_map([], |r| {
+        let decision: String = r.get(2)?;
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, decision, r.get::<_, i64>(3)? as u64))
+    })?;
+    let mut out: std::collections::HashMap<String, WorktreeDecisions> = Default::default();
+    for row in rows {
+        let (worktree, path, decision, fingerprint) = row?;
+        let Ok(decision) = serde_json::from_str(&decision) else { continue };
+        out.entry(worktree).or_default().insert(path, (decision, fingerprint));
+    }
+    Ok(out)
 }

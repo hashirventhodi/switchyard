@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
-use crate::{git, repo_policy, sessions, shells, Inner};
+use crate::{git, repo_policy, review, sessions, shells, Inner};
 
 /// Create a worktree on a new `branch` from the repository's base; announce it and its
 /// facts. Returns it, or refuses `command` with the reason.
@@ -91,6 +91,11 @@ pub(crate) fn start_session_on_new(
     if let Err(reason) = crate::compat::admit(inner, agent) {
         return inner.refuse(COMMAND, reason);
     }
+    if let Some(repo) = repository(inner, repository_id) {
+        if let Err(reason) = crate::policy::admit_mode(&repo, permission_mode) {
+            return inner.refuse(COMMAND, reason);
+        }
+    }
     if let Some(worktree) = create(inner, COMMAND, repository_id, branch) {
         sessions::start(inner, core, &worktree.path, agent, permission_mode, prompt);
     }
@@ -125,6 +130,7 @@ pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     }
     // Checked above: whatever session is left there is not at work.
     let _ = sessions::archive_occupant(inner, worktree_path);
+    review::forget(inner, worktree_path);
     shells::close_worktree(inner, worktree_path);
     inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
 }

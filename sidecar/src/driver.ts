@@ -14,6 +14,10 @@ export interface SidecarConfig {
   permission_mode: PermissionMode;
   /** The `claude` executable; null lets the SDK use its default. */
   claude_path: string | null;
+  /** Switchyard's resolved Grants as CLI permission rules (`--allowedTools`). */
+  allowed_tools?: string[];
+  /** Switchyard's resolved denials as CLI permission rules (`--disallowedTools`). */
+  disallowed_tools?: string[];
 }
 
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => Query;
@@ -84,6 +88,10 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
         // Always passed: when omitted the CLI picks its own default mode.
         permissionMode: CLI_MODE[config.permission_mode] as Options["permissionMode"],
         pathToClaudeCodeExecutable: config.claude_path ?? undefined,
+        // Grants are Switchyard's data, passed per spawn as flags; never written into the
+        // CLI's settings files (ADR-0004).
+        allowedTools: config.allowed_tools ?? [],
+        disallowedTools: config.disallowed_tools ?? [],
         // Everything that would prompt comes to canUseTool and from there to the user's queue.
         permissionPrompts: "host",
         canUseTool,
