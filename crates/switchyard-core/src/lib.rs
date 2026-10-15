@@ -8,6 +8,7 @@
 
 pub mod agents;
 pub mod compat;
+pub mod forge;
 mod git;
 pub mod mcp;
 pub mod processes;
@@ -31,6 +32,7 @@ use switchyard_schema::{Command, Event, Repository, Worktree};
 
 use agents::{AgentLauncher, NoAgents};
 use compat::{AgentProbe, Compat, NoProbe};
+use forge::{Forge, NoForge};
 use processes::{ProcessTable, SystemProcesses};
 use sessions::Sessions;
 use shells::{ShellProgram, Shells};
@@ -51,6 +53,11 @@ pub struct Runtime {
     pub processes: Arc<dyn ProcessTable>,
     /// Where "Export transcript" writes its JSONL files.
     pub export_dir: PathBuf,
+    /// Where pull requests are opened and polled (GitHub through `gh`).
+    pub forge: Arc<dyn Forge>,
+    /// How often the core polls the Forge on its own; `None`: only when
+    /// [`Core::poll_forge`] is called (tests tick it by hand).
+    pub forge_poll_every: Option<std::time::Duration>,
 }
 
 impl Default for Runtime {
@@ -62,6 +69,8 @@ impl Default for Runtime {
             worktree_root: default_worktree_root(),
             processes: Arc::new(SystemProcesses),
             export_dir: default_export_dir(),
+            forge: Arc::new(NoForge),
+            forge_poll_every: None,
         }
     }
 }
@@ -98,6 +107,7 @@ pub(crate) struct Inner {
     shells: Shells,
     compat: Compat,
     review: review::Decisions,
+    forge: forge::Tracker,
 }
 
 #[derive(Debug)]
@@ -124,12 +134,30 @@ impl Core {
             shells: Shells::default(),
             compat,
             review: Default::default(),
+            forge: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
         shells::kill_orphans(&inner);
         review::load(&mut inner);
-        Ok(Core { inner: Arc::new(Mutex::new(inner)) })
+        let every = inner.runtime.forge_poll_every;
+        let inner = Arc::new(Mutex::new(inner));
+        if let Some(every) = every {
+            let weak = Arc::downgrade(&inner);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(every);
+                let Some(core) = weak.upgrade() else { break };
+                forge::poll(&core);
+            });
+        }
+        Ok(Core { inner })
+    }
+
+    /// One tick of the Forge poller: poll every worktree branch whose turn it is, and clean
+    /// up those the Forge reports Merged. The core ticks itself every
+    /// [`Runtime::forge_poll_every`] when that is set.
+    pub fn poll_forge(&self) {
+        forge::poll(&self.inner);
     }
 
     /// Run `program` with `args` in shell terminals instead of the user's login shell
@@ -194,6 +222,10 @@ impl Core {
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
+            Command::CheckForge => forge::check(&mut inner),
+            Command::OpenPullRequest { worktree_path } => forge::open_pull_request(&mut inner, &worktree_path),
+            Command::PruneMerged { repository_id } => forge::prune(&mut inner, &repository_id),
+            Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),
         }
         sessions::flush(&mut inner);
     }
@@ -212,6 +244,7 @@ impl Inner {
     fn attach(&mut self) {
         self.emit(Event::Attached);
         compat::replay(self);
+        forge::replay_setup(self);
         let stored = match self.store.repositories() {
             Ok(list) => list,
             Err(e) => return self.refuse("attach", format!("cannot read the store: {e}")),
@@ -223,6 +256,7 @@ impl Inner {
         }
         sessions::replay(self);
         shells::replay(self);
+        forge::replay_pull_requests(self);
     }
 
     fn add_repository(&mut self, path: &str) {
@@ -267,6 +301,7 @@ impl Inner {
             name: dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: repo.path.clone(),
             base_branch: git::base_branch(dir, primary),
+            remote: git::remote(dir),
         };
         self.emit(Event::RepositoryAdded { repository });
         for wt in worktrees {

@@ -52,10 +52,10 @@ fn on_relaunch_repositories_are_replayed_with_worktrees_re_read_from_git() {
     let mut core = core.relaunch();
 
     let events = core.send(Command::Attach);
-    // Agent detection (see compat.rs) and settings (persistence.rs) are not part of this story.
+    // Agent and gh detection (compat.rs, forge.rs) and settings (persistence.rs) are not part of this story.
     let events: Vec<_> = events
         .into_iter()
-        .filter(|e| !matches!(e, Event::AgentsChecked { .. } | Event::SettingsChanged { .. }))
+        .filter(|e| !matches!(e, Event::AgentsChecked { .. } | Event::SettingsChanged { .. } | Event::ForgeChecked { .. }))
         .collect();
 
     let worktree = |path: &std::path::Path, branch: &str, primary| Event::WorktreeAdded {
@@ -86,7 +86,7 @@ fn attaching_twice_replays_the_same_state() {
     let first = core.send(Command::Attach);
     let second = core.send(Command::Attach);
 
-    assert_eq!(first.len(), 5, "attached, agents, repository, worktree, settings: {first:#?}");
+    assert_eq!(first.len(), 6, "attached, agents, forge, repository, worktree, settings: {first:#?}");
     assert_eq!(first, second);
 }
 
