@@ -212,3 +212,79 @@ test("with a record directory it writes a replayable fixture of the run", async 
     protocol: "0.1.0",
   });
 });
+
+/** query() whose turn asks canUseTool before running `pnpm test`, then reports what it was told. */
+function askingQuery() {
+  const calls = { options: undefined as any, results: [] as unknown[], controller: new AbortController() };
+  const query: QueryFn = ({ prompt, options }) => {
+    calls.options = options;
+    async function* run() {
+      yield init;
+      for await (const _ of prompt as AsyncIterable<any>) {
+        const result = await (options as any).canUseTool(
+          "Bash",
+          { command: "pnpm test" },
+          { signal: calls.controller.signal, toolUseID: "toolu_1", requestId: "req-1", title: "Claude wants to run pnpm test" },
+        );
+        calls.results.push(result);
+        yield result.behavior === "allow" ? say("ran it") : say("skipped it");
+      }
+    }
+    return Object.assign(run(), { interrupt: async () => undefined }) as any;
+  };
+  return { query, calls };
+}
+
+test("prompts reach the host through canUseTool and wait for the verdict", async () => {
+  const stdin = lines();
+  const events: ProtocolEvent[] = [];
+  const { query, calls } = askingQuery();
+  const done = drive({
+    config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null },
+    commands: stdin,
+    emit: (e) => events.push(e),
+    query,
+  });
+
+  stdin.push({ type: "send_text", text: "test it" });
+  await until(events, "permission_request");
+  expect(calls.options.permissionPrompts).toBe("host");
+  expect(events.at(-1)).toEqual({
+    type: "permission_request",
+    request_id: "req-1",
+    request: { kind: "command", command: "pnpm test", cwd: null },
+    reason: null,
+  });
+  expect(calls.results).toEqual([]);
+
+  stdin.push({ type: "answer_request", request_id: "req-1", verdict: { decision: "allow_once" } });
+  await until(events, "agent_text");
+  stdin.close();
+  await done;
+
+  expect(calls.results).toEqual([{ behavior: "allow", updatedInput: { command: "pnpm test" } }]);
+  expect(events.at(-2)).toEqual({ type: "agent_text", text: "ran it" });
+});
+
+test("an answer to a request the CLI has abandoned is ignored", async () => {
+  const stdin = lines();
+  const events: ProtocolEvent[] = [];
+  const { query, calls } = askingQuery();
+  const done = drive({
+    config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null },
+    commands: stdin,
+    emit: (e) => events.push(e),
+    query,
+  });
+
+  stdin.push({ type: "send_text", text: "test it" });
+  await until(events, "permission_request");
+  calls.controller.abort(); // the turn was interrupted
+  stdin.push({ type: "answer_request", request_id: "req-1", verdict: { decision: "deny", message: null } });
+  await new Promise((r) => setTimeout(r, 20));
+  stdin.close();
+
+  expect(calls.results).toEqual([]);
+  expect(events.filter((e) => e.type === "error")).toEqual([]);
+  void done;
+});

@@ -15,10 +15,24 @@ import { NewWorktree, WorktreesView } from "./WorktreesView";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
-import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
+import { Dashboard } from "./Dashboard";
+import { Inbox } from "./Inbox";
+import {
+  dismissToast,
+  initialState,
+  reduce,
+  resultToast,
+  sessionOn,
+  waitingSessions,
+  type PendingRequest,
+  type RepositoryView,
+  type State,
+  type Toast,
+} from "./state";
 import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
 import type { Command } from "./schema/Command";
 import type { Event } from "./schema/Event";
+import type { Verdict } from "./schema/Verdict";
 
 type View = "dashboard" | "session" | "worktrees" | "tasks";
 const VIEWS: [View, string, ActionId][] = [
@@ -28,11 +42,16 @@ const VIEWS: [View, string, ActionId][] = [
   ["tasks", "Tasks", "view.tasks"],
 ];
 
-const TOAST_MS = 4000;
-
-type Action = { kind: "event"; event: Event } | { kind: "dismiss"; id: number };
+type Action = { kind: "event"; event: Event } | { kind: "dismiss"; id: number } | { kind: "result"; text: string };
 function appReducer(state: State, action: Action): State {
-  return action.kind === "event" ? reduce(state, action.event) : dismissToast(state, action.id);
+  switch (action.kind) {
+    case "event":
+      return reduce(state, action.event);
+    case "dismiss":
+      return dismissToast(state, action.id);
+    case "result":
+      return resultToast(state, action.text);
+  }
 }
 
 // UI preferences (dock, sidebar, last view, theme) live in renderer local storage;
@@ -70,7 +89,7 @@ export interface AppProps {
   openLink?: OpenLink;
 }
 
-type Overlay = "palette" | "help" | "newSession" | "newWorktree" | null;
+type Overlay = "palette" | "help" | "newSession" | "newWorktree" | "inbox" | null;
 
 /** A session the user just asked for, by where it will run; it opens once the core confirms it. */
 type PendingStart = { worktreePath: string } | { repositoryId: string; branch: string };
@@ -103,14 +122,21 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
     return unsubscribe;
   }, [core]);
 
+  // Bumped to make the session view scroll to its pending request (⌘J, inbox, toast).
+  const [reveal, setReveal] = useState<number | undefined>(undefined);
+
   const sessions = Object.values(state.sessions);
   const openSession = useCallback(
-    (id: string) => {
+    (id: string, revealRequest = false) => {
       setSelectedSession(id);
+      setReveal(revealRequest ? (r) => (r ?? 0) + 1 : undefined);
       updatePrefs({ view: "session" });
     },
     [updatePrefs],
   );
+  const answer = (sessionId: string, requestId: string, verdict: Verdict) =>
+    core.send({ type: "answerRequest", sessionId, requestId, verdict });
+  const waiting = waitingSessions(state);
   useEffect(() => {
     const started =
       pendingStart &&
@@ -137,13 +163,7 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
     else delete document.documentElement.dataset.theme;
   }, [prefs.theme]);
 
-  const latestToast = state.toasts[state.toasts.length - 1];
-  useEffect(() => {
-    if (!latestToast) return;
-    const id = latestToast.id;
-    const timer = setTimeout(() => dispatch({ kind: "dismiss", id }), TOAST_MS);
-    return () => clearTimeout(timer);
-  }, [latestToast]);
+  const dismiss = useCallback((id: number) => dispatch({ kind: "dismiss", id }), []);
 
   const toggleSidebar = useCallback(() => {
     if (window.matchMedia?.("(max-width: 860px)").matches) setSidebarOpen((o) => !o);
@@ -171,6 +191,13 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
   useHandler(registry, "view.session", () => updatePrefs({ view: "session" }));
   useHandler(registry, "view.worktrees", () => updatePrefs({ view: "worktrees" }));
   useHandler(registry, "view.tasks", () => updatePrefs({ view: "tasks" }));
+  // ⌘J: the next session needing the user after the one on screen, scrolled to its request.
+  useHandler(registry, "needsYou.next", () => {
+    if (!waiting.length) return dispatch({ kind: "result", text: "Nothing is waiting on you." });
+    const current = prefs.view === "session" ? waiting.findIndex((s) => s.id === shownSession?.id) : -1;
+    setOverlay(null);
+    openSession(waiting[(current + 1) % waiting.length].id, true);
+  });
   // Esc is layered: close an overlay, else cancel an inline confirm, else interrupt the agent.
   useHandler(registry, "escape", () => {
     if (overlay) return setOverlay(null);
@@ -290,6 +317,18 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
           </button>
           <button
             className="iconbtn"
+            title={`Needs you (${keysLabel("needsYou.next")})`}
+            onClick={() => setOverlay((o) => (o === "inbox" ? null : "inbox"))}
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M2 9l2-6h8l2 6v4H2z" />
+              <path d="M2 9h3.5l1 2h3l1-2H14" />
+            </svg>
+            <span className="lbl-sr">Needs you</span>
+            {waiting.length > 0 && <span className="count">{waiting.length}</span>}
+          </button>
+          <button
+            className="iconbtn"
             title="Keyboard shortcuts (?)"
             aria-label="Keyboard shortcuts"
             onClick={() => registry.run("help.open")}
@@ -341,32 +380,34 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
 
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
-            <SessionView key={shownSession.id} session={shownSession} send={core.send} />
+            <SessionView
+              key={shownSession.id}
+              session={shownSession}
+              send={core.send}
+              pending={state.requests[shownSession.id] ?? NONE}
+              revealRequest={reveal}
+            />
           ) : prefs.view === "worktrees" ? (
             <WorktreesView
               state={state}
               send={core.send}
-              onOpenSession={openSession}
+              onOpenSession={(id) => openSession(id)}
               onNewSession={openNewSession}
               onNewWorktree={() => setOverlay("newWorktree")}
+            />
+          ) : prefs.view === "dashboard" ? (
+            <Dashboard
+              state={state}
+              onOpenSession={(id) => openSession(id, true)}
+              onOpenInbox={() => setOverlay("inbox")}
+              setup={<SetupPanel agents={state.agents} onCheck={() => core.send({ type: "checkAgents" })} openLink={openLink} />}
+              spend={<SpendToday sessions={sessions} variant="kpi" />}
             />
           ) : (
             <div className="page">
               <div className="pagehead">
                 <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
               </div>
-              {prefs.view === "dashboard" && (
-                <>
-                  <SetupPanel
-                    agents={state.agents}
-                    onCheck={() => core.send({ type: "checkAgents" })}
-                    openLink={openLink}
-                  />
-                  <div className="kpis">
-                    <SpendToday sessions={sessions} variant="kpi" />
-                  </div>
-                </>
-              )}
               <p className="empty">
                 {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
               </p>
@@ -412,13 +453,16 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
 
         <div className="toasts" role="status" aria-live="polite">
           {state.toasts.map((t) => (
-            <div key={t.id} className={`toast ${t.tone}`}>
-              <i />
-              <span className="tx">{t.text}</span>
-              <button className="x" aria-label="Dismiss" onClick={() => dispatch({ kind: "dismiss", id: t.id })}>
-                ×
-              </button>
-            </div>
+            <ToastView
+              key={t.id}
+              toast={t}
+              dismiss={dismiss}
+              approve={(r) => {
+                answer(r.sessionId, r.requestId, { type: "allowOnce" });
+                dispatch({ kind: "result", text: `Approved in ${state.sessions[r.sessionId]?.branch ?? "the session"}.` });
+              }}
+              open={(r) => openSession(r.sessionId, true)}
+            />
           ))}
         </div>
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
@@ -433,8 +477,58 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
           />
         )}
         {overlay === "newWorktree" && <NewWorktree state={state} send={core.send} onClose={closeOverlay} />}
+        {overlay === "inbox" && (
+          <Inbox
+            state={state}
+            answer={answer}
+            onClose={closeOverlay}
+            onOpenSession={(id) => {
+              closeOverlay();
+              openSession(id, true);
+            }}
+          />
+        )}
       </div>
     </ActionsContext.Provider>
+  );
+}
+
+const NONE: PendingRequest[] = [];
+
+/** One toast with its own timer. A request toast offers Approve (or Answer, for a question). */
+function ToastView(props: {
+  toast: Toast;
+  dismiss: (id: number) => void;
+  approve: (request: PendingRequest) => void;
+  open: (request: PendingRequest) => void;
+}) {
+  const { toast, dismiss, approve, open } = props;
+  const { id, ms, request } = toast;
+  useEffect(() => {
+    const timer = setTimeout(() => dismiss(id), ms);
+    return () => clearTimeout(timer);
+  }, [id, ms, dismiss]);
+  return (
+    <div className={`toast ${toast.tone}`}>
+      <i />
+      <span className="tx">
+        {toast.text}
+        {toast.detail && <small>{toast.detail}</small>}
+      </span>
+      {request &&
+        (request.request.type === "question" ? (
+          <button className="btn sm" onClick={() => (dismiss(id), open(request))}>
+            Answer
+          </button>
+        ) : (
+          <button className="btn ok sm" onClick={() => approve(request)}>
+            Approve
+          </button>
+        ))}
+      <button className="x" aria-label="Dismiss" onClick={() => dismiss(id)}>
+        ×
+      </button>
+    </div>
   );
 }
 

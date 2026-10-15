@@ -77,6 +77,30 @@ pub enum Command {
     /// Detect the installed agent CLIs again (after installing or updating one). The core
     /// answers with [`Event::AgentsChecked`].
     CheckAgents,
+    /// Answer a Session's pending Permission request. Every surface (toast, inbox, request
+    /// card) sends this; the first answer wins and any later one is refused.
+    AnswerRequest {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "requestId")]
+        #[ts(rename = "requestId")]
+        request_id: String,
+        verdict: Verdict,
+    },
+}
+
+/// The user's answer to a Permission request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Verdict {
+    /// Run once: approve this request without creating a Grant.
+    AllowOnce,
+    /// Skip: the agent carries on without it.
+    Deny,
+    /// The answer to a question: one of its options, or the user's own words.
+    Answer { text: String },
 }
 
 /// Something the core reports. The renderer derives all of its state from these.
@@ -342,6 +366,47 @@ pub enum Entry {
     },
     /// A note from Switchyard itself.
     System { text: String },
+    /// A Permission request. Replaced in place when it is answered or cancelled.
+    Request {
+        #[serde(rename = "requestId")]
+        #[ts(rename = "requestId")]
+        request_id: String,
+        request: Request,
+        /// Why the agent asks, when it says.
+        reason: Option<String>,
+        state: RequestState,
+        /// What the user answered, for an answered question.
+        answer: Option<String>,
+    },
+}
+
+/// What a Permission request asks for: exactly five kinds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Request {
+    Command { command: String, cwd: Option<String> },
+    FileWrite { path: String, diff: Option<String> },
+    Network { domain: String, url: Option<String> },
+    /// `input` is the tool's arguments as JSON text.
+    McpTool { server: String, tool: String, input: String },
+    Question { question: String, options: Vec<String> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RequestState {
+    /// Waiting for the user.
+    Pending,
+    /// Run once.
+    Allowed,
+    /// Skipped.
+    Denied,
+    /// A question the user answered.
+    Answered,
+    /// Withdrawn unanswered: the session was stopped.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
