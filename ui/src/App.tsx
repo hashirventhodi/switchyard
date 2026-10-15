@@ -566,6 +566,8 @@ export function App({
               state={state}
               onOpenSession={(id) => openSession(id, true)}
               onOpenInbox={() => setOverlay("inbox")}
+              send={core.send}
+              onNewSession={openNewSession}
               setup={
                 <SetupPanel
                   agents={state.agents}
