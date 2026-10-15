@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use switchyard_schema::{AgentKind, Event, PermissionMode, Worktree};
+use switchyard_schema::{AgentKind, Event, PermissionMode, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
 use crate::{git, sessions, Inner};
@@ -76,10 +76,29 @@ pub(crate) fn start_session_on_new(
 
 pub(crate) fn remove(_inner: &mut Inner, _worktree_path: &str) {}
 
-pub(crate) fn refresh(_inner: &Inner) {}
+/// Re-read every known worktree's facts from git and emit them.
+pub(crate) fn refresh(inner: &Inner) {
+    let Ok(repos) = inner.store.repositories() else { return };
+    for repo in repos {
+        let dir = Path::new(&repo.path);
+        let Ok(list) = git::worktrees(dir) else { continue };
+        let Some(primary) = list.first() else { continue };
+        let base = git::base_branch(dir, primary);
+        for wt in &list {
+            emit_facts(inner, &wt.path, &base);
+        }
+    }
+}
 
+/// Emit what git says about the worktree at `path` relative to `base`. A worktree git
+/// cannot read (deleted behind our back, say) gets no facts.
 fn emit_facts(inner: &Inner, path: &Path, base: &str) {
-    let _ = (inner, path, base);
+    let Ok(dirty) = git::dirty_count(path) else { return };
+    let (ahead, behind) = git::ahead_behind(path, &git::base_ref(path, base)).unwrap_or((0, 0));
+    inner.emit(Event::WorktreeFactsChanged {
+        worktree_path: path.to_string_lossy().into_owned(),
+        facts: WorktreeFacts { ahead, behind, dirty },
+    });
 }
 
 fn repository(inner: &Inner, id: &str) -> Option<StoredRepository> {
