@@ -20,6 +20,7 @@ import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { Commit } from "./schema/Commit";
 import type { ForgeSetup } from "./schema/ForgeSetup";
 import type { PullRequest } from "./schema/PullRequest";
+import type { Task } from "./schema/Task";
 
 export interface RepositoryView extends Repository {
   worktrees: Worktree[];
@@ -87,6 +88,12 @@ export interface State {
   forge: ForgeSetup | null;
   /** The pull request for each worktree's branch, by worktree path, as last polled. */
   pullRequests: Record<string, PullRequest>;
+  /** Each Repository's Tasks from every source, by repository id, as last read. */
+  tasks: Record<string, Task[]>;
+  /** The house rules a task's prompt carries, by repository id. */
+  houseRules: Record<string, string>;
+  /** The Task each Session (live or archived) is linked to, by session id. */
+  taskLinks: Record<string, string>;
 }
 
 export interface WorktreeHistory {
@@ -111,6 +118,9 @@ export const initialState: State = {
   settings: null,
   forge: null,
   pullRequests: {},
+  tasks: {},
+  houseRules: {},
+  taskLinks: {},
 };
 
 const noFacts: SessionFacts = {
@@ -143,6 +153,7 @@ export function reduce(state: State, event: Event): State {
         archived: {},
         archivedTranscript: null,
         pullRequests: {},
+        taskLinks: {},
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -302,6 +313,18 @@ export function reduce(state: State, event: Event): State {
         ? resultToast(quiet, "No merged worktrees to prune")
         : resultToast(quiet, `Pruned ${n} merged worktree${n === 1 ? "" : "s"}: ${event.branches.join(", ")}`, "ok");
     }
+    case "tasksChanged":
+      return {
+        ...state,
+        tasks: { ...state.tasks, [event.repositoryId]: event.tasks },
+        houseRules: { ...state.houseRules, [event.repositoryId]: event.houseRules },
+      };
+    case "taskCreated":
+      return resultToast(state, `Added ${event.task.key} to To do`, "ok");
+    case "taskLinked": {
+      const { [event.sessionId]: _old, ...others } = state.taskLinks;
+      return { ...state, taskLinks: event.taskId ? { ...others, [event.sessionId]: event.taskId } : others };
+    }
   }
 }
 
@@ -356,4 +379,15 @@ export function waitingSessions(state: State): SessionView[] {
 /** The session occupying a worktree, if any (at most one, ADR-0005). */
 export function sessionOn(state: State, worktreePath: string): SessionView | undefined {
   return Object.values(state.sessions).find((s) => s.worktreePath === worktreePath);
+}
+
+/** A Task by id, from any repository's last-read list. */
+export function taskById(state: State, id: string | undefined): Task | undefined {
+  if (!id) return undefined;
+  return Object.values(state.tasks).flat().find((t) => t.id === id);
+}
+
+/** The live Sessions linked to a Task, in start order. */
+export function sessionsOfTask(state: State, taskId: string): SessionView[] {
+  return Object.values(state.sessions).filter((s) => state.taskLinks[s.id] === taskId);
 }
