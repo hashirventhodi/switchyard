@@ -10,6 +10,7 @@ import {
 import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from "./keymap";
 import { Palette, ShortcutsHelp } from "./Overlays";
 import { NewSession } from "./NewSession";
+import { SetupPanel, type OpenLink } from "./Setup";
 import { SessionView } from "./SessionView";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
@@ -63,11 +64,13 @@ export interface AppProps {
   pickFolder: () => Promise<string | null>;
   /** Where shortcut and palette handlers are registered; tests pass one to observe actions. */
   actions?: ActionRegistry;
+  /** Opens an install or update link in the user's browser. */
+  openLink?: OpenLink;
 }
 
 type Overlay = "palette" | "help" | "newSession" | null;
 
-export function App({ core, pickFolder, actions }: AppProps) {
+export function App({ core, pickFolder, actions, openLink = (url) => window.open(url, "_blank") }: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -325,6 +328,13 @@ export function App({ core, pickFolder, actions }: AppProps) {
               <div className="pagehead">
                 <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
               </div>
+              {prefs.view === "dashboard" && (
+                <SetupPanel
+                  agents={state.agents}
+                  onCheck={() => core.send({ type: "checkAgents" })}
+                  openLink={openLink}
+                />
+              )}
               <p className="empty">
                 {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
               </p>
@@ -381,7 +391,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
         </div>
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
         {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
-        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} />}
+        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} openLink={openLink} />}
       </div>
     </ActionsContext.Provider>
   );

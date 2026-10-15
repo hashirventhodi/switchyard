@@ -13,12 +13,19 @@ async function pickFolder(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
+/** Install and update links open in the user's browser, never inside the app window. */
+async function openLink(url: string) {
+  if (!insideTauri()) return void window.open(url, "_blank", "noopener");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("open_link", { url });
+}
+
 const connect: Promise<CoreConnection> = insideTauri() ? tauriCore() : Promise.resolve(detachedCore());
 
 connect.then((core) => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <App core={core} pickFolder={pickFolder} />
+      <App core={core} pickFolder={pickFolder} openLink={openLink} />
     </StrictMode>,
   );
 });

@@ -7,7 +7,8 @@ adapter protocol (`crates/adapter-protocol/README.md`) on stdio.
 - `src/translate.ts`: the adapter proper, a pure translator from SDK messages to protocol
   events and from protocol commands to driver ops. No SDK at runtime.
 - `src/driver.ts`: connects the translator to a live `query()` (streaming input).
-- `src/main.ts`: the entry point, `node claude-sidecar.mjs --config <json>`, bundled by
+- `src/main.ts`: the entry point, `node claude-sidecar.mjs --config <json>` (or `--manifest`,
+  which prints the adapter manifest for the core's compat check), bundled by
   `pnpm build:sidecar` into `sidecar/dist/claude-sidecar.mjs`.
 - `src/replay.ts`: the translator behind a request/reply loop, used by the conformance test
   (`cargo test -p switchyard-core --test claude_code_conformance`; Node >= 22.18 on PATH).
@@ -31,7 +32,8 @@ SWITCHYARD_RECORD_DIR=/tmp/rec node <repo>/sidecar/dist/claude-sidecar.mjs \
 
 Review `/tmp/rec/expected-events.jsonl`, then copy the directory to
 `crates/adapter-protocol/fixtures/claude-code/<scenario>/`. A new CLI version means a new
-recording, never an edited one.
+recording, never an edited one, and an updated supported range in
+`crates/switchyard-core/compat.json` (a core test fails if a fixture falls outside it).
 
 ## Manual end-to-end check (the one place a real CLI runs)
 
@@ -40,3 +42,17 @@ recording, never an edited one.
 3. The session view streams prose and tool rows; the pill walks Running, then Needs you.
 4. Send a follow-up from the composer, press Stop (or Esc) mid-turn: the pill shows Paused
    and `git status` in the worktree is unchanged.
+
+## Manual compat check (real CLI, no model call)
+
+1. `pnpm tauri dev` with `claude` on PATH in the supported range: the Dashboard shows no Setup
+   block and New session is open.
+2. Temporarily narrow `supported.below` in `crates/switchyard-core/compat.json` below the
+   installed version, restart: the Dashboard's Setup block and the New session dialog both say
+   "Claude Code x.y.z is not yet supported by this build of Switchyard…" with a link that opens
+   the releases page in the browser; Start session is disabled.
+3. Start the app with `claude` hidden (e.g. `PATH=/usr/bin:/bin`, no `~/.local/bin/claude`):
+   Setup lists Claude Code as not installed with its install command. Restore it and press
+   Check again: the block disappears.
+4. `cat "~/Library/Application Support/<bundle id>/compat-log.jsonl"` after a failed start shows
+   one JSON record per failure.
