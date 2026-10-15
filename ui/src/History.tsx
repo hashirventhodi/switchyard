@@ -1,9 +1,11 @@
 // Where a worktree's branch stands against its base: the ↓N badge, the Rebase action, and
 // the review pane's History and Context tabs (commits above the base marker; branch facts).
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { usePaletteSource } from "./actions";
-import { ChangesTab, changesCount } from "./ChangesTab";
+import { ChangesTab } from "./ChangesTab";
+import type { ChangeKind } from "./schema/ChangeKind";
 import type { Command } from "./schema/Command";
+import { useWorktreeChanged } from "./useWorktreeChanged";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView, State } from "./state";
 import { ContextArchive } from "./ContextArchive";
@@ -57,9 +59,10 @@ export function BranchPane(props: {
   const { state, session, send, expanded = false, onToggleExpand, onAsk = () => {} } = props;
   const [tab, setTab] = useState<"changes" | "history" | "context">("changes");
   const path = session.worktreePath;
-  const count = state.history[path]?.commits.length;
   const { repository, facts } = branchOf(state, path);
-  const changed = changesCount(state.changes[path], facts);
+  // Badges read the pushed facts only: right before either tab is opened, and while another is.
+  const count = facts?.commits;
+  const changed = facts?.changedFiles;
   usePaletteSource(() =>
     onToggleExpand
       ? [{ id: "review.expand", group: "Actions", title: expanded ? "Show agent beside review" : "Expand review pane", run: onToggleExpand }]
@@ -94,6 +97,7 @@ export function BranchPane(props: {
           send={send}
           onAsk={onAsk}
           conflicts={state.conflicts[path]?.files}
+          worktreeChanges={state.worktreeChanges}
         />
       ) : (
         <div className="pane-body" role="tabpanel">
@@ -120,16 +124,15 @@ export function BranchPane(props: {
   );
 }
 
+const HISTORY_KINDS: ChangeKind[] = ["git"];
+
 /** The branch's commits, newest first, above the base marker (only the marker when none). */
 export function HistoryTab({ state, session, send }: { state: State; session: SessionView; send: (command: Command) => void }) {
   const path = session.worktreePath;
   const { repository, facts } = branchOf(state, path);
   const history = state.history[path];
-  // Re-read whenever the branch moves: a commit, a rebase, base advancing.
-  useEffect(
-    () => send({ type: "readHistory", worktreePath: path }),
-    [send, path, facts?.ahead, facts?.behind],
-  );
+  // Read on open, and again whenever git's records move: a commit, an amend, a rebase.
+  useWorktreeChanged(state.worktreeChanges, path, HISTORY_KINDS, () => send({ type: "readHistory", worktreePath: path }));
   const base = history?.base ?? repository?.baseBranch ?? "base";
   const behind = facts?.behind ?? 0;
   const canAsk = session.status === "waiting" || session.status === "done" || session.status === "failed";

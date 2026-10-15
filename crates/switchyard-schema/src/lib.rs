@@ -736,6 +736,15 @@ pub enum Event {
         worktree_path: String,
         facts: WorktreeFacts,
     },
+    /// Something in a worktree changed (on disk, or at the end of an agent turn), pushed
+    /// beside its facts. A view showing heavy data for the worktree (its Changes, History or
+    /// Context) re-reads it on the kinds it shows; nothing else is derived from this.
+    WorktreeChanged {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        kinds: Vec<ChangeKind>,
+    },
     /// A Session was archived (replaced, or its worktree removed), or an archived Session
     /// is replayed on attach. It is no longer a live Session.
     SessionArchived { archived: ArchivedSession },
@@ -1408,6 +1417,24 @@ pub struct WorktreeFacts {
     /// Files a merge of the base branch into this branch would conflict on, from a dry-run
     /// merge that never touches the working tree or the index. Empty when not behind.
     pub conflicts: Vec<String>,
+    /// Files the Changes view would list: working-tree changes against the index (renames
+    /// paired), untracked files, unmerged files and files in `conflicts`.
+    pub changed_files: u32,
+    /// Commits the History view would list: those ahead of the base branch, up to its limit.
+    pub commits: u32,
+}
+
+/// What kind of thing changed in a worktree (see [`Event::WorktreeChanged`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ChangeKind {
+    /// Files in the working tree that git does not ignore.
+    Files,
+    /// What git records: HEAD, the index, refs, the HEAD log, worktrees.
+    Git,
+    /// The Repository's configuration files.
+    Config,
 }
 
 /// A shell terminal in the dock: a PTY running the user's shell in a worktree. Shells

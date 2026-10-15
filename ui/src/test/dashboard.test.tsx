@@ -41,7 +41,7 @@ const feat = session("session-2", "feat/login", "/wt/feat", "codex", NOW - 2 * 6
 const facts = (path: string, dirty: number): Event => ({
   type: "worktreeFactsChanged",
   worktreePath: path,
-  facts: { ahead: 0, behind: 0, dirty, conflicts: [] },
+  facts: { ahead: 0, behind: 0, dirty, conflicts: [], changedFiles: dirty, commits: 0 },
 });
 
 function launch(...events: Event[]) {

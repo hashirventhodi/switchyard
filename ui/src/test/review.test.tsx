@@ -79,7 +79,12 @@ test("opening a session reads its worktree's changes and groups them Conflicts /
   const { sent, emit } = launch();
   expect(sent).toContainEqual({ type: "readChanges", worktreePath: WT });
 
-  act(() => emit({ type: "changesRead", worktreePath: WT, files }));
+  act(() =>
+    emit(
+      { type: "changesRead", worktreePath: WT, files },
+      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 0, behind: 0, dirty: 4, conflicts: [], changedFiles: 4, commits: 0 } },
+    ),
+  );
 
   expect(within(pane()).getByRole("tab", { name: /Changes/ }).textContent).toContain("4");
   const groups = within(pane())
@@ -146,7 +151,7 @@ test("files a merge of base would conflict on join the Conflicts group and block
   act(() =>
     emit(
       { type: "changesRead", worktreePath: WT, files: [{ ...readme, decision: "accept" }, changed("b.ts", "modified")] },
-      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 1, behind: 2, dirty: 2, conflicts: ["b.ts", "c.ts"] } },
+      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 1, behind: 2, dirty: 2, conflicts: ["b.ts", "c.ts"], changedFiles: 3, commits: 1 } },
     ),
   );
   expect(fileRows()).toEqual(["File b.ts, conflicted", "File c.ts, conflicted", "File README.md, modified"]);
@@ -250,18 +255,10 @@ test("empty states: no changes, and when Finished, how many commits are ready", 
   act(() =>
     emit(
       { type: "sessionStatusChanged", sessionId: "session-1", status: "done" },
-      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 3, behind: 0, dirty: 0, conflicts: [] } },
+      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 3, behind: 0, dirty: 0, conflicts: [], changedFiles: 0, commits: 3 } },
     ),
   );
   expect(within(pane()).getByText("Working tree clean. 3 commits ready.")).toBeTruthy();
-});
-
-test("a status change re-reads the changes", () => {
-  const { sent, emit } = launch();
-  const reads = () => sent.filter((c) => c.type === "readChanges").length;
-  const before = reads();
-  act(() => emit({ type: "sessionStatusChanged", sessionId: "session-1", status: "running" }));
-  expect(reads()).toBe(before + 1);
 });
 
 test("Expand gives the review pane the full width; ⌘⇧D hides and shows it", () => {

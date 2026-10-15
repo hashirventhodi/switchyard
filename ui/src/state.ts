@@ -24,6 +24,7 @@ import type { Shell } from "./schema/Shell";
 import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
+import type { ChangeKind } from "./schema/ChangeKind";
 import type { Commit } from "./schema/Commit";
 import type { ForgeSetup } from "./schema/ForgeSetup";
 import type { PullRequest } from "./schema/PullRequest";
@@ -79,6 +80,9 @@ export interface State {
   agents: AgentSetup[];
   /** What the core last read from the VCS about each worktree, by path. */
   worktreeFacts: Record<string, WorktreeFacts>;
+  /** How many `worktreeChanged` signals of each kind each worktree has had, by path: a view
+   *  showing heavy data re-reads when a count it cares about moves (useWorktreeChanged). */
+  worktreeChanges: Record<string, Partial<Record<ChangeKind, number>>>;
   /** Uncommitted changes the core last read for each worktree, by path. */
   changes: Record<string, ChangedFile[]>;
   /** Each worktree's conflicts with their hunks, by path, as last read with its changes. */
@@ -188,6 +192,7 @@ export const initialState: State = {
   toasts: [],
   agents: [],
   worktreeFacts: {},
+  worktreeChanges: {},
   changes: {},
   history: {},
   policies: {},
@@ -275,6 +280,11 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "worktreeChanged": {
+      const counts = { ...state.worktreeChanges[event.worktreePath] };
+      for (const kind of event.kinds) counts[kind] = (counts[kind] ?? 0) + 1;
+      return { ...state, worktreeChanges: { ...state.worktreeChanges, [event.worktreePath]: counts } };
+    }
     case "mcpServersChanged":
       return { ...state, mcpDeclared: { ...state.mcpDeclared, [event.repositoryId]: { servers: event.servers, error: event.error } } };
     case "contextRead":

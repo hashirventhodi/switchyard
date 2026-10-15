@@ -29,7 +29,7 @@ const session: Session = {
 const behind = (path: string, n: number, conflicts: string[] = []): Event => ({
   type: "worktreeFactsChanged",
   worktreePath: path,
-  facts: { ahead: 2, behind: n, dirty: 0, conflicts },
+  facts: { ahead: 2, behind: n, dirty: 0, conflicts, changedFiles: conflicts.length, commits: 2 },
 });
 
 function launch(...events: Event[]) {
@@ -126,14 +126,14 @@ test("History with no commits shows only the base marker", () => {
   expect(within(rows[0]).queryByRole("button", { name: "Rebase" })).toBeNull();
 });
 
-test("History re-reads when the branch moves", () => {
+test("History re-reads when the core signals git changed", () => {
   const { sent, emit } = launch({ type: "sessionStarted", session }, behind("/wt/acme/fix", 1));
   openSession();
   fireEvent.click(screen.getByRole("tab", { name: /History/ }));
   const reads = () => sent.filter((c) => c.type === "readHistory").length;
   const before = reads();
 
-  act(() => emit({ type: "worktreeFactsChanged", worktreePath: "/wt/acme/fix", facts: { ahead: 3, behind: 1, dirty: 0, conflicts: [] } }));
+  act(() => emit({ type: "worktreeChanged", worktreePath: "/wt/acme/fix", kinds: ["git"] }));
 
   expect(reads()).toBe(before + 1);
 });
