@@ -104,3 +104,21 @@ fn a_sidecar_that_cannot_be_spawned_refuses_the_start() {
         "{events:#?}"
     );
 }
+
+#[test]
+fn unreadable_sidecar_lines_are_noted_and_written_to_the_compat_log() {
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("feat/x");
+    let mut core = Harness::launch_with(fake_sidecar());
+    core.add_repository(&repo.path);
+    core.dispatch(start(&worktree));
+    let id = started_session(&core.wait_for(|seen| has_status(seen, SessionStatus::Waiting)));
+
+    core.dispatch(Command::SendPrompt { session_id: id, text: "garbage".into() });
+    core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+
+    let log = core.compat_log();
+    let classes: Vec<_> = log.iter().map(|r| r["failure_class"].as_str().unwrap()).collect();
+    assert_eq!(classes, vec!["parse_error", "protocol_mismatch"]);
+    assert_eq!(log[0]["cli_version"], "0.0.1");
+}

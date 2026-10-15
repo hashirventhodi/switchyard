@@ -5,6 +5,7 @@ import { slugBranch, type BranchKind } from "./branch";
 import type { Command } from "./schema/Command";
 import type { PermissionMode } from "./schema/PermissionMode";
 import { sessionOn, type State } from "./state";
+import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { MODE_LABEL, STATUS_LABEL } from "./status";
 
 // Auto edit and Full auto arrive with permission modes. Explore is the only mode allowed
@@ -35,8 +36,12 @@ export function NewSession(props: {
   preset?: NewSessionPreset;
   onStart: (command: Command) => void;
   onClose: () => void;
+  openLink: OpenLink;
 }) {
-  const { state, preset = {}, onStart, onClose } = props;
+  const { state, preset = {}, onStart, onClose, openLink } = props;
+  // An agent whose CLI is missing or outside this build's range cannot start (the core
+  // refuses too); say why here, before the first session, not mid-session.
+  const blocked = agentProblem(state.agents, "claudeCode");
   const [mode, setMode] = useState<PermissionMode>(preset.mode ?? "askFirst");
   const [where, setWhere] = useState<"new" | "existing">(preset.worktreePath ? "existing" : "new");
   const choices: Choice[] = state.repositories.flatMap((r) =>
@@ -61,6 +66,7 @@ export function NewSession(props: {
   const shownBranch = branchTouched ? branch : slugBranch(prompt, preset.branchKind);
   const chosen = choices.find((c) => c.path === worktree);
   const canStart =
+    !blocked &&
     !!prompt.trim() && (where === "new" ? !!repository && !!shownBranch.trim() : !!chosen && !chosen.disabled);
 
   const start = () => {
@@ -99,6 +105,11 @@ export function NewSession(props: {
               <option value="claudeCode">Claude Code</option>
             </select>
           </label>
+          {blocked && (
+            <div className="setup-alert" role="alert">
+              <AgentProblem setup={blocked} openLink={openLink} />
+            </div>
+          )}
           <fieldset className="field choice">
             <legend>Where</legend>
             <label className={where === "new" ? "on" : ""}>

@@ -73,6 +73,39 @@ fn session_commands_and_transcript_entries_use_camel_case() {
 }
 
 #[test]
+fn spend_records_keep_reported_and_estimated_cost_apart() {
+    use switchyard_schema::Spend;
+    let event = Event::SpendRecorded {
+        session_id: "session-1".into(),
+        at_ms: 1_760_000_000_000,
+        spend: Spend {
+            input_tokens: 300_000,
+            output_tokens: 50_000,
+            cache_read_tokens: 1_000_000,
+            reported_usd: None,
+            estimated_usd: Some(1.6),
+            price_table_version: Some("2026-10-15".into()),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({
+            "type": "spendRecorded",
+            "sessionId": "session-1",
+            "atMs": 1_760_000_000_000u64,
+            "spend": {
+                "inputTokens": 300_000,
+                "outputTokens": 50_000,
+                "cacheReadTokens": 1_000_000,
+                "reportedUsd": null,
+                "estimatedUsd": 1.6,
+                "priceTableVersion": "2026-10-15"
+            }
+        })
+    );
+}
+
+#[test]
 fn worktree_lifecycle_commands_and_events_use_camel_case() {
     use switchyard_schema::WorktreeFacts;
     let command: Command =

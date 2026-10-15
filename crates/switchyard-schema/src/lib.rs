@@ -74,6 +74,9 @@ pub enum Command {
     },
     /// Re-read every worktree's facts (ahead/behind, dirty count) from git.
     RefreshWorktrees,
+    /// Detect the installed agent CLIs again (after installing or updating one). The core
+    /// answers with [`Event::AgentsChecked`].
+    CheckAgents,
 }
 
 /// Something the core reports. The renderer derives all of its state from these.
@@ -110,6 +113,20 @@ pub enum Event {
         session_id: String,
         facts: SessionFacts,
     },
+    /// What a Session has spent so far, as of `atMs`. Each one supersedes the Session's
+    /// previous one (the totals are running totals); the renderer keeps them all so it can
+    /// tell what was spent since a given time (Spend today). Replayed in full on attach,
+    /// with estimates recomputed from the current price table.
+    SpendRecorded {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        /// Milliseconds since the Unix epoch.
+        #[serde(rename = "atMs")]
+        #[ts(rename = "atMs", type = "number")]
+        at_ms: u64,
+        spend: Spend,
+    },
     /// Transcript entry number `index` of a Session. An index equal to the transcript's
     /// length appends; a lower one replaces that entry (a tool call gaining its result).
     TranscriptEntry {
@@ -119,6 +136,11 @@ pub enum Event {
         index: u32,
         entry: Entry,
     },
+    /// Whether each agent this build knows can start a Session: its CLI is installed, its
+    /// version is inside the range this build was recorded against, and its adapter speaks
+    /// this build's protocol. Sent on attach and after [`Command::CheckAgents`]; replaces
+    /// earlier results.
+    AgentsChecked { agents: Vec<AgentSetup> },
     /// A worktree is gone (removed through Switchyard).
     WorktreeRemoved {
         #[serde(rename = "repositoryId")]
@@ -150,6 +172,46 @@ pub struct WorktreeFacts {
     pub dirty: u32,
 }
 
+/// One agent's readiness, as detected on this machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentSetup {
+    pub agent: AgentKind,
+    /// Display name, e.g. "Claude Code".
+    pub name: String,
+    pub state: AgentSetupState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum AgentSetupState {
+    /// Installed, in range: New session may start it.
+    Ready { version: String },
+    /// The CLI is not installed. Shown as a setup state on the Dashboard.
+    Missing {
+        /// What to run to install it.
+        #[serde(rename = "installHint")]
+        #[ts(rename = "installHint")]
+        install_hint: String,
+        link: Link,
+    },
+    /// Installed but not usable with this build (version outside the recorded range, or an
+    /// adapter that cannot start or speaks another protocol). New session is blocked for
+    /// this agent; `message` says why and `link` where to get an update.
+    Unsupported { version: Option<String>, message: String, link: Option<Link> },
+}
+
+/// A web page the user may open in their browser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Link {
+    pub label: String,
+    pub url: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -174,7 +236,7 @@ pub struct Worktree {
     pub primary: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum AgentKind {
@@ -233,8 +295,29 @@ pub struct SessionFacts {
     pub cli_permission_mode: Option<String>,
     /// Completed turns.
     pub turns: u32,
-    /// Cost reported by the CLI so far, when it reports one.
-    pub cost_usd: Option<f64>,
+}
+
+/// A Session's running spend. Cost is either reported by the CLI or, for a CLI that
+/// reports tokens only, estimated from the price table when read (shown with a tilde);
+/// the two are never mixed into one figure.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Spend {
+    /// Input tokens, not counting cache reads.
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    #[ts(type = "number")]
+    pub cache_read_tokens: u64,
+    /// Cost the CLI reported, in USD.
+    pub reported_usd: Option<f64>,
+    /// Cost estimated from the price table, in USD: only when the CLI reported none and the
+    /// table prices the Session's model.
+    pub estimated_usd: Option<f64>,
+    /// The price table version `estimatedUsd` was computed with.
+    pub price_table_version: Option<String>,
 }
 
 /// One transcript entry.

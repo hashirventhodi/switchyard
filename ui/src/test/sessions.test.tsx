@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { App } from "../App";
 import type { Entry } from "../schema/Entry";
 import type { Event } from "../schema/Event";
@@ -9,10 +9,7 @@ import type { SessionStatus } from "../schema/SessionStatus";
 import { fakeCore } from "./fakeCore";
 
 beforeEach(() => localStorage.clear());
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
+afterEach(cleanup);
 
 const acme = { id: "repo-1", name: "acme", path: "/src/acme", baseBranch: "main" };
 const repoEvents: Event[] = [
@@ -162,15 +159,17 @@ test("the transcript shows prose and tool rows: shell runs and failures expanded
 });
 
 test("the summary strip shows agent, model, CLI version, path, mode, turns, cost and elapsed", () => {
-  // Pin the clock so "Elapsed" does not depend on how fast the test runs.
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(session.startedAtMs + 65_000);
+  // A fixed clock: elapsed must not depend on how long the run took to get here.
+  vi.useFakeTimers({ now: session.startedAtMs + 65_000 });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
   launch(
     { type: "sessionStarted", session },
     {
       type: "sessionFactsChanged",
       sessionId: "session-1",
-      facts: { model: "claude-opus-5-5", cliVersion: "2.1.300", cliPermissionMode: "default", turns: 2, costUsd: 0.05 },
+      facts: { model: "claude-opus-5-5", cliVersion: "2.1.300", cliPermissionMode: "default", turns: 2 },
     },
   );
   openSession();

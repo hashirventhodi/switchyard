@@ -279,6 +279,23 @@ fn create_new_from_base_with_no_prompt_creates_nothing() {
 }
 
 #[test]
+fn create_new_from_base_with_an_unsupported_cli_creates_nothing() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+    core.probe.cli_prints(None);
+
+    let events = start_on_new(&mut core, &repository.id, "feat/login", PermissionMode::AskFirst, "Add a login form.");
+
+    assert!(
+        events.iter().any(|e| matches!(e, Event::CommandRefused { command, .. } if command == "startSessionOnNewWorktree")),
+        "{events:#?}"
+    );
+    assert!(!events.iter().any(|e| matches!(e, Event::WorktreeAdded { .. })), "{events:#?}");
+    assert_eq!(git_worktree_paths(&repo.path), vec![repo.path.clone()]);
+}
+
+#[test]
 fn a_branch_that_already_exists_is_refused_with_the_reason() {
     let repo = TempRepo::new("acme");
     repo.add_worktree("feat/login");

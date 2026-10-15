@@ -3090,6 +3090,7 @@ version = "0.1.0"
 dependencies = [
  "adapter-protocol",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

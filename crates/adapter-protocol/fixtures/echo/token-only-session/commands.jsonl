@@ -1,0 +1,1 @@
+{"after_input":6,"command":{"type":"send_text","text":"Thanks."},"expect_responses":[{"echo":{"type":"send_text","text":"Thanks."}}]}

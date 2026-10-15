@@ -12,6 +12,8 @@ import { Palette, ShortcutsHelp } from "./Overlays";
 import { NewSession, type NewSessionPreset } from "./NewSession";
 import { SessionView } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
+import { SetupPanel, type OpenLink } from "./Setup";
+import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
 import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
@@ -64,6 +66,8 @@ export interface AppProps {
   pickFolder: () => Promise<string | null>;
   /** Where shortcut and palette handlers are registered; tests pass one to observe actions. */
   actions?: ActionRegistry;
+  /** Opens an install or update link in the user's browser. */
+  openLink?: OpenLink;
 }
 
 type Overlay = "palette" | "help" | "newSession" | "newWorktree" | null;
@@ -71,7 +75,7 @@ type Overlay = "palette" | "help" | "newSession" | "newWorktree" | null;
 /** A session the user just asked for, by where it will run; it opens once the core confirms it. */
 type PendingStart = { worktreePath: string } | { repositoryId: string; branch: string };
 
-export function App({ core, pickFolder, actions }: AppProps) {
+export function App({ core, pickFolder, actions, openLink = (url) => window.open(url, "_blank") }: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -351,6 +355,18 @@ export function App({ core, pickFolder, actions }: AppProps) {
               <div className="pagehead">
                 <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
               </div>
+              {prefs.view === "dashboard" && (
+                <>
+                  <SetupPanel
+                    agents={state.agents}
+                    onCheck={() => core.send({ type: "checkAgents" })}
+                    openLink={openLink}
+                  />
+                  <div className="kpis">
+                    <SpendToday sessions={sessions} variant="kpi" />
+                  </div>
+                </>
+              )}
               <p className="empty">
                 {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
               </p>
@@ -390,7 +406,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
-            <span className="i">$0.00 today</span>
+            <SpendToday sessions={sessions} variant="status" />
           </div>
         </footer>
 
@@ -408,7 +424,13 @@ export function App({ core, pickFolder, actions }: AppProps) {
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
         {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
         {overlay === "newSession" && (
-          <NewSession state={state} preset={newSessionPreset} onStart={startSession} onClose={closeOverlay} />
+          <NewSession
+            state={state}
+            preset={newSessionPreset}
+            onStart={startSession}
+            onClose={closeOverlay}
+            openLink={openLink}
+          />
         )}
         {overlay === "newWorktree" && <NewWorktree state={state} send={core.send} onClose={closeOverlay} />}
       </div>

@@ -87,6 +87,10 @@ pub(crate) fn start_session_on_new(
     if prompt.trim().is_empty() {
         return inner.refuse(COMMAND, "Write a prompt for the agent first".into());
     }
+    // An agent that cannot start would leave a worktree nobody asked for.
+    if let Err(reason) = crate::compat::admit(inner, agent) {
+        return inner.refuse(COMMAND, reason);
+    }
     if let Some(worktree) = create(inner, COMMAND, repository_id, branch) {
         sessions::start(inner, core, &worktree.path, agent, permission_mode, prompt);
     }
