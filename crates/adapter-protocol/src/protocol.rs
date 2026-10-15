@@ -92,21 +92,44 @@ pub enum PermissionMode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RequestDetail {
-    Command { command: String, cwd: Option<String> },
-    FileWrite { path: String, diff: Option<String> },
-    Network { domain: String, url: Option<String> },
-    McpTool { server: String, tool: String, input: Value },
-    Question { question: String, options: Vec<String> },
+    Command {
+        command: String,
+        cwd: Option<String>,
+    },
+    FileWrite {
+        path: String,
+        diff: Option<String>,
+    },
+    Network {
+        domain: String,
+        url: Option<String>,
+    },
+    McpTool {
+        server: String,
+        tool: String,
+        input: Value,
+    },
+    Question {
+        question: String,
+        options: Vec<String>,
+    },
 }
 
 /// Something the host tells an adapter to do to its CLI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
-    SendText { text: String },
-    AnswerRequest { request_id: String, verdict: Verdict },
+    SendText {
+        text: String,
+    },
+    AnswerRequest {
+        request_id: String,
+        verdict: Verdict,
+    },
     Interrupt,
-    Resume { external_session_id: String },
+    Resume {
+        external_session_id: String,
+    },
 }
 
 /// The user's (or policy's) answer to a Permission request.
@@ -115,9 +138,14 @@ pub enum Command {
 pub enum Verdict {
     /// Run once: approve this request without creating a Grant.
     AllowOnce,
-    /// Approve and create a Grant (the CLI's own "don't ask again", where it has one).
+    /// Approve and create a Grant. Grants live in Switchyard; whether the CLI
+    /// is also told to remember the rule is the adapter's choice per CLI.
     AllowAlways,
-    Deny { message: Option<String> },
+    Deny {
+        message: Option<String>,
+    },
     /// Answer to a `question` request.
-    Answer { text: String },
+    Answer {
+        text: String,
+    },
 }

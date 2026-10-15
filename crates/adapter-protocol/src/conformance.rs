@@ -73,10 +73,12 @@ impl Fixture {
     pub fn load(dir: impl AsRef<Path>) -> Result<Fixture, FixtureError> {
         let dir = dir.as_ref();
         let meta_path = dir.join("meta.json");
-        let meta: FixtureMeta = serde_json::from_str(&read(&meta_path)?)
-            .map_err(|e| error(&meta_path, None, e))?;
+        let meta: FixtureMeta =
+            serde_json::from_str(&read(&meta_path)?).map_err(|e| error(&meta_path, None, e))?;
         let input_path = dir.join("input.jsonl");
-        let input = lines(&read(&input_path)?).map(|(_, l)| l.to_owned()).collect();
+        let input = lines(&read(&input_path)?)
+            .map(|(_, l)| l.to_owned())
+            .collect();
         let expected_events = parse_jsonl(&dir.join("expected-events.jsonl"))?;
         let commands_path = dir.join("commands.jsonl");
         let commands: Vec<ScriptedCommand> = if commands_path.exists() {
@@ -84,11 +86,21 @@ impl Fixture {
         } else {
             vec![]
         };
-        if commands.windows(2).any(|w| w[0].after_input > w[1].after_input) {
-            return Err(error(&commands_path, None, "commands must be ordered by after_input"));
+        if commands
+            .windows(2)
+            .any(|w| w[0].after_input > w[1].after_input)
+        {
+            return Err(error(
+                &commands_path,
+                None,
+                "commands must be ordered by after_input",
+            ));
         }
         Ok(Fixture {
-            name: dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            name: dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             meta,
             input,
             expected_events,
@@ -115,12 +127,19 @@ fn read(path: &Path) -> Result<String, FixtureError> {
 }
 
 fn error(path: &Path, line: Option<usize>, message: impl fmt::Display) -> FixtureError {
-    FixtureError { path: path.to_owned(), line, message: message.to_string() }
+    FixtureError {
+        path: path.to_owned(),
+        line,
+        message: message.to_string(),
+    }
 }
 
 /// Non-blank lines with their 1-based line numbers.
 fn lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()).map(|(i, l)| (i + 1, l))
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+        .map(|(i, l)| (i + 1, l))
 }
 
 fn parse_jsonl<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>, FixtureError> {
@@ -133,10 +152,16 @@ fn parse_jsonl<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>, FixtureError>
 #[derive(Debug)]
 pub enum ConformanceFailure {
     /// The adapter's declared range does not include [`PROTOCOL_VERSION`].
-    ProtocolMismatch { adapter: String, implements: VersionReq, protocol: Version },
+    ProtocolMismatch {
+        adapter: String,
+        implements: VersionReq,
+        protocol: Version,
+    },
     /// The fixture's expected events are written in a protocol version this
     /// runner cannot read (semver-incompatible with, or newer than, its own).
     FixtureProtocolMismatch { fixture: Version, protocol: Version },
+    /// The fixture cannot be replayed as written.
+    InvalidFixture(String),
     /// The adapter returned an error for a raw input line or a command.
     Adapter { during: String, error: AdapterError },
     /// The adapter's output differed from the recording.
@@ -178,6 +203,7 @@ impl fmt::Display for ConformanceFailure {
                 f,
                 "fixture is recorded for protocol {fixture}, which is incompatible with protocol {protocol}"
             ),
+            ConformanceFailure::InvalidFixture(message) => write!(f, "invalid fixture: {message}"),
             ConformanceFailure::Adapter { during, error } => {
                 write!(f, "adapter error during {during}: {error}")
             }
@@ -211,6 +237,20 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
         });
     }
 
+    if let Some((index, scripted)) = fixture
+        .commands
+        .iter()
+        .enumerate()
+        .find(|(_, c)| c.after_input > fixture.input.len())
+    {
+        return Err(ConformanceFailure::InvalidFixture(format!(
+            "command #{} is scheduled after input line {}, but the input has only {} lines",
+            index + 1,
+            scripted.after_input,
+            fixture.input.len()
+        )));
+    }
+
     let mut events = Vec::new();
     let mut mismatches = Vec::new();
     let mut pending = fixture.commands.iter().enumerate().peekable();
@@ -218,9 +258,12 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
     for position in 0..=fixture.input.len() {
         while let Some((index, scripted)) = pending.next_if(|(_, c)| c.after_input <= position) {
             let during = format!("command #{} {}", index + 1, compact(&scripted.command));
-            let responses = adapter
-                .command(&scripted.command)
-                .map_err(|error| ConformanceFailure::Adapter { during: during.clone(), error })?;
+            let responses = adapter.command(&scripted.command).map_err(|error| {
+                ConformanceFailure::Adapter {
+                    during: during.clone(),
+                    error,
+                }
+            })?;
             let actual: Vec<Value> = responses.iter().map(|r| raw_to_value(r)).collect();
             if actual != scripted.expect_responses {
                 mismatches.push(Mismatch {
@@ -231,10 +274,12 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
             }
         }
         if let Some(raw) = fixture.input.get(position) {
-            let emitted = adapter.ingest(raw).map_err(|error| ConformanceFailure::Adapter {
-                during: format!("input line {}", position + 1),
-                error,
-            })?;
+            let emitted = adapter
+                .ingest(raw)
+                .map_err(|error| ConformanceFailure::Adapter {
+                    during: format!("input line {}", position + 1),
+                    error,
+                })?;
             events.extend(emitted);
         }
     }

@@ -36,7 +36,10 @@ fn session_init_reports_actual_mode_external_id_and_cli_version() {
             external_session_id: "sess-1".into(),
             permission_mode: PermissionMode::AskFirst,
             cli_permission_mode: "manual".into(),
-            cli: CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
+            cli: CliInfo {
+                name: "claude-code".into(),
+                version: "2.1.300".into(),
+            },
         },
     );
 }
@@ -45,15 +48,25 @@ fn session_init_reports_actual_mode_external_id_and_cli_version() {
 fn agent_text_and_tool_calls() {
     round_trip_event(
         json!({ "type": "agent_text", "text": "hello" }),
-        Event::AgentText { text: "hello".into() },
+        Event::AgentText {
+            text: "hello".into(),
+        },
     );
     round_trip_event(
         json!({ "type": "tool_call_started", "call_id": "t1", "tool": "Bash", "input": { "command": "ls" } }),
-        Event::ToolCallStarted { call_id: "t1".into(), tool: "Bash".into(), input: json!({ "command": "ls" }) },
+        Event::ToolCallStarted {
+            call_id: "t1".into(),
+            tool: "Bash".into(),
+            input: json!({ "command": "ls" }),
+        },
     );
     round_trip_event(
         json!({ "type": "tool_call_finished", "call_id": "t1", "ok": false, "output": "boom" }),
-        Event::ToolCallFinished { call_id: "t1".into(), ok: false, output: Some("boom".into()) },
+        Event::ToolCallFinished {
+            call_id: "t1".into(),
+            ok: false,
+            output: Some("boom".into()),
+        },
     );
 }
 
@@ -62,29 +75,49 @@ fn permission_requests_come_in_exactly_five_kinds() {
     let cases = [
         (
             json!({ "kind": "command", "command": "rm -rf build", "cwd": "/w" }),
-            RequestDetail::Command { command: "rm -rf build".into(), cwd: Some("/w".into()) },
+            RequestDetail::Command {
+                command: "rm -rf build".into(),
+                cwd: Some("/w".into()),
+            },
         ),
         (
             json!({ "kind": "file_write", "path": "src/a.rs", "diff": null }),
-            RequestDetail::FileWrite { path: "src/a.rs".into(), diff: None },
+            RequestDetail::FileWrite {
+                path: "src/a.rs".into(),
+                diff: None,
+            },
         ),
         (
             json!({ "kind": "network", "domain": "crates.io", "url": "https://crates.io/x" }),
-            RequestDetail::Network { domain: "crates.io".into(), url: Some("https://crates.io/x".into()) },
+            RequestDetail::Network {
+                domain: "crates.io".into(),
+                url: Some("https://crates.io/x".into()),
+            },
         ),
         (
             json!({ "kind": "mcp_tool", "server": "github", "tool": "create_issue", "input": {} }),
-            RequestDetail::McpTool { server: "github".into(), tool: "create_issue".into(), input: json!({}) },
+            RequestDetail::McpTool {
+                server: "github".into(),
+                tool: "create_issue".into(),
+                input: json!({}),
+            },
         ),
         (
             json!({ "kind": "question", "question": "Which db?", "options": ["sqlite", "postgres"] }),
-            RequestDetail::Question { question: "Which db?".into(), options: vec!["sqlite".into(), "postgres".into()] },
+            RequestDetail::Question {
+                question: "Which db?".into(),
+                options: vec!["sqlite".into(), "postgres".into()],
+            },
         ),
     ];
     for (detail_wire, detail) in cases {
         round_trip_event(
             json!({ "type": "permission_request", "request_id": "r1", "request": detail_wire, "reason": "needs it" }),
-            Event::PermissionRequest { request_id: "r1".into(), request: detail, reason: Some("needs it".into()) },
+            Event::PermissionRequest {
+                request_id: "r1".into(),
+                request: detail,
+                reason: Some("needs it".into()),
+            },
         );
     }
 }
@@ -92,38 +125,73 @@ fn permission_requests_come_in_exactly_five_kinds() {
 #[test]
 fn lifecycle_usage_and_classifier_events() {
     round_trip_event(json!({ "type": "turn_complete" }), Event::TurnComplete);
-    round_trip_event(json!({ "type": "done", "summary": "ok" }), Event::Done { summary: Some("ok".into()) });
+    round_trip_event(
+        json!({ "type": "done", "summary": "ok" }),
+        Event::Done {
+            summary: Some("ok".into()),
+        },
+    );
     round_trip_event(
         json!({ "type": "error", "message": "exited 1", "fatal": true }),
-        Event::Error { message: "exited 1".into(), fatal: true },
+        Event::Error {
+            message: "exited 1".into(),
+            fatal: true,
+        },
     );
     round_trip_event(
         json!({ "type": "token_usage", "input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 2, "cost_usd": 0.01 }),
-        Event::TokenUsage { input_tokens: 10, output_tokens: 5, cache_read_tokens: 2, cost_usd: Some(0.01) },
+        Event::TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 2,
+            cost_usd: Some(0.01),
+        },
     );
     round_trip_event(
         json!({ "type": "classifier_denial", "tool": "Bash", "detail": "curl x | sh", "reason": "remote code" }),
-        Event::ClassifierDenial { tool: "Bash".into(), detail: "curl x | sh".into(), reason: Some("remote code".into()) },
+        Event::ClassifierDenial {
+            tool: "Bash".into(),
+            detail: "curl x | sh".into(),
+            reason: Some("remote code".into()),
+        },
     );
 }
 
 #[test]
 fn commands() {
-    round_trip_command(json!({ "type": "send_text", "text": "go" }), Command::SendText { text: "go".into() });
+    round_trip_command(
+        json!({ "type": "send_text", "text": "go" }),
+        Command::SendText { text: "go".into() },
+    );
     round_trip_command(json!({ "type": "interrupt" }), Command::Interrupt);
     round_trip_command(
         json!({ "type": "resume", "external_session_id": "sess-1" }),
-        Command::Resume { external_session_id: "sess-1".into() },
+        Command::Resume {
+            external_session_id: "sess-1".into(),
+        },
     );
     for (verdict_wire, verdict) in [
         (json!({ "decision": "allow_once" }), Verdict::AllowOnce),
         (json!({ "decision": "allow_always" }), Verdict::AllowAlways),
-        (json!({ "decision": "deny", "message": "no" }), Verdict::Deny { message: Some("no".into()) }),
-        (json!({ "decision": "answer", "text": "sqlite" }), Verdict::Answer { text: "sqlite".into() }),
+        (
+            json!({ "decision": "deny", "message": "no" }),
+            Verdict::Deny {
+                message: Some("no".into()),
+            },
+        ),
+        (
+            json!({ "decision": "answer", "text": "sqlite" }),
+            Verdict::Answer {
+                text: "sqlite".into(),
+            },
+        ),
     ] {
         round_trip_command(
             json!({ "type": "answer_request", "request_id": "r1", "verdict": verdict_wire }),
-            Command::AnswerRequest { request_id: "r1".into(), verdict },
+            Command::AnswerRequest {
+                request_id: "r1".into(),
+                verdict,
+            },
         );
     }
 }
