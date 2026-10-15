@@ -83,6 +83,8 @@ export interface State {
   /** How many `worktreeChanged` signals of each kind each worktree has had, by path: a view
    *  showing heavy data re-reads when a count it cares about moves (useWorktreeChanged). */
   worktreeChanges: Record<string, Partial<Record<ChangeKind, number>>>;
+  /** Why live updates are unavailable for each worktree whose watcher cannot run, by path. */
+  unwatched: Record<string, string>;
   /** Uncommitted changes the core last read for each worktree, by path. */
   changes: Record<string, ChangedFile[]>;
   /** Each worktree's conflicts with their hunks, by path, as last read with its changes. */
@@ -193,6 +195,7 @@ export const initialState: State = {
   agents: [],
   worktreeFacts: {},
   worktreeChanges: {},
+  unwatched: {},
   changes: {},
   history: {},
   policies: {},
@@ -245,6 +248,7 @@ export function reduce(state: State, event: Event): State {
         pullRequests: {},
         taskLinks: {},
         conflicts: {},
+        unwatched: {},
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -255,7 +259,13 @@ export function reduce(state: State, event: Event): State {
         ...state,
         repositories: state.repositories.map((r) =>
           r.id === event.repositoryId
-            ? { ...r, worktrees: [...r.worktrees.filter((w) => w.path !== event.worktree.path), event.worktree] }
+            ? {
+                ...r,
+                // A worktree announced again (its branch renamed) keeps its place.
+                worktrees: r.worktrees.some((w) => w.path === event.worktree.path)
+                  ? r.worktrees.map((w) => (w.path === event.worktree.path ? event.worktree : w))
+                  : [...r.worktrees, event.worktree],
+              }
             : r,
         ),
       };
@@ -264,12 +274,14 @@ export function reduce(state: State, event: Event): State {
       const gone = repo?.worktrees.find((w) => w.path === event.worktreePath);
       const { [event.worktreePath]: _dropped, ...worktreeFacts } = state.worktreeFacts;
       const { [event.worktreePath]: _pr, ...pullRequests } = state.pullRequests;
+      const { [event.worktreePath]: _uw, ...unwatched } = state.unwatched;
       const text = `Removed worktree ${gone?.branch ?? event.worktreePath}`;
       return resultToast(
         {
           ...state,
           worktreeFacts,
           pullRequests,
+          unwatched,
           repositories: state.repositories.map((r) =>
             r.id === event.repositoryId ? { ...r, worktrees: r.worktrees.filter((w) => w.path !== event.worktreePath) } : r,
           ),
@@ -284,6 +296,12 @@ export function reduce(state: State, event: Event): State {
       const counts = { ...state.worktreeChanges[event.worktreePath] };
       for (const kind of event.kinds) counts[kind] = (counts[kind] ?? 0) + 1;
       return { ...state, worktreeChanges: { ...state.worktreeChanges, [event.worktreePath]: counts } };
+    }
+    case "worktreeUnwatched":
+      return { ...state, unwatched: { ...state.unwatched, [event.worktreePath]: event.reason } };
+    case "worktreeWatched": {
+      const { [event.worktreePath]: _cleared, ...unwatched } = state.unwatched;
+      return { ...state, unwatched };
     }
     case "mcpServersChanged":
       return { ...state, mcpDeclared: { ...state.mcpDeclared, [event.repositoryId]: { servers: event.servers, error: event.error } } };

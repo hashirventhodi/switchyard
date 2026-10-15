@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,12 +19,23 @@ pub struct Watch {
     pub roots: Vec<PathBuf>,
 }
 
-/// Receives the paths that changed under a [`Watch`] since the last call (coalesced).
-pub type ChangeSink = Arc<dyn Fn(Vec<PathBuf>) + Send + Sync>;
+/// What a watcher reports about one [`Watch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchReport {
+    /// These paths changed since the last report (coalesced).
+    Changed(Vec<PathBuf>),
+    /// The watch stopped working, and why; nothing more is reported for it. The core falls
+    /// back to re-deriving the Worktree on a slow cadence and watches it again later.
+    Failed(String),
+}
+
+/// Receives what a watcher reports about one [`Watch`].
+pub type ChangeSink = Arc<dyn Fn(WatchReport) + Send + Sync>;
 
 pub trait Watcher: Send + Sync {
     /// Start (or restart) watching `watch.roots`, calling `sink` with changed paths. Watching
     /// a Worktree again replaces its earlier watch.
+    /// An `Err` says why the watch could not start.
     fn watch(&self, watch: Watch, sink: ChangeSink) -> Result<(), String>;
     /// Stop watching the Worktree at `worktree`; nothing more is reported for it.
     fn unwatch(&self, worktree: &Path);
@@ -39,6 +51,9 @@ impl Watcher for NoWatcher {
     fn unwatch(&self, _worktree: &Path) {}
 }
 
+/// How often a Worktree whose watcher cannot run is re-derived, and its watcher tried again.
+pub const FALLBACK_EVERY: Duration = Duration::from_secs(10);
+
 /// How long notifications for one Worktree are gathered before the core acts on them.
 pub const COALESCE: Duration = Duration::from_millis(500);
 
@@ -53,7 +68,8 @@ pub struct FsWatcher {
 struct Batch {
     worktree: PathBuf,
     sink: ChangeSink,
-    paths: Vec<PathBuf>,
+    /// What changed; `Err` when the OS watch reported an error.
+    paths: Result<Vec<PathBuf>, String>,
 }
 
 impl FsWatcher {
@@ -73,12 +89,17 @@ impl FsWatcher {
                     None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
                 };
                 match received {
-                    Ok(batch) => {
+                    Ok(Batch { worktree, sink, paths: Err(reason) }) => {
+                        // A failed watch reports nothing more, so what was gathered is moot.
+                        pending.remove(&worktree);
+                        sink(WatchReport::Failed(reason));
+                    }
+                    Ok(Batch { worktree, sink, paths: Ok(paths) }) => {
                         let entry = pending
-                            .entry(batch.worktree)
-                            .or_insert_with(|| (Instant::now() + window, batch.sink.clone(), Vec::new()));
-                        entry.1 = batch.sink;
-                        entry.2.extend(batch.paths);
+                            .entry(worktree)
+                            .or_insert_with(|| (Instant::now() + window, sink.clone(), Vec::new()));
+                        entry.1 = sink;
+                        entry.2.extend(paths);
                     }
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -89,7 +110,7 @@ impl FsWatcher {
                     if let Some((_, sink, mut paths)) = pending.remove(&worktree) {
                         paths.sort();
                         paths.dedup();
-                        sink(paths);
+                        sink(WatchReport::Changed(paths));
                     }
                 }
             }
@@ -109,14 +130,17 @@ impl Watcher for FsWatcher {
         use notify::Watcher as _;
         let tx = self.deliver.lock().expect("watcher lock").clone();
         let worktree = watch.worktree.clone();
+        let failed = AtomicBool::new(false);
         let mut os = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-            // Errors are left to the fallback (a Worktree whose watcher fails is re-derived
-            // on a slow cadence); here a bad notification is just dropped.
-            if let Ok(event) = result {
-                if !event.paths.is_empty() {
-                    let _ = tx.send(Batch { worktree: worktree.clone(), sink: sink.clone(), paths: event.paths });
-                }
-            }
+            // An error (a lost watch, an overflowed queue) fails the watch: the core falls back
+            // to re-deriving the Worktree on a slow cadence. Reported once.
+            let paths = match result {
+                Ok(event) if event.paths.is_empty() => return,
+                Ok(event) => Ok(event.paths),
+                Err(_) if failed.swap(true, Ordering::SeqCst) => return,
+                Err(e) => Err(format!("the watcher for {} failed: {e}", worktree.display())),
+            };
+            let _ = tx.send(Batch { worktree: worktree.clone(), sink: sink.clone(), paths });
         })
         .map_err(|e| format!("cannot watch {}: {e}", watch.worktree.display()))?;
         for root in &watch.roots {

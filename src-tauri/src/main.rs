@@ -15,7 +15,7 @@ use switchyard_core::forge::GhForge;
 use switchyard_core::sidecar::SidecarLauncher;
 use switchyard_core::processes::SystemProcesses;
 use switchyard_core::secrets::SystemSecrets;
-use switchyard_core::watcher::FsWatcher;
+use switchyard_core::watcher::{FsWatcher, FALLBACK_EVERY};
 use switchyard_core::{default_export_dir, default_worktree_root, system_now_ms, Core, Runtime};
 use switchyard_schema::Command;
 use tauri::path::BaseDirectory;
@@ -139,6 +139,7 @@ fn main() {
                 claude_home: switchyard_core::context::default_claude_home(),
                 sandbox_evidence: switchyard_core::detect_sandbox,
                 watcher: Arc::new(FsWatcher::new()),
+                unwatched_every: Some(FALLBACK_EVERY),
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Dispatcher::new(core));
