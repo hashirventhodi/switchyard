@@ -180,18 +180,30 @@ fn read_until_exit(
 ) {
     let mut buf = [0u8; 8192];
     let mut pending = Vec::new();
+    // Once the shell is closed (or the core gone) keep draining until EOF without emitting:
+    // a hung-up shell can block in exit flushing its terminal if nobody reads the other end.
+    let mut closed = false;
     loop {
         let n = match reader.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
+        if closed {
+            continue;
+        }
         let text = decode_utf8(&mut pending, &buf[..n]);
         if text.is_empty() {
             continue;
         }
-        let Some(core) = core.upgrade() else { break };
+        let Some(core) = core.upgrade() else {
+            closed = true;
+            continue;
+        };
         let mut inner = core.lock().expect("core lock");
-        let Some(state) = inner.shells.list.iter_mut().find(|s| s.shell.id == id) else { break };
+        let Some(state) = inner.shells.list.iter_mut().find(|s| s.shell.id == id) else {
+            closed = true;
+            continue;
+        };
         push_scrollback(&mut state.scrollback, &text);
         inner.emit(Event::ShellOutput { shell_id: id.clone(), data: text });
     }
