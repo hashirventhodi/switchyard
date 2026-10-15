@@ -78,6 +78,22 @@ pub trait AgentLauncher: Send + Sync {
     fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String>;
 }
 
+/// Launches each agent kind with its own launcher (the app's: the Claude Code sidecar and
+/// `codex app-server`).
+pub struct ByAgent {
+    pub claude_code: Arc<dyn AgentLauncher>,
+    pub codex: Arc<dyn AgentLauncher>,
+}
+
+impl AgentLauncher for ByAgent {
+    fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String> {
+        match spec.agent {
+            AgentKind::ClaudeCode => self.claude_code.launch(spec, sink),
+            AgentKind::Codex => self.codex.launch(spec, sink),
+        }
+    }
+}
+
 /// The launcher used when none is configured: every launch is refused.
 pub struct NoAgents;
 

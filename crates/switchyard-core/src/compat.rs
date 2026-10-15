@@ -48,7 +48,8 @@ impl AgentProbe for NoProbe {
 }
 
 /// Detection on this machine: looks for the CLI in `search_dirs` and runs its `--version`;
-/// asks the sidecar for its manifest with `<node> <sidecar> --manifest`.
+/// asks the sidecar for its manifest with `<node> <sidecar> --manifest`. The Codex adapter
+/// runs in-process, so its manifest is this build's.
 pub struct SystemProbe {
     pub search_dirs: Vec<PathBuf>,
     pub node: PathBuf,
@@ -82,7 +83,10 @@ impl AgentProbe for SystemProbe {
         run(&cli, &["--version"]).map(Some)
     }
 
-    fn adapter_manifest(&self, _: AgentKind) -> Result<AdapterManifest, String> {
+    fn adapter_manifest(&self, agent: AgentKind) -> Result<AdapterManifest, String> {
+        if agent == AgentKind::Codex {
+            return Ok(codex_adapter::manifest());
+        }
         let sidecar = self.sidecar.to_string_lossy();
         let out = run(&self.node, &[&sidecar, "--manifest"])?;
         serde_json::from_str(out.trim()).map_err(|e| format!("the adapter's manifest is unreadable ({e}): {out}"))

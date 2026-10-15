@@ -161,16 +161,30 @@ pub(crate) fn source(grant: &Grant) -> &'static str {
 /// apply more broadly than Switchyard does (a wildcard over an interpreter, a wildcard in
 /// the middle) is left out: Switchyard answers those itself when the CLI asks. Denials
 /// are always passed; a broader denial only asks less.
+///
+/// Codex has no per-invocation rule for commands or domains, so only MCP tool rules reach
+/// it, as `mcp:<server>/<tool>` (`*` for every tool); the Codex launcher turns them into
+/// the thread's config ([`crate::codex`]). Switchyard answers everything else it asks.
 pub(crate) fn cli_rules(agent: AgentKind, policy: &Policy) -> (Vec<String>, Vec<String>) {
-    let AgentKind::ClaudeCode = agent;
+    let translate = match agent {
+        AgentKind::ClaudeCode => claude_rule,
+        AgentKind::Codex => codex_rule,
+    };
     let (mut allowed, mut disallowed) = (Vec::new(), Vec::new());
     for grant in &policy.grants {
         let deny = grant.effect == GrantEffect::Deny;
-        if let Some(rule) = claude_rule(&grant.rule, deny) {
+        if let Some(rule) = translate(&grant.rule, deny) {
             if deny { &mut disallowed } else { &mut allowed }.push(rule);
         }
     }
     (allowed, disallowed)
+}
+
+fn codex_rule(rule: &GrantRule, _deny: bool) -> Option<String> {
+    match rule {
+        GrantRule::McpTool { server, tool } => Some(format!("mcp:{server}/{tool}")),
+        GrantRule::Command { .. } | GrantRule::Network { .. } => None,
+    }
 }
 
 fn claude_rule(rule: &GrantRule, deny: bool) -> Option<String> {

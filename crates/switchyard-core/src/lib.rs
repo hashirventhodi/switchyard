@@ -7,6 +7,7 @@
 //! launcher's threads and leaves as events on the same channel.
 
 pub mod agents;
+pub mod codex;
 pub mod compat;
 mod git;
 pub mod processes;
