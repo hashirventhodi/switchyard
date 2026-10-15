@@ -9,6 +9,7 @@
 pub mod agents;
 pub mod compat;
 mod git;
+mod policy;
 mod repo_policy;
 mod sessions;
 pub mod sidecar;
@@ -114,6 +115,8 @@ impl Core {
                 sessions::answer_request(&mut inner, &session_id, &request_id, verdict)
             }
             Command::CheckAgents => compat::check(&mut inner),
+            Command::ReadPolicy { repository_id } => policy::read(&inner, &repository_id),
+            Command::RevokeGrant { repository_id, grant_id } => policy::revoke(&inner, &repository_id, &grant_id),
         }
     }
 }

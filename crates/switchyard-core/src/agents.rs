@@ -16,6 +16,11 @@ pub struct LaunchSpec {
     pub cwd: PathBuf,
     /// The mode the user asked for; the launcher maps it onto the CLI's own.
     pub permission_mode: PermissionMode,
+    /// The resolved Grants, translated into the CLI's own allow rules (Claude Code
+    /// `--allowedTools`), so it stops asking for what is already granted.
+    pub allowed_tools: Vec<String>,
+    /// The resolved denials, as the CLI's deny rules (`--disallowedTools`).
+    pub disallowed_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

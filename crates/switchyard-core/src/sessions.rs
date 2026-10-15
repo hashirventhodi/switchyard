@@ -14,6 +14,7 @@ use switchyard_schema::{
 use crate::spend::{PriceTable, Usage};
 use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
+use crate::policy;
 use crate::Inner;
 
 mod requests;
@@ -116,12 +117,17 @@ pub(crate) fn start(
         };
         return inner.refuse(COMMAND, reason);
     }
+    if let Err(reason) = policy::admit_mode(&repo, permission_mode) {
+        return inner.refuse(COMMAND, reason);
+    }
     // Before the first session, not mid-session: an unsupported CLI never starts (#13).
     if let Err(reason) = compat::admit(inner, agent) {
         return inner.refuse(COMMAND, reason);
     }
     let id = format!("session-{}", inner.sessions.next_id + 1);
-    let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode };
+    // Grants reach the CLI as flags; the CLI's own settings files are never written.
+    let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
+    let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, allowed_tools, disallowed_tools };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
         Err(reason) => {

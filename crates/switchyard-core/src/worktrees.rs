@@ -91,6 +91,11 @@ pub(crate) fn start_session_on_new(
     if let Err(reason) = crate::compat::admit(inner, agent) {
         return inner.refuse(COMMAND, reason);
     }
+    if let Some(repo) = repository(inner, repository_id) {
+        if let Err(reason) = crate::policy::admit_mode(&repo, permission_mode) {
+            return inner.refuse(COMMAND, reason);
+        }
+    }
     if let Some(worktree) = create(inner, COMMAND, repository_id, branch) {
         sessions::start(inner, core, &worktree.path, agent, permission_mode, prompt);
     }
