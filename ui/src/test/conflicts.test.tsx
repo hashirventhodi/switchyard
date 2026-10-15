@@ -120,7 +120,7 @@ test("Keep ours and Keep base resolve through the core, and Commit re-enables wh
 test("a conflict only with base shows its hunks but offers only rebasing", () => {
   const { sent } = launch(
     { type: "changesRead", worktreePath: WT, files: [lib] },
-    { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 1, behind: 1, dirty: 1, conflicts: ["README"] } },
+    { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 1, behind: 1, dirty: 1, conflicts: ["README"], changedFiles: 1, commits: 1 } },
     { type: "conflictsRead", worktreePath: WT, base: "main", files: [{ ...readmeConflicts, kind: "base" }] },
   );
 

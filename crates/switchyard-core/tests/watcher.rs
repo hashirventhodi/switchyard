@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use harness::{added_repository, git, Harness, TempRepo};
 use switchyard_core::watcher::FsWatcher;
-use switchyard_schema::{Command, Event, WorktreeFacts};
+use switchyard_schema::{ChangeKind, Command, Event, WorktreeFacts};
 
 /// The facts pushed for `path` in `events` (exactly one).
 fn facts_of(events: &[Event], path: &Path) -> WorktreeFacts {
@@ -41,7 +41,7 @@ fn an_edit_on_disk_pushes_the_worktrees_facts() {
     std::fs::write(worktree.join("README"), "edited in another editor\n").unwrap();
     let events = core.disk_changed(&worktree, &[&worktree.join("README")]);
 
-    assert_eq!(facts_of(&events, &worktree), WorktreeFacts { ahead: 0, behind: 0, dirty: 1, conflicts: vec![] });
+    assert_eq!(facts_of(&events, &worktree), WorktreeFacts { ahead: 0, behind: 0, dirty: 1, conflicts: vec![], changed_files: 1, commits: 0 });
 }
 
 /// The linked worktree's own gitdir in the repository's `.git` (its HEAD, index, logs).
@@ -61,7 +61,7 @@ fn a_commit_in_a_shell_pushes_the_worktrees_facts() {
         &[&repo.path.join(".git/refs/heads/feat/login"), &gitdir_of(&repo, &worktree).join("logs/HEAD")],
     );
 
-    assert_eq!(facts_of(&events, &worktree), WorktreeFacts { ahead: 1, behind: 0, dirty: 0, conflicts: vec![] });
+    assert_eq!(facts_of(&events, &worktree), WorktreeFacts { ahead: 1, behind: 0, dirty: 0, conflicts: vec![], changed_files: 0, commits: 1 });
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn base_moving_in_a_shell_pushes_behind_for_the_worktree() {
     git(&repo.path, &["commit", "-q", "-m", "base moved"]);
     let events = core.disk_changed(&worktree, &[&repo.path.join(".git/refs/heads/main")]);
 
-    assert_eq!(facts_of(&events, &worktree), WorktreeFacts { ahead: 0, behind: 1, dirty: 0, conflicts: vec![] });
+    assert_eq!(facts_of(&events, &worktree), WorktreeFacts { ahead: 0, behind: 1, dirty: 0, conflicts: vec![], changed_files: 0, commits: 0 });
 }
 
 #[test]
@@ -103,10 +103,10 @@ fn attach_pushes_facts_for_every_worktree() {
 
     let events = core.send(Command::Attach);
 
-    let clean = WorktreeFacts { ahead: 0, behind: 0, dirty: 0, conflicts: vec![] };
+    let clean = WorktreeFacts { ahead: 0, behind: 0, dirty: 0, conflicts: vec![], changed_files: 0, commits: 0 };
     assert_eq!(facts_of(&events, &repo.path), clean);
     assert_eq!(facts_of(&events, &login), clean);
-    assert_eq!(facts_of(&events, &cache), WorktreeFacts { dirty: 1, ..clean.clone() });
+    assert_eq!(facts_of(&events, &cache), WorktreeFacts { dirty: 1, changed_files: 1, ..clean.clone() });
 }
 
 #[test]
@@ -191,4 +191,91 @@ fn a_change_to_git_internals_other_than_its_records_pushes_nothing() {
     );
 
     assert_eq!(events, vec![]);
+}
+
+/// The kinds of the `WorktreeChanged` pushed for `path` in `events` (exactly one).
+fn changed_kinds(events: &[Event], path: &Path) -> Vec<ChangeKind> {
+    let found: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::WorktreeChanged { worktree_path, kinds } if Path::new(worktree_path) == path => Some(kinds.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "expected one change signal for {path:?} in {events:#?}");
+    found.into_iter().next().unwrap()
+}
+
+#[test]
+fn a_file_edit_signals_files_beside_facts_counting_what_changes_would_list() {
+    let (_repo, worktree, mut core) = attached();
+
+    std::fs::write(worktree.join("README"), "edited in another editor\n").unwrap();
+    std::fs::write(worktree.join("notes.txt"), "scratch\n").unwrap();
+    // Staged only: Changes lists the working tree against the index, so not this one.
+    std::fs::write(worktree.join("staged.txt"), "staged\n").unwrap();
+    git(&worktree, &["add", "staged.txt"]);
+    let events = core.disk_changed(&worktree, &[&worktree.join("README"), &worktree.join("notes.txt")]);
+
+    assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Files]);
+    let facts = facts_of(&events, &worktree);
+    assert_eq!((facts.dirty, facts.changed_files), (3, 2));
+    let reads = events.iter().filter(|e| matches!(e, Event::ChangesRead { .. })).count();
+    assert_eq!(reads, 0, "no diff is computed for a worktree nobody asked to read");
+}
+
+#[test]
+fn a_file_renamed_on_disk_counts_once_as_changes_lists_it() {
+    let (_repo, worktree, mut core) = attached();
+
+    std::fs::rename(worktree.join("README"), worktree.join("README.md")).unwrap();
+    let events = core.disk_changed(&worktree, &[&worktree.join("README"), &worktree.join("README.md")]);
+
+    let read = core.send(Command::ReadChanges { worktree_path: worktree.to_string_lossy().into_owned() });
+    let listed = read.iter().find_map(|e| match e {
+        Event::ChangesRead { files, .. } => Some(files.len()),
+        _ => None,
+    });
+    assert_eq!(listed, Some(1));
+    assert_eq!(facts_of(&events, &worktree).changed_files, 1);
+}
+
+#[test]
+fn a_commit_signals_git_with_the_commits_history_would_list() {
+    let (repo, worktree, mut core) = attached();
+
+    for name in ["login.rs", "logout.rs"] {
+        std::fs::write(worktree.join(name), "fn f() {}\n").unwrap();
+        git(&worktree, &["add", name]);
+        git(&worktree, &["commit", "-q", "-m", name]);
+    }
+    let events = core.disk_changed(&worktree, &[&repo.path.join(".git/refs/heads/feat/login")]);
+
+    assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Git]);
+    assert_eq!(facts_of(&events, &worktree).commits, 2);
+}
+
+#[test]
+fn an_amend_that_leaves_ahead_unchanged_still_signals_git() {
+    let (repo, worktree, mut core) = attached();
+    std::fs::write(worktree.join("login.rs"), "fn login() {}\n").unwrap();
+    git(&worktree, &["add", "login.rs"]);
+    git(&worktree, &["commit", "-q", "-m", "login"]);
+    core.disk_changed(&worktree, &[&repo.path.join(".git/refs/heads/feat/login")]);
+
+    git(&worktree, &["commit", "-q", "--amend", "-m", "login, reworded"]);
+    let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &worktree).join("logs/HEAD")]);
+
+    assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Git]);
+    assert_eq!(facts_of(&events, &worktree).commits, 1);
+}
+
+#[test]
+fn a_file_edit_and_a_commit_together_signal_both_kinds() {
+    let (repo, worktree, mut core) = attached();
+
+    std::fs::write(worktree.join("README"), "edited\n").unwrap();
+    let events = core.disk_changed(&worktree, &[&worktree.join("README"), &repo.path.join(".git/refs/heads/feat/login")]);
+
+    assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Files, ChangeKind::Git]);
 }

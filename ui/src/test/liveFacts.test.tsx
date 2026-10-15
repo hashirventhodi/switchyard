@@ -33,7 +33,7 @@ const done: Session = {
 const facts = (path: string, f: Partial<WorktreeFacts>): Event => ({
   type: "worktreeFactsChanged",
   worktreePath: path,
-  facts: { ahead: 0, behind: 0, dirty: 0, conflicts: [], ...f },
+  facts: { ahead: 0, behind: 0, dirty: 0, conflicts: [], changedFiles: 0, commits: 0, ...f },
 });
 
 function launch(...events: Event[]) {

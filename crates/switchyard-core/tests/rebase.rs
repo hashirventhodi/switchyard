@@ -74,7 +74,7 @@ fn a_dry_run_merge_names_the_files_that_would_conflict_without_touching_the_tree
 
     let facts = facts_of(&refresh(&mut core), &path);
 
-    assert_eq!(facts, WorktreeFacts { ahead: 1, behind: 2, dirty: 0, conflicts: vec!["README".into()] });
+    assert_eq!(facts, WorktreeFacts { ahead: 1, behind: 2, dirty: 0, conflicts: vec!["README".into()], changed_files: 1, commits: 1 });
     assert_eq!(worktree_snapshot(&path), tree_before);
     assert_eq!(index_bytes(&path), index_before);
 }
@@ -87,7 +87,7 @@ fn a_branch_behind_with_disjoint_changes_has_no_conflicts() {
 
     let facts = facts_of(&refresh(&mut core), &path);
 
-    assert_eq!(facts, WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![] });
+    assert_eq!(facts, WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![], changed_files: 0, commits: 1 });
 }
 
 fn rebase(core: &mut Harness, path: &Path) -> Vec<Event> {
@@ -131,7 +131,7 @@ fn a_rebase_without_conflicts_puts_the_branch_on_base_and_clears_behind() {
             if Path::new(worktree_path) == path && base == "main")),
         "{events:#?}"
     );
-    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 0, dirty: 0, conflicts: vec![] });
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 0, dirty: 0, conflicts: vec![], changed_files: 0, commits: 1 });
     assert!(path.join("NOTES").is_file(), "base's commit is under the branch now");
     assert!(path.join("login.rs").is_file(), "the branch's commit is kept");
 }
@@ -300,7 +300,7 @@ fn ahead_and_behind_are_reread_after_every_agent_turn() {
 
     let events = core.agent_says(0, AgentEvent::TurnComplete);
 
-    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![] });
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![], changed_files: 0, commits: 1 });
 }
 
 fn history(core: &mut Harness, path: &Path) -> (String, Vec<switchyard_schema::Commit>) {

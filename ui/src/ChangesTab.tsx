@@ -12,6 +12,7 @@ import { useAction, usePaletteSource } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
 import type { ChangedFile } from "./schema/ChangedFile";
+import type { ChangeKind } from "./schema/ChangeKind";
 import type { Command } from "./schema/Command";
 import type { ConflictFile } from "./schema/ConflictFile";
 import type { ConflictHunk } from "./schema/ConflictHunk";
@@ -20,7 +21,8 @@ import type { Decision } from "./schema/Decision";
 import type { FileStatus } from "./schema/FileStatus";
 import type { Hunk } from "./schema/Hunk";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
-import type { SessionView } from "./state";
+import type { SessionView, State } from "./state";
+import { useWorktreeChanged } from "./useWorktreeChanged";
 
 const LETTER: Record<FileStatus, string> = { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!" };
 /** A listed file. `baseConflict`: a dry-run merge of base conflicts on it (#17's fact). */
@@ -90,14 +92,17 @@ export interface ChangesTabProps {
   onAsk: (text: string) => void;
   /** The worktree's conflicts with their hunks (conflictsRead), when read. */
   conflicts?: ConflictFile[];
+  /** The core's change signals (State.worktreeChanges): files or git changes re-read. */
+  worktreeChanges?: State["worktreeChanges"];
 }
 
-export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts: conflictFiles = [] }: ChangesTabProps) {
+const CHANGES_KINDS: ChangeKind[] = ["files", "git"];
+
+export function ChangesTab(props: ChangesTabProps) {
+  const { session, files, facts, base, send, onAsk, conflicts: conflictFiles = [], worktreeChanges = {} } = props;
   const worktreePath = session.worktreePath;
-  // Re-read whenever the agent may have changed something: on open and on every status change.
-  useEffect(() => {
-    send({ type: "readChanges", worktreePath });
-  }, [send, worktreePath, session.status]);
+  // Read on open, and again whenever the core says the files or git's records moved.
+  useWorktreeChanged(worktreeChanges, worktreePath, CHANGES_KINDS, () => send({ type: "readChanges", worktreePath }));
 
   const ordered = reviewOrder(files ?? [], facts?.conflicts ?? []);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -233,11 +238,6 @@ export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts
       )}
     </div>
   );
-}
-
-/** How many files the Changes tab lists (its tab count). */
-export function changesCount(files: ChangedFile[] | undefined, facts: WorktreeFacts | undefined): number | undefined {
-  return files && reviewOrder(files, facts?.conflicts ?? []).length;
 }
 
 function commitsReady(ahead: number): string {

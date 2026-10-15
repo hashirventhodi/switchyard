@@ -122,11 +122,20 @@ fn worktree_lifecycle_commands_and_events_use_camel_case() {
 
     let event = Event::WorktreeFactsChanged {
         worktree_path: "/wt/x".into(),
-        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3, conflicts: vec!["src/a.rs".into()] },
+        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3, conflicts: vec!["src/a.rs".into()], changed_files: 3, commits: 1 },
     };
     assert_eq!(
         serde_json::to_value(event).unwrap(),
-        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3, "conflicts": ["src/a.rs"]}})
+        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3, "conflicts": ["src/a.rs"], "changedFiles": 3, "commits": 1}})
+    );
+
+    let changed = Event::WorktreeChanged {
+        worktree_path: "/wt/x".into(),
+        kinds: vec![switchyard_schema::ChangeKind::Files, switchyard_schema::ChangeKind::Git],
+    };
+    assert_eq!(
+        serde_json::to_value(changed).unwrap(),
+        json!({"type": "worktreeChanged", "worktreePath": "/wt/x", "kinds": ["files", "git"]})
     );
 }
 

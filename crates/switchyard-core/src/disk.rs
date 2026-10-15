@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use switchyard_schema::{ChangeKind, Event};
+
 use crate::watcher::{ChangeSink, Watch};
 use crate::{git, sessions, worktrees, Inner};
 
@@ -91,6 +93,15 @@ pub(crate) fn worktree_changed(inner: &mut Inner, worktree_path: &str, kinds: Ki
         config_changed(inner, worktree_path);
     }
     worktrees::refresh_one(inner, worktree_path);
+    signal(inner, worktree_path, kinds);
+}
+
+/// Tell whichever view shows heavy data for the Worktree (Changes, History, Context) to
+/// re-read it. Diffs are computed only when a view asks.
+fn signal(inner: &Inner, worktree_path: &str, kinds: Kinds) {
+    let list = [(kinds.files, ChangeKind::Files), (kinds.git, ChangeKind::Git), (kinds.config, ChangeKind::Config)];
+    let kinds = list.into_iter().filter(|(on, _)| *on).map(|(_, kind)| kind).collect();
+    inner.emit(Event::WorktreeChanged { worktree_path: worktree_path.into(), kinds });
 }
 
 /// Working-tree files changed. Nothing beyond the facts yet.

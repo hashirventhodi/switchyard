@@ -20,4 +20,13 @@ dirty: number,
  * Files a merge of the base branch into this branch would conflict on, from a dry-run
  * merge that never touches the working tree or the index. Empty when not behind.
  */
-conflicts: Array<string>, };
+conflicts: Array<string>, 
+/**
+ * Files the Changes view would list: working-tree changes against the index (renames
+ * paired), untracked files, unmerged files and files in `conflicts`.
+ */
+changedFiles: number, 
+/**
+ * Commits the History view would list: those ahead of the base branch, up to its limit.
+ */
+commits: number, };

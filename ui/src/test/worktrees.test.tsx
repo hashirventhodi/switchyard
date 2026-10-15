@@ -47,8 +47,8 @@ test("the Worktrees view shows a card per worktree from the facts the core pushe
   expect(sent).not.toContainEqual({ type: "refreshWorktrees" });
   act(() =>
     emit(
-      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/fix", facts: { ahead: 2, behind: 0, dirty: 3, conflicts: [] } },
-      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/feat", facts: { ahead: 0, behind: 4, dirty: 0, conflicts: [] } },
+      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/fix", facts: { ahead: 2, behind: 0, dirty: 3, conflicts: [], changedFiles: 3, commits: 2 } },
+      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/feat", facts: { ahead: 0, behind: 4, dirty: 0, conflicts: [], changedFiles: 0, commits: 0 } },
     ),
   );
 

@@ -183,9 +183,20 @@ pub(crate) fn emit_facts(inner: &Inner, path: &Path, base: &str) {
     let (ahead, behind) = git::ahead_behind(path, &base).unwrap_or((0, 0));
     // Not behind means base is already in the branch: nothing to conflict with.
     let conflicts = if behind > 0 { git::conflicting_files(path, &base).unwrap_or_default() } else { Vec::new() };
+    // What Changes lists: the uncommitted files, plus files that conflict with base.
+    let changed_files = match git::changed_paths(path) {
+        Ok(mut list) => {
+            list.extend(conflicts.iter().cloned());
+            list.sort();
+            list.dedup();
+            list.len() as u32
+        }
+        Err(_) => dirty,
+    };
+    let commits = ahead.min(crate::rebase::HISTORY_LIMIT as u32);
     inner.emit(Event::WorktreeFactsChanged {
         worktree_path: path.to_string_lossy().into_owned(),
-        facts: WorktreeFacts { ahead, behind, dirty, conflicts },
+        facts: WorktreeFacts { ahead, behind, dirty, conflicts, changed_files, commits },
     });
 }
 

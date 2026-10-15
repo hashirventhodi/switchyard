@@ -337,9 +337,26 @@ pub fn diff_against_index(dir: &Path) -> Result<String, GitError> {
         "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--full-index", "-M",
         "--src-prefix=a/", "--dst-prefix=b/",
     ];
+    diff_with_untracked(dir, DIFF)
+}
+
+/// The files [`diff_against_index`] and [`unmerged_paths`] together list (renames paired,
+/// by their new path), without computing the patch. Sorted, no duplicates.
+pub fn changed_paths(dir: &Path) -> Result<Vec<String>, GitError> {
+    const NAMES: &[&str] = &["-c", "core.quotePath=false", "diff", "--no-ext-diff", "-M", "--name-only", "-z"];
+    let mut list = nul_list(&diff_with_untracked(dir, NAMES)?);
+    list.extend(unmerged_paths(dir)?);
+    list.sort();
+    list.dedup();
+    Ok(list)
+}
+
+/// Run `git diff` with `args` against the index, untracked files marked intent-to-add in a
+/// throwaway copy of it (the real index is never written).
+fn diff_with_untracked(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     let untracked = nul_list(&git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?);
     if untracked.is_empty() {
-        return git_with(dir, DIFF, &[]);
+        return git_with(dir, args, &[]);
     }
     let scratch = Scratch::new()?;
     let index = scratch.0.join("index");
@@ -351,7 +368,7 @@ pub fn diff_against_index(dir: &Path) -> Result<String, GitError> {
     std::fs::write(&list, untracked.join("\0")).map_err(|e| GitError(e.to_string()))?;
     let list_arg = format!("--pathspec-from-file={}", list.display());
     git_with(dir, &["add", "-N", "--pathspec-file-nul", &list_arg], &[("GIT_INDEX_FILE", &index)])?;
-    git_with(dir, DIFF, &[("GIT_INDEX_FILE", &index)])
+    git_with(dir, args, &[("GIT_INDEX_FILE", &index)])
 }
 
 /// Paths git holds unmerged (a conflict stopped a merge or rebase here).
