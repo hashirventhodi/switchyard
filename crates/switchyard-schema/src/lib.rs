@@ -10,6 +10,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+mod tasks;
+pub use tasks::*;
+
 /// A request from the renderer to the core.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -294,6 +297,58 @@ pub enum Command {
         #[serde(rename = "worktreePath")]
         #[ts(rename = "worktreePath")]
         worktree_path: String,
+    },
+    /// Read a Repository's Tasks from every TaskSource. Answered with [`Event::TasksChanged`].
+    ReadTasks {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Add a local Task to the Repository's To do column. `checklist` lists its sub-steps.
+    /// Answered with [`Event::TaskCreated`] and [`Event::TasksChanged`].
+    CreateTask {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        title: String,
+        description: String,
+        kind: TaskKind,
+        checklist: Vec<String>,
+    },
+    /// Tick (or untick) checklist item `item` (0-based) of a Task. Kept in Switchyard's
+    /// store only; never written to the task's tracker.
+    TickTask {
+        #[serde(rename = "taskId")]
+        #[ts(rename = "taskId")]
+        task_id: String,
+        item: u32,
+        done: bool,
+    },
+    /// Link a Session to a Task (`null`: unlink it). A Session links to at most one Task;
+    /// replacing its link is refused unless `relink` says the user chose to. Linking moves
+    /// a To do task to In progress. Answered with [`Event::TaskLinked`].
+    LinkTask {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "taskId")]
+        #[ts(rename = "taskId")]
+        task_id: Option<String>,
+        relink: bool,
+    },
+    /// "Assign to agent": start a Session for a Task, as [`Command::StartSession`],
+    /// [`Command::StartSessionOnNewWorktree`] or [`Command::ReplaceSession`] would on
+    /// `target`, and link it to the Task (which moves to In progress).
+    StartTaskSession {
+        #[serde(rename = "taskId")]
+        #[ts(rename = "taskId")]
+        task_id: String,
+        target: TaskSessionTarget,
+        agent: AgentKind,
+        #[serde(rename = "permissionMode")]
+        #[ts(rename = "permissionMode")]
+        permission_mode: PermissionMode,
+        prompt: String,
     },
 }
 
@@ -585,6 +640,29 @@ pub enum Event {
         #[ts(rename = "repositoryId")]
         repository_id: String,
         branches: Vec<String>,
+    },
+    /// Every Task of a Repository, from every TaskSource (replaces the earlier list), and
+    /// the house rules a session's prompt for one of them carries.
+    TasksChanged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        tasks: Vec<Task>,
+        #[serde(rename = "houseRules")]
+        #[ts(rename = "houseRules")]
+        house_rules: String,
+    },
+    /// The user added a local Task.
+    TaskCreated { task: Task },
+    /// The Task a Session is linked to (`null`: none), replacing the earlier link. Replayed
+    /// on attach for every linked Session, live or archived.
+    TaskLinked {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "taskId")]
+        #[ts(rename = "taskId")]
+        task_id: Option<String>,
     },
 }
 

@@ -22,6 +22,7 @@ mod shells;
 pub mod sidecar;
 mod spend;
 mod store;
+mod tasks;
 mod worktrees;
 
 use std::path::{Path, PathBuf};
@@ -226,6 +227,17 @@ impl Core {
             Command::OpenPullRequest { worktree_path } => forge::open_pull_request(&mut inner, &worktree_path),
             Command::PruneMerged { repository_id } => forge::prune(&mut inner, &repository_id),
             Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),
+            Command::ReadTasks { repository_id } => tasks::read(&inner, &repository_id),
+            Command::CreateTask { repository_id, title, description, kind, checklist } => {
+                tasks::create(&inner, &repository_id, tasks::NewTask { title, description, kind, checklist })
+            }
+            Command::TickTask { task_id, item, done } => tasks::tick(&inner, &task_id, item, done),
+            Command::LinkTask { session_id, task_id, relink } => {
+                tasks::link(&inner, &session_id, task_id.as_deref(), relink)
+            }
+            Command::StartTaskSession { task_id, target, agent, permission_mode, prompt } => {
+                tasks::start_session(&mut inner, &self.inner, &task_id, target, agent, permission_mode, &prompt)
+            }
         }
         sessions::flush(&mut inner);
     }
@@ -257,6 +269,7 @@ impl Inner {
         sessions::replay(self);
         shells::replay(self);
         forge::replay_pull_requests(self);
+        tasks::replay_links(self);
     }
 
     fn add_repository(&mut self, path: &str) {
