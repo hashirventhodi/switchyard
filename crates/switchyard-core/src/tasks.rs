@@ -231,23 +231,29 @@ pub(crate) fn read(inner: &Inner, repository_id: &str) {
 /// [`Command::SyncTasks`](switchyard_schema::Command::SyncTasks): read the repository's
 /// issues through the Forge (nothing is written), then announce the board. When the Forge
 /// cannot be used the board stays as last synced and the refusal says why.
-pub(crate) fn sync(inner: &mut Inner, repository_id: &str) {
+pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     const COMMAND: &str = "syncTasks";
-    let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    let (repo, dir, forge) = {
+        let inner = core.lock().expect("core lock");
+        let Some(repo) = worktrees::repository(&inner, repository_id) else {
+            return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+        };
+        let dir = Path::new(&repo.path).to_path_buf();
+        if git::remote(&dir).is_none() {
+            announce(&inner, COMMAND, &repo);
+            let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| repo.path.clone());
+            return inner.refuse(COMMAND, format!("{name} has no remote, so no GitHub issues; its tasks are local"));
+        }
+        (repo, dir, inner.runtime.forge.clone())
     };
-    let dir = Path::new(&repo.path).to_path_buf();
-    if git::remote(&dir).is_none() {
-        announce(inner, COMMAND, &repo);
-        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| repo.path.clone());
-        return inner.refuse(COMMAND, format!("{name} has no remote, so no GitHub issues; its tasks are local"));
-    }
-    let read = forge::admit(inner).and_then(|()| inner.runtime.forge.issues(&dir));
+    // `gh` runs without holding the core.
+    let read = forge::admit(core).and_then(|()| forge.issues(&dir));
+    let inner = core.lock().expect("core lock");
     let failed = match read {
         Ok(issues) => github::save(inner.store.db(), &repo.id, &issues).err(),
         Err(reason) => Some(reason),
     };
-    announce(inner, COMMAND, &repo);
+    announce(&inner, COMMAND, &repo);
     if let Some(reason) = failed {
         inner.refuse(COMMAND, format!("Could not sync GitHub issues: {reason}"));
     }

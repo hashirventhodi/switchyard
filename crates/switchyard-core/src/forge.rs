@@ -93,6 +93,9 @@ pub(crate) struct Tracker {
     setup: Option<ForgeSetup>,
     /// By worktree path.
     tracks: HashMap<String, Track>,
+    /// Worktrees whose pull request is being opened right now (the push and `gh` run
+    /// without holding the core).
+    opening: HashSet<String>,
 }
 
 struct Track {
@@ -141,10 +144,30 @@ pub(crate) fn replay_pull_requests(inner: &Inner) {
     }
 }
 
+/// Detect the Forge without holding the core: `gh auth status` may wait on the network.
+fn detect_unlocked(core: &Arc<Mutex<Inner>>) -> ForgeSetup {
+    let forge = core.lock().expect("core lock").runtime.forge.clone();
+    forge.detect()
+}
+
+/// Detect the Forge (without holding the core) unless it has been already: before attach
+/// and the first poll.
+pub(crate) fn detect_if_unknown(core: &Arc<Mutex<Inner>>) {
+    if core.lock().expect("core lock").forge.setup.is_some() {
+        return;
+    }
+    let setup = detect_unlocked(core);
+    let mut inner = core.lock().expect("core lock");
+    if inner.forge.setup.is_none() {
+        inner.forge.setup = Some(setup);
+    }
+}
+
 /// [`Command::CheckForge`](switchyard_schema::Command::CheckForge).
-pub(crate) fn check(inner: &mut Inner) {
-    detect(inner);
-    let forge = inner.forge.setup.clone().expect("just detected");
+pub(crate) fn check(core: &Arc<Mutex<Inner>>) {
+    let forge = detect_unlocked(core);
+    let mut inner = core.lock().expect("core lock");
+    inner.forge.setup = Some(forge.clone());
     inner.emit(Event::ForgeChecked { forge });
 }
 
@@ -153,14 +176,16 @@ fn detect(inner: &mut Inner) {
 }
 
 /// Can the Forge be used? Detects again every time (the user may have installed, signed in
-/// or signed out since), announcing a change. `Err` is the reason for the user.
-pub(crate) fn admit(inner: &mut Inner) -> Result<(), String> {
-    let before = inner.forge.setup.clone();
-    detect(inner);
-    if inner.forge.setup != before {
-        inner.emit(Event::ForgeChecked { forge: inner.forge.setup.clone().expect("just detected") });
+/// or signed out since) without holding the core, announcing a change. `Err` is the
+/// reason for the user.
+pub(crate) fn admit(core: &Arc<Mutex<Inner>>) -> Result<(), String> {
+    let setup = detect_unlocked(core);
+    let mut inner = core.lock().expect("core lock");
+    if inner.forge.setup.as_ref() != Some(&setup) {
+        inner.emit(Event::ForgeChecked { forge: setup.clone() });
     }
-    match &inner.forge.setup.as_ref().expect("detected").state {
+    inner.forge.setup = Some(setup.clone());
+    match setup.state {
         ForgeSetupState::Ready { .. } => Ok(()),
         ForgeSetupState::Missing { install_hint, .. } => {
             Err(format!("GitHub CLI (gh) is not installed; install it ({install_hint}) to open pull requests"))
@@ -205,60 +230,104 @@ fn uncommitted(n: u32) -> (String, &'static str) {
     (plural(n, "uncommitted file", "uncommitted files"), if n == 1 { "it" } else { "them" })
 }
 
-pub(crate) fn open_pull_request(inner: &mut Inner, worktree_path: &str) {
-    const COMMAND: &str = "openPullRequest";
+const OPEN_PULL_REQUEST: &str = "openPullRequest";
+
+/// What opening a pull request needs, read while holding the core.
+struct Opening {
+    path: PathBuf,
+    branch: String,
+    remote: String,
+    base: String,
+}
+
+/// [`Command::OpenPullRequest`](switchyard_schema::Command::OpenPullRequest): checked while
+/// holding the core; the push and `gh` run without it.
+pub(crate) fn open_pull_request(core: &Arc<Mutex<Inner>>, worktree_path: &str) {
+    let opening = {
+        let mut inner = core.lock().expect("core lock");
+        match prepare_opening(&inner, worktree_path) {
+            Ok(opening) => {
+                inner.forge.opening.insert(worktree_path.to_string());
+                opening
+            }
+            Err(reason) => return inner.refuse(OPEN_PULL_REQUEST, reason),
+        }
+    };
+    let opened = open_unlocked(core, &opening);
+    let mut inner = core.lock().expect("core lock");
+    inner.forge.opening.remove(worktree_path);
+    match opened {
+        Ok(opened) => {
+            let pull_request = opened.pull_request.clone();
+            inner.forge.tracks.insert(worktree_path.to_string(), Track { pull_request: Some(opened), ..Track::default() });
+            inner.emit(Event::PullRequestOpened { worktree_path: worktree_path.into(), pull_request: pull_request.clone() });
+            inner.emit(Event::PullRequestChanged { worktree_path: worktree_path.into(), pull_request: Some(pull_request) });
+            tasks::pull_request_open(&inner, worktree_path, &opening.branch);
+        }
+        Err(reason) => inner.refuse(OPEN_PULL_REQUEST, reason),
+    }
+    sessions::flush(&mut inner);
+}
+
+fn prepare_opening(inner: &Inner, worktree_path: &str) -> Result<Opening, String> {
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
-        return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
+        return Err(format!("{worktree_path} is not a worktree of an added repository"));
     };
     let Some(branch) = worktree.branch.clone() else {
-        return inner.refuse(COMMAND, format!("{worktree_path} has no branch checked out (detached HEAD)"));
+        return Err(format!("{worktree_path} has no branch checked out (detached HEAD)"));
     };
     if worktree.primary {
-        return inner.refuse(COMMAND, format!("{branch} is the primary worktree; open pull requests from a branch worktree"));
+        return Err(format!("{branch} is the primary worktree; open pull requests from a branch worktree"));
     }
     let Some(remote) = git::remote(Path::new(&repo.path)) else {
-        return inner.refuse(COMMAND, format!("{branch}'s repository has no remote; use Local merge instead"));
+        return Err(format!("{branch}'s repository has no remote; use Local merge instead"));
     };
     let Some(base) = base_of(Path::new(&repo.path)) else {
-        return inner.refuse(COMMAND, format!("{} is no longer a readable git repository", repo.path));
+        return Err(format!("{} is no longer a readable git repository", repo.path));
     };
     match git::dirty_count(&worktree.path) {
         Ok(0) => {}
         Ok(n) => {
             let (files, them) = uncommitted(n);
-            return inner.refuse(COMMAND, format!("{branch} has {files}; commit {them} before opening a pull request"));
+            return Err(format!("{branch} has {files}; commit {them} before opening a pull request"));
         }
-        Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {branch}: {e}")),
+        Err(git::GitError(e)) => return Err(format!("git could not read {branch}: {e}")),
     }
     let onto = git::base_ref(&worktree.path, &base);
     let (ahead, behind) = git::ahead_behind(&worktree.path, &onto).unwrap_or((0, 0));
     if behind > 0 {
         let commits = plural(behind, "commit", "commits");
-        return inner.refuse(COMMAND, format!("{branch} is {commits} behind {base}; rebase before opening a pull request"));
+        return Err(format!("{branch} is {commits} behind {base}; rebase before opening a pull request"));
     }
     if ahead == 0 {
-        return inner.refuse(COMMAND, format!("{branch} has no commits above {base}; commit the work first"));
+        return Err(format!("{branch} has no commits above {base}; commit the work first"));
     }
-    if let Err(reason) = admit(inner) {
-        return inner.refuse(COMMAND, reason);
+    if inner.forge.opening.contains(worktree_path) {
+        return Err(format!("A pull request is already being opened for {branch}"));
     }
     if let Some(open) = inner.forge.tracks.get(worktree_path).and_then(|t| t.pull_request.as_ref()) {
         if open.pull_request.state == PullRequestState::Open {
             let n = open.pull_request.number;
-            return inner.refuse(COMMAND, format!("PR #{n} is already open for {branch}"));
+            return Err(format!("PR #{n} is already open for {branch}"));
         }
     }
-    if let Err(git::GitError(e)) = git::push(&worktree.path, &remote, &branch) {
-        return inner.refuse(COMMAND, format!("Could not push {branch} to {remote}: {e}"));
+    Ok(Opening { path: worktree.path, branch, remote, base })
+}
+
+/// Detect, push and open, without holding the core.
+fn open_unlocked(core: &Arc<Mutex<Inner>>, o: &Opening) -> Result<ForgePullRequest, String> {
+    admit(core)?;
+    let forge = core.lock().expect("core lock").runtime.forge.clone();
+    let Opening { path, branch, remote, base } = o;
+    if let Err(git::GitError(e)) = git::push(path, remote, branch) {
+        return Err(format!("Could not push {branch} to {remote}: {e}"));
     }
-    let forge = inner.runtime.forge.clone();
-    let url = match forge.create_pull_request(&worktree.path, &base, &branch) {
-        Ok(url) => url,
-        Err(e) => return inner.refuse(COMMAND, format!("{branch} was pushed, but the pull request could not be opened: {e}")),
-    };
+    let url = forge
+        .create_pull_request(path, base, branch)
+        .map_err(|e| format!("{branch} was pushed, but the pull request could not be opened: {e}"))?;
     // Read it back for its checks and review; fall back to what the address says.
-    let found = forge.pull_request(&worktree.path, &branch).ok().flatten().filter(|p| p.pull_request.url == url);
-    let opened = found.unwrap_or_else(|| ForgePullRequest {
+    let found = forge.pull_request(path, branch).ok().flatten().filter(|p| p.pull_request.url == url);
+    Ok(found.unwrap_or_else(|| ForgePullRequest {
         pull_request: PullRequest {
             number: url.rsplit('/').next().and_then(|n| n.parse().ok()).unwrap_or(0),
             url: url.clone(),
@@ -269,15 +338,7 @@ pub(crate) fn open_pull_request(inner: &mut Inner, worktree_path: &str) {
             review: ReviewState::None,
         },
         head_oid: String::new(),
-    });
-    let pull_request = opened.pull_request.clone();
-    inner.forge.tracks.insert(
-        worktree_path.to_string(),
-        Track { pull_request: Some(opened), ..Track::default() },
-    );
-    inner.emit(Event::PullRequestOpened { worktree_path: worktree_path.into(), pull_request: pull_request.clone() });
-    inner.emit(Event::PullRequestChanged { worktree_path: worktree_path.into(), pull_request: Some(pull_request) });
-    tasks::pull_request_open(inner, worktree_path, &branch);
+    }))
 }
 
 /// A worktree branch due a poll.
@@ -288,22 +349,31 @@ struct Due {
     base: String,
 }
 
-/// One tick: poll every worktree whose turn it is, without holding the core while `gh` runs.
+/// A worktree branch of a repository with a remote, as git lists it.
+struct Candidate {
+    repository_id: String,
+    path: PathBuf,
+    branch: String,
+    base: String,
+}
+
+/// One tick: poll every worktree whose turn it is. Git and `gh` run without holding the
+/// core; it is held only to pick who is due and to take in the answers.
 pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
-    let (forge, due) = {
-        let mut inner = core.lock().expect("core lock");
-        if inner.forge.setup.is_none() {
-            detect(&mut inner);
-        }
+    detect_if_unknown(core);
+    let (forge, repos) = {
+        let inner = core.lock().expect("core lock");
         if !matches!(inner.forge.setup, Some(ForgeSetup { state: ForgeSetupState::Ready { .. }, .. })) {
             return;
         }
-        (inner.runtime.forge.clone(), due(&mut inner))
+        (inner.runtime.forge.clone(), inner.store.repositories().unwrap_or_default())
     };
+    let candidates = candidates(&repos);
+    let due = due(&mut core.lock().expect("core lock"), candidates);
     let results: Vec<_> = due
         .into_iter()
         .map(|d| {
-            let found = forge.pull_request(&d.path, &d.branch);
+            let found = forge.pull_request(&d.path, &d.branch).map(|f| f.filter(|f| belongs(&d.path, f)));
             (d, found)
         })
         .collect();
@@ -314,12 +384,9 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
     sessions::flush(&mut inner);
 }
 
-/// The worktree branches to poll on this tick; counts down the others. Forgets worktrees
-/// that are gone.
-fn due(inner: &mut Inner) -> Vec<Due> {
+/// Every branch worktree of every repository with a remote (runs git; hold nothing).
+fn candidates(repos: &[crate::store::StoredRepository]) -> Vec<Candidate> {
     let mut list = Vec::new();
-    let mut seen = HashSet::new();
-    let repos = inner.store.repositories().unwrap_or_default();
     for repo in repos {
         let dir = Path::new(&repo.path);
         if git::remote(dir).is_none() {
@@ -329,18 +396,29 @@ fn due(inner: &mut Inner) -> Vec<Due> {
         let Some(base) = worktrees.first().map(|p| git::base_branch(dir, p)) else { continue };
         for wt in worktrees.into_iter().filter(|w| !w.primary) {
             let Some(branch) = wt.branch else { continue };
-            let key = wt.path.to_string_lossy().into_owned();
-            seen.insert(key.clone());
-            let track = inner.forge.tracks.entry(key).or_default();
-            if track.stopped {
-                continue;
-            }
-            if track.wait > 0 {
-                track.wait -= 1;
-                continue;
-            }
-            list.push(Due { repository_id: repo.id.clone(), path: wt.path, branch, base: base.clone() });
+            list.push(Candidate { repository_id: repo.id.clone(), path: wt.path, branch, base: base.clone() });
         }
+    }
+    list
+}
+
+/// The candidates to poll on this tick; counts down the others. Forgets worktrees that are
+/// gone.
+fn due(inner: &mut Inner, candidates: Vec<Candidate>) -> Vec<Due> {
+    let mut list = Vec::new();
+    let mut seen = HashSet::new();
+    for c in candidates {
+        let key = c.path.to_string_lossy().into_owned();
+        seen.insert(key.clone());
+        let track = inner.forge.tracks.entry(key).or_default();
+        if track.stopped {
+            continue;
+        }
+        if track.wait > 0 {
+            track.wait -= 1;
+            continue;
+        }
+        list.push(Due { repository_id: c.repository_id, path: c.path, branch: c.branch, base: c.base });
     }
     inner.forge.tracks.retain(|path, _| seen.contains(path));
     list
@@ -361,7 +439,6 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
         // The Forge could not answer (offline, say): try again later.
         return track.polled(false);
     };
-    let found = found.filter(|f| belongs(&due.path, f));
     let before = track.pull_request.as_ref().map(|p| &p.pull_request);
     let changed = before != found.as_ref().map(|p| &p.pull_request);
     track.polled(changed);
@@ -406,39 +483,63 @@ fn merged(inner: &mut Inner, due: &Due, pull_request: Option<(u32, &str)>) {
 }
 
 /// [`Command::PruneMerged`](switchyard_schema::Command::PruneMerged): asks the Forge about
-/// every free, clean worktree of the repository and removes the Merged ones.
-pub(crate) fn prune(inner: &mut Inner, repository_id: &str) {
+/// every free, clean worktree of the repository and removes the Merged ones. The Forge is
+/// asked without holding the core; who is free and clean is checked again before removing.
+pub(crate) fn prune(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     const COMMAND: &str = "pruneMerged";
-    let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    let repo = {
+        let inner = core.lock().expect("core lock");
+        let Some(repo) = worktrees::repository(&inner, repository_id) else {
+            return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+        };
+        if git::remote(Path::new(&repo.path)).is_none() {
+            return inner.refuse(COMMAND, "This repository has no remote; nothing is merged on a Forge".into());
+        }
+        repo
     };
-    let dir = Path::new(&repo.path);
-    if git::remote(dir).is_none() {
-        return inner.refuse(COMMAND, "This repository has no remote; nothing is merged on a Forge".into());
+    if let Err(reason) = admit(core) {
+        return core.lock().expect("core lock").refuse(COMMAND, reason);
     }
-    if let Err(reason) = admit(inner) {
-        return inner.refuse(COMMAND, reason);
-    }
-    let list = git::worktrees(dir).unwrap_or_default();
-    let forge = inner.runtime.forge.clone();
+    let (forge, free) = {
+        let inner = core.lock().expect("core lock");
+        let list = git::worktrees(Path::new(&repo.path)).unwrap_or_default();
+        let free: Vec<_> = list
+            .into_iter()
+            .filter(|w| !w.primary)
+            .filter_map(|w| Some((w.branch.clone()?, w.path)))
+            .filter(|(_, path)| is_free_and_clean(&inner, path))
+            .collect();
+        (inner.runtime.forge.clone(), free)
+    };
+    let merged: Vec<_> = free
+        .into_iter()
+        .filter_map(|(branch, path)| {
+            let found = forge.pull_request(&path, &branch).ok().flatten()?;
+            let merged = found.pull_request.state == PullRequestState::Merged && belongs(&path, &found);
+            merged.then_some((branch, path, found.pull_request.url))
+        })
+        .collect();
+    let mut inner = core.lock().expect("core lock");
     let mut branches = Vec::new();
-    for wt in list.into_iter().filter(|w| !w.primary) {
-        let Some(branch) = wt.branch else { continue };
-        let path = wt.path.to_string_lossy().into_owned();
-        let at_work = matches!(sessions::occupant(inner, &path), Some(SessionStatus::Running | SessionStatus::Waiting));
-        if at_work || !matches!(git::dirty_count(&wt.path), Ok(0)) {
+    for (branch, path, url) in merged {
+        if !is_free_and_clean(&inner, &path) {
             continue;
         }
-        let Ok(Some(found)) = forge.pull_request(&wt.path, &branch) else { continue };
-        if found.pull_request.state != PullRequestState::Merged || !belongs(&wt.path, &found) {
-            continue;
-        }
-        tasks::merged(inner, &path, &branch, Some(&found.pull_request.url));
-        if worktrees::try_remove(inner, &path).is_ok() {
+        let key = path.to_string_lossy().into_owned();
+        tasks::merged(&inner, &key, &branch, Some(&url));
+        if worktrees::try_remove(&mut inner, &key).is_ok() {
             branches.push(branch);
         }
     }
     inner.emit(Event::MergedPruned { repository_id: repo.id, branches });
+    sessions::flush(&mut inner);
+}
+
+/// No agent at work in it and nothing uncommitted.
+fn is_free_and_clean(inner: &Inner, path: &Path) -> bool {
+    let key = path.to_string_lossy();
+    let at_work = matches!(sessions::occupant(inner, &key), Some(SessionStatus::Running | SessionStatus::Waiting));
+    !at_work && matches!(git::dirty_count(path), Ok(0))
 }
 
 /// [`Command::LocalMerge`](switchyard_schema::Command::LocalMerge): only for a repository

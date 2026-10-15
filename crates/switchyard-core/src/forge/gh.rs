@@ -2,18 +2,34 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
+use std::time::Duration;
 
 use serde::Deserialize;
 use switchyard_schema::{Check, CheckStatus, ChecksState, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState};
 
 use super::{Forge, ForgeIssue, ForgePullRequest};
+use crate::subprocess;
 
 /// Runs `program` as `gh`. The app finds it with [`GhForge::find`]; tests point it at a fake.
 pub struct GhForge {
     pub program: PathBuf,
+    /// How long one `gh` call may take before it is given up on (it may be waiting on a
+    /// network that will never answer).
+    pub timeout: Duration,
 }
 
+/// How long the app waits for one `gh` call.
+pub const GH_TIMEOUT: Duration = Duration::from_secs(60);
+
 impl GhForge {
+    pub fn new(program: PathBuf) -> GhForge {
+        GhForge { program, timeout: GH_TIMEOUT }
+    }
+
+    pub fn with_timeout(self, timeout: Duration) -> GhForge {
+        GhForge { timeout, ..self }
+    }
+
     /// `gh` on PATH or in the usual install places (apps launched from Finder get a short
     /// PATH); plain `gh` when it is nowhere, which detection then reports as missing.
     pub fn find() -> GhForge {
@@ -23,10 +39,10 @@ impl GhForge {
             .map(|dir| dir.join("gh"))
             .find(|p| p.is_file())
             .unwrap_or_else(|| PathBuf::from("gh"));
-        GhForge { program }
+        GhForge::new(program)
     }
 
-    fn run(&self, dir: Option<&Path>, args: &[&str]) -> std::io::Result<std::process::Output> {
+    fn run(&self, dir: Option<&Path>, args: &[&str]) -> Result<std::process::Output, String> {
         let mut cmd = Process::new(&self.program);
         cmd.args(args)
             .env("GH_PROMPT_DISABLED", "1")
@@ -35,11 +51,15 @@ impl GhForge {
         if let Some(dir) = dir {
             cmd.current_dir(dir);
         }
-        cmd.output()
+        match subprocess::output_within(&mut cmd, self.timeout) {
+            Ok(Some(out)) => Ok(out),
+            Ok(None) => Err(format!("gh did not answer within {}", subprocess::describe(self.timeout))),
+            Err(e) => Err(format!("could not run gh: {e}")),
+        }
     }
 
     fn run_ok(&self, dir: &Path, args: &[&str]) -> Result<String, String> {
-        let out = self.run(Some(dir), args).map_err(|e| format!("could not run gh: {e}"))?;
+        let out = self.run(Some(dir), args)?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {

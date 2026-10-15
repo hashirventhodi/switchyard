@@ -23,6 +23,11 @@ const SCRIPT: &str = r#"#!/bin/sh
 state="@STATE@"
 for a in "$@"; do printf '%s\037' "$a"; done >> "$state/calls"
 printf '\n' >> "$state/calls"
+hold="$state/hold-$1-$2"
+if [ -f "$hold" ]; then
+  touch "$state/held-$1-$2"
+  while [ -f "$hold" ]; do sleep 0.02; done
+fi
 head=""
 prev=""
 for a in "$@"; do
@@ -106,6 +111,26 @@ impl FakeGh {
     /// `pr create` fails with `message` on stderr.
     pub fn fail_create(&self, message: &str) {
         std::fs::write(self.state().join("create-fails"), message).unwrap();
+    }
+
+    /// From now on `gh <verb>` waits (after logging the call) until `release(verb)`: a slow
+    /// network, under the test's control.
+    pub fn hold(&self, verb: [&str; 2]) {
+        std::fs::write(self.state().join(format!("hold-{}-{}", verb[0], verb[1])), "").unwrap();
+    }
+
+    /// Wait until a `gh <verb>` is waiting on `hold` (panics after 20 s).
+    pub fn wait_until_held(&self, verb: [&str; 2]) {
+        let held = self.state().join(format!("held-{}-{}", verb[0], verb[1]));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !held.exists() {
+            assert!(std::time::Instant::now() < deadline, "gh {} {} never ran", verb[0], verb[1]);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    pub fn release(&self, verb: [&str; 2]) {
+        let _ = std::fs::remove_file(self.state().join(format!("hold-{}-{}", verb[0], verb[1])));
     }
 
     /// Every invocation so far, as argument lists.

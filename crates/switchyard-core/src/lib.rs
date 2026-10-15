@@ -24,6 +24,7 @@ mod shells;
 pub mod sidecar;
 mod spend;
 mod store;
+mod subprocess;
 mod tasks;
 mod worktrees;
 
@@ -172,7 +173,18 @@ impl Core {
         self.inner.lock().expect("core lock").shells.set_program(ShellProgram { program, args });
     }
 
-    pub fn dispatch(&mut self, command: Command) {
+    /// Handle one command. Commands that wait on the network (the Forge: `gh`, `git push`)
+    /// hold the core only while they read or change its state, so agent output, shells and
+    /// other commands carry on meanwhile; `dispatch` may be called from several threads.
+    pub fn dispatch(&self, command: Command) {
+        match command {
+            Command::OpenPullRequest { worktree_path } => return forge::open_pull_request(&self.inner, &worktree_path),
+            Command::PruneMerged { repository_id } => return forge::prune(&self.inner, &repository_id),
+            Command::CheckForge => return forge::check(&self.inner),
+            Command::SyncTasks { repository_id } => return tasks::sync(&self.inner, &repository_id),
+            Command::Attach => forge::detect_if_unknown(&self.inner),
+            _ => {}
+        }
         let mut inner = self.inner.lock().expect("core lock");
         match command {
             Command::Attach => inner.attach(),
@@ -239,12 +251,11 @@ impl Core {
             Command::SetSecretValue { repository_id, name, value } => {
                 secrets::set_value(&mut inner, &repository_id, &name, &value)
             }
-            Command::CheckForge => forge::check(&mut inner),
-            Command::OpenPullRequest { worktree_path } => forge::open_pull_request(&mut inner, &worktree_path),
-            Command::PruneMerged { repository_id } => forge::prune(&mut inner, &repository_id),
+            Command::CheckForge | Command::OpenPullRequest { .. } | Command::PruneMerged { .. } | Command::SyncTasks { .. } => {
+                unreachable!("handled above without holding the core")
+            }
             Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),
             Command::ReadTasks { repository_id } => tasks::read(&inner, &repository_id),
-            Command::SyncTasks { repository_id } => tasks::sync(&mut inner, &repository_id),
             Command::CreateTask { repository_id, title, description, kind, checklist } => {
                 tasks::create(&inner, &repository_id, tasks::NewTask { title, description, kind, checklist })
             }

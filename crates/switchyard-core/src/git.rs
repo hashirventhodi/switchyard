@@ -339,10 +339,23 @@ pub fn remote(dir: &Path) -> Option<String> {
 }
 
 /// `git push --set-upstream <remote> <branch>` from the worktree at `dir`. Never forced.
+/// Given up on after [`PUSH_TIMEOUT`]; never prompts for credentials.
 pub fn push(dir: &Path, remote: &str, branch: &str) -> Result<(), GitError> {
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    git(dir, &["push", "--quiet", "--set-upstream", remote, &refspec]).map(|_| ())
+    let mut cmd = Command::new("git");
+    cmd.args(["push", "--quiet", "--set-upstream", remote, &refspec])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .current_dir(dir);
+    match crate::subprocess::output_within(&mut cmd, PUSH_TIMEOUT) {
+        Ok(Some(out)) if out.status.success() => Ok(()),
+        Ok(Some(out)) => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
+        Ok(None) => Err(GitError(format!("git push did not finish within {}", crate::subprocess::describe(PUSH_TIMEOUT)))),
+        Err(e) => Err(GitError(format!("could not run git: {e}"))),
+    }
 }
+
+/// How long a push may take.
+pub const PUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// True when `ancestor` is `descendant` or one of its ancestors (both must be known here).
 pub fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> bool {
