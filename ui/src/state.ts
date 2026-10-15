@@ -1,6 +1,8 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
 import type { AgentSetup } from "./schema/AgentSetup";
+import type { ArchivedSession } from "./schema/ArchivedSession";
+import type { Settings } from "./schema/Settings";
 import type { ChangedFile } from "./schema/ChangedFile";
 import type { Entry } from "./schema/Entry";
 import type { Policy } from "./schema/Policy";
@@ -73,6 +75,12 @@ export interface State {
   history: Record<string, WorktreeHistory>;
   /** Each Repository's resolved Policy, by repository id, once the core has sent it. */
   policies: Record<string, Policy>;
+  /** Archived Sessions by repository id, oldest first. */
+  archived: Record<string, ArchivedSession[]>;
+  /** The archived transcript last read (the open reader), if any. */
+  archivedTranscript: { sessionId: string; entries: Entry[] } | null;
+  /** The user settings the core keeps; null until it reports them. */
+  settings: Settings | null;
 }
 
 export interface WorktreeHistory {
@@ -92,6 +100,9 @@ export const initialState: State = {
   changes: {},
   history: {},
   policies: {},
+  archived: {},
+  archivedTranscript: null,
+  settings: null,
 };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
@@ -113,6 +124,8 @@ export function reduce(state: State, event: Event): State {
         shells: [],
         requests: {},
         toasts: state.toasts.filter((t) => !t.request),
+        archived: {},
+        archivedTranscript: null,
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -202,6 +215,30 @@ export function reduce(state: State, event: Event): State {
       const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})`;
       return resultToast(state, text, "ok");
     }
+    case "sessionArchived": {
+      const { session } = event.archived;
+      const { [session.id]: _gone, ...sessions } = state.sessions;
+      const { [session.id]: _requests, ...requests } = state.requests;
+      const list = (state.archived[session.repositoryId] ?? []).filter((a) => a.session.id !== session.id);
+      return {
+        ...state,
+        sessions,
+        requests,
+        toasts: state.toasts.filter((t) => t.request?.sessionId !== session.id),
+        archived: { ...state.archived, [session.repositoryId]: [...list, event.archived] },
+      };
+    }
+    case "archivedSessionPruned": {
+      const list = (state.archived[event.repositoryId] ?? []).filter((a) => a.session.id !== event.sessionId);
+      const reader = state.archivedTranscript?.sessionId === event.sessionId ? null : state.archivedTranscript;
+      return { ...state, archived: { ...state.archived, [event.repositoryId]: list }, archivedTranscript: reader };
+    }
+    case "archivedTranscript":
+      return { ...state, archivedTranscript: { sessionId: event.sessionId, entries: event.entries } };
+    case "transcriptExported":
+      return resultToast(state, `Exported the transcript to ${event.path}`, "ok");
+    case "settingsChanged":
+      return { ...state, settings: event.settings };
     case "policyChanged":
       return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
   }

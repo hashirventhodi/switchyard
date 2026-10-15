@@ -77,7 +77,7 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   const prompts = new Pushable<SDKUserMessage>();
   // The query starts with the first command: a resume (the CLI reloads that conversation)
   // or the first prompt. A session that never gets a command never starts the CLI.
-  let q: Query | null = null;
+  let q = null as Query | null;
   let started: (q: Query | null) => void = () => {};
   const ready = new Promise<Query | null>((resolve) => (started = resolve));
   const start = (resume?: string) => {
