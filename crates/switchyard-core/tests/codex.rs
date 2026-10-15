@@ -26,7 +26,8 @@ fn setup_with(policy: Option<&str>) -> Setup {
     }
     let worktrees = vec![repo.add_worktree("feat/billing"), repo.add_worktree("fix/readme")];
     let mut core = Harness::launch();
-    added_repository(&core.add_repository(&repo.path));
+    let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    core.acknowledge_policy(&repo_id);
     Setup { core, _repo: repo, worktrees }
 }
 
@@ -284,7 +285,10 @@ fn a_codex_session_is_given_the_repositorys_mcp_servers_and_reports_their_state(
     .unwrap();
     let worktree = repo.add_worktree("feat/docs");
     let mut core = Harness::launch();
-    core.add_repository(&repo.path);
+    let repository_id = added_repository(&core.add_repository(&repo.path)).id;
+    for name in ["docs", "search"] {
+        core.send(Command::EnableMcpServer { repository_id: repository_id.clone(), name: name.into() });
+    }
     start(&mut core, &worktree, AgentKind::Codex, PermissionMode::AskFirst, "Look up the billing docs.");
     let names: Vec<String> = core.agents.launches()[0].mcp_servers.iter().map(|s| s.name.clone()).collect();
     assert_eq!(names, vec!["docs".to_string(), "search".into()]);
@@ -308,4 +312,63 @@ fn a_codex_session_is_given_the_repositorys_mcp_servers_and_reports_their_state(
             ("search".into(), switchyard_schema::McpState::Failed, Some("HTTP 401 Unauthorized".into())),
         ]
     );
+}
+
+fn asks(id: &str, request: adapter_protocol::RequestDetail) -> AgentEvent {
+    AgentEvent::PermissionRequest { request_id: id.into(), request, reason: None }
+}
+
+fn command(text: &str) -> adapter_protocol::RequestDetail {
+    adapter_protocol::RequestDetail::Command { command: text.into(), cwd: None }
+}
+
+/// Codex in Auto edit asks for every command it does not trust (approval policy
+/// `untrusted`), so Switchyard sees them all: it answers ordinary commands and edits by the
+/// mode, and only dangerous ones reach the user.
+#[test]
+fn codex_auto_edit_lets_ordinary_commands_and_edits_run_but_a_dangerous_command_asks() {
+    let mut s = setup();
+    let wt = s.worktrees[0].clone();
+    let id = start(&mut s.core, &wt, AgentKind::Codex, PermissionMode::AutoEdit, "Tidy the build.");
+    s.core.agent_says(0, thread_init("thr-1", adapter_protocol::PermissionMode::AutoEdit, "untrusted / workspace-write"));
+
+    let events = s.core.agent_says(0, asks("1", command("npm test")));
+    assert!(statuses(&events).is_empty(), "no card: {events:#?}");
+    assert!(
+        events.iter().any(|e| matches!(e, Event::TranscriptEntry { entry: switchyard_schema::Entry::System { text }, .. }
+            if text == "Allowed without asking: npm test (Auto edit)")),
+        "{events:#?}"
+    );
+    let edit = adapter_protocol::RequestDetail::FileWrite { path: "src/build.ts".into(), diff: Some("+x".into()) };
+    let events = s.core.agent_says(0, asks("2", edit));
+    assert!(statuses(&events).is_empty(), "{events:#?}");
+    let answers: Vec<_> = s
+        .core
+        .agents
+        .commands(0)
+        .into_iter()
+        .filter(|c| matches!(c, AgentCommand::AnswerRequest { .. }))
+        .collect();
+    assert_eq!(
+        answers,
+        vec![
+            AgentCommand::AnswerRequest { request_id: "1".into(), verdict: AgentVerdict::AllowOnce },
+            AgentCommand::AnswerRequest { request_id: "2".into(), verdict: AgentVerdict::AllowOnce },
+        ]
+    );
+
+    let events = s.core.agent_says(0, asks("3", command("rm -rf build")));
+    assert_eq!(statuses(&events), vec![(id, SessionStatus::Waiting)], "a dangerous command needs the user");
+}
+
+#[test]
+fn codex_ask_first_and_claude_auto_edit_still_ask_for_ordinary_commands() {
+    let mut s = setup();
+    let (a, b) = (s.worktrees[0].clone(), s.worktrees[1].clone());
+    let codex = start(&mut s.core, &a, AgentKind::Codex, PermissionMode::AskFirst, "Tidy the build.");
+    let claude = start(&mut s.core, &b, AgentKind::ClaudeCode, PermissionMode::AutoEdit, "Tidy the docs.");
+    let events = s.core.agent_says(0, asks("1", command("npm test")));
+    assert_eq!(statuses(&events), vec![(codex, SessionStatus::Waiting)]);
+    let events = s.core.agent_says(1, asks("1", command("npm test")));
+    assert_eq!(statuses(&events), vec![(claude, SessionStatus::Waiting)]);
 }

@@ -36,6 +36,9 @@ pub use gh::FakeGh;
 /// The fixed wall clock every harness core sees.
 pub const NOW_MS: u64 = 1_760_000_000_000;
 
+/// How long a harness core waits for `gh` before giving up.
+pub const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct Harness {
     core: Core,
     events: Receiver<Event>,
@@ -59,6 +62,7 @@ impl Harness {
     /// `agents` then records nothing; use `wait_for` to collect events from real processes.
     pub fn launch_with(launcher: Arc<dyn AgentLauncher>) -> Self {
         let data_dir = TempDir::new().unwrap();
+        let gh_timeout = GH_TIMEOUT;
         let (tx, events) = channel();
         let probe = FakeProbe::default();
         let processes = FakeProcesses::default();
@@ -71,8 +75,10 @@ impl Harness {
             processes: Arc::new(processes.clone()),
             export_dir: export_dir_in(&data_dir),
             secrets: Arc::new(secrets.clone()),
-            forge: Arc::new(GhForge { program: fake_gh_in(&data_dir).program() }),
+            forge: Arc::new(GhForge::new(fake_gh_in(&data_dir).program()).with_timeout(gh_timeout)),
             forge_poll_every: None,
+            claude_home: data_dir.path().join("claude-home"),
+            sandbox_evidence: || None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -99,10 +105,21 @@ impl Harness {
     }
 
     fn launch_in(data_dir: TempDir, processes: FakeProcesses, secrets: FakeSecrets) -> Self {
-        Self::launch_at(data_dir, processes, secrets, || NOW_MS)
+        Self::launch_at(data_dir, processes, secrets, || NOW_MS, GH_TIMEOUT)
     }
 
-    fn launch_at(data_dir: TempDir, processes: FakeProcesses, secrets: FakeSecrets, now_ms: fn() -> u64) -> Self {
+    /// A harness whose `gh` is given up on after `timeout` (the app waits a minute).
+    pub fn launch_with_gh_timeout(timeout: std::time::Duration) -> Self {
+        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, timeout)
+    }
+
+    fn launch_at(
+        data_dir: TempDir,
+        processes: FakeProcesses,
+        secrets: FakeSecrets,
+        now_ms: fn() -> u64,
+        gh_timeout: std::time::Duration,
+    ) -> Self {
         let (tx, events) = channel();
         let probe = FakeProbe::default();
         let agents = FakeAgents::with_processes(processes.clone());
@@ -114,8 +131,10 @@ impl Harness {
             processes: Arc::new(processes.clone()),
             export_dir: export_dir_in(&data_dir),
             secrets: Arc::new(secrets.clone()),
-            forge: Arc::new(GhForge { program: fake_gh_in(&data_dir).program() }),
+            forge: Arc::new(GhForge::new(fake_gh_in(&data_dir).program()).with_timeout(gh_timeout)),
             forge_poll_every: None,
+            claude_home: data_dir.path().join("claude-home"),
+            sandbox_evidence: || None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -134,7 +153,12 @@ impl Harness {
     pub fn relaunch_at(self, now_ms: fn() -> u64) -> Self {
         let Harness { core, data_dir, processes, secrets, .. } = self;
         drop(core);
-        Self::launch_at(data_dir, processes, secrets, now_ms)
+        Self::launch_at(data_dir, processes, secrets, now_ms, GH_TIMEOUT)
+    }
+
+    /// Claude Code's home as this core reads it (project memory lives under it).
+    pub fn claude_home(&self) -> PathBuf {
+        self.data_dir.path().join("claude-home")
     }
 
     /// Where `exportTranscript` writes files.
@@ -145,6 +169,24 @@ impl Harness {
     /// The core's data directory (where a test may drop a `price-table.json`).
     pub fn data_dir(&self) -> &Path {
         self.data_dir.path()
+    }
+
+    /// Acknowledge whatever the repository's committed policy requests (ADR-0006), as a
+    /// user who read it would; for tests about what the policy then does.
+    pub fn acknowledge_policy(&mut self, repository_id: &str) {
+        let events = self.send(Command::ReadPolicy { repository_id: repository_id.into() });
+        let request = events.into_iter().find_map(|e| match e {
+            Event::PolicyChanged { policy, .. } => policy.request,
+            _ => None,
+        });
+        if let Some(request) = request {
+            self.send(Command::AcknowledgePolicy { repository_id: repository_id.into(), hash: request.hash });
+        }
+    }
+
+    /// The core itself, for tests that drive it from several threads at once.
+    pub fn core(&self) -> &Core {
+        &self.core
     }
 
     pub fn send(&mut self, command: Command) -> Vec<Event> {
@@ -267,7 +309,8 @@ impl FakeAgents {
         self.inner.lock().unwrap().refuse_next = Some(reason.into());
     }
 
-    fn deliver(&self, agent: usize, output: AgentOutput) {
+    /// Deliver `output` from the n-th agent (from any thread).
+    pub fn deliver(&self, agent: usize, output: AgentOutput) {
         let sink = self.inner.lock().unwrap().launched[agent].1.clone();
         sink(output);
     }

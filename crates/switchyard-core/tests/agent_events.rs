@@ -40,3 +40,26 @@ fn every_protocol_event_is_passed_on_raw_in_order_and_replayed_on_attach() {
     let replayed = core.send(Command::Attach);
     assert_eq!(raw(&replayed), expected);
 }
+
+#[test]
+fn only_the_newest_256_kb_of_raw_events_are_kept_and_replayed_with_their_numbers() {
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("feat/x");
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+    started_session(&core.start_session(&worktree, "hi"));
+    let big = "x".repeat(10 * 1024);
+    for _ in 0..60 {
+        core.agent_says(0, adapter_protocol::Event::AgentText { text: big.clone() });
+    }
+    core.agent_says(0, adapter_protocol::Event::AgentText { text: "last".into() });
+
+    let replayed = raw(&core.send(Command::Attach));
+    let bytes: usize = replayed.iter().map(|(_, _, v)| v.to_string().len()).sum();
+    assert!(bytes <= 256 * 1024, "replayed {bytes} bytes");
+    assert!(replayed.len() >= 20, "keeps the newest, not nothing: {}", replayed.len());
+    let numbers: Vec<u32> = replayed.iter().map(|(_, i, _)| *i).collect();
+    assert_eq!(*numbers.last().unwrap(), 60, "events keep their numbers");
+    assert!(numbers.windows(2).all(|w| w[1] == w[0] + 1), "the newest, contiguous: {numbers:?}");
+    assert_eq!(replayed.last().unwrap().2["text"], "last");
+}

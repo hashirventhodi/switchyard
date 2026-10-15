@@ -11,6 +11,7 @@ pub struct Store {
     db: Connection,
 }
 
+#[derive(Clone)]
 pub struct StoredRepository {
     pub id: String,
     pub path: String,
@@ -56,6 +57,7 @@ impl Store {
         crate::session_store::init(&db)?;
         crate::tasks::init(&db)?;
         crate::secrets::init(&db)?;
+        crate::acknowledgements::init(&db)?;
         Ok(Store { db })
     }
 

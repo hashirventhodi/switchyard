@@ -25,6 +25,18 @@ const DELETE: &[&str] = &["rm", "rmdir", "unlink", "shred", "-delete"];
 /// Words that delete after `git`.
 const GIT_DELETE: &[&str] = &["clean", "rm"];
 
+impl Class {
+    /// As a refusal names it: "a migration command".
+    pub fn label(self) -> &'static str {
+        match self {
+            Class::Network => "network",
+            Class::Delete => "delete",
+            Class::Migration => "migration",
+            Class::Push => "push",
+        }
+    }
+}
+
 /// The dangerous classes `command` is in (empty: not dangerous).
 pub fn classes(command: &str) -> BTreeSet<Class> {
     let words: Vec<String> = command

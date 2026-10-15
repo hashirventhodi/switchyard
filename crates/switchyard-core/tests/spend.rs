@@ -45,6 +45,7 @@ fn claude_code_reported_cost_is_recorded_as_reported_with_its_running_token_tota
                     input_tokens: 16,
                     output_tokens: 220,
                     cache_read_tokens: 11800,
+                    cache_write_tokens: 2100,
                     reported_usd: Some(0.0412),
                     estimated_usd: None,
                     price_table_version: None,
@@ -57,6 +58,7 @@ fn claude_code_reported_cost_is_recorded_as_reported_with_its_running_token_tota
                     input_tokens: 40,
                     output_tokens: 310,
                     cache_read_tokens: 24100,
+                    cache_write_tokens: 2100,
                     reported_usd: Some(0.0587),
                     estimated_usd: None,
                     price_table_version: None,
@@ -137,4 +139,36 @@ fn a_model_missing_from_the_price_table_records_tokens_without_an_estimate() {
     let last = spends(&events).pop().unwrap().2;
     assert_eq!((last.input_tokens, last.output_tokens, last.cache_read_tokens), (300_000, 50_000, 1_000_000));
     assert_eq!((last.reported_usd, last.estimated_usd, last.price_table_version), (None, None, None));
+}
+
+#[test]
+fn cache_writes_are_recorded_priced_and_kept_across_a_relaunch() {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, TABLE_V1);
+    started_session(&core.start_session(&worktree, "Rename the helper."));
+    core.agent_replays(0, &recorded_events("echo/token-only-session"));
+
+    let usage = |cache_write_tokens| adapter_protocol::Event::TokenUsage {
+        input_tokens: 300_000,
+        output_tokens: 50_000,
+        cache_read_tokens: 1_000_000,
+        cache_write_tokens,
+        cost_usd: None,
+    };
+    // No cacheWrite price in the table: a cache write costs what input costs.
+    //   160 cents as before + 400k cache writes * 2.0 = 240 cents
+    let events = core.agent_says(0, usage(400_000));
+    assert_eq!(spends(&events)[0].2.cache_write_tokens, 400_000);
+    assert_eq!(costs(&events), vec![(None, Some(240.0), Some("test-1".into()))]);
+
+    write_price_table(
+        &core,
+        r#"{"version": "test-3", "models": {"echo-model-1": {"input": 2.0, "output": 10.0, "cacheRead": 0.5, "cacheWrite": 2.5}}}"#,
+    );
+    let mut core = core.relaunch();
+    let replay = core.send(Command::Attach);
+    let last = spends(&replay).pop().unwrap().2;
+    assert_eq!(last.cache_write_tokens, 400_000, "stored raw and replayed");
+    //   160 + 400k * 2.5 = 260 cents
+    assert_eq!(last.estimated_usd.map(cents), Some(260.0));
 }

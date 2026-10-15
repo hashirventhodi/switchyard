@@ -39,7 +39,7 @@ const facts = (more: Partial<SessionFacts>): Event => ({
 const policy = (more: Partial<Policy>): Event => ({
   type: "policyChanged",
   repositoryId: "repo-1",
-  policy: { defaultMode: null, ceiling: null, grants: [], error: null, ...more },
+  policy: { defaultMode: null, ceiling: null, grants: [], error: null, request: null, ...more },
 });
 
 function launch(...events: Event[]) {

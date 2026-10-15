@@ -112,7 +112,7 @@ fn a_session_comes_back_after_relaunch_with_its_transcript_facts_and_spend() {
     core.agent_says(0, text("Fixed the link."));
     core.agent_says(
         0,
-        AgentEvent::TokenUsage { input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cost_usd: Some(0.5) },
+        AgentEvent::TokenUsage { input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd: Some(0.5) },
     );
     core.agent_says(0, AgentEvent::TurnComplete);
     core.agent_says(0, AgentEvent::Done { summary: None });
@@ -141,7 +141,7 @@ fn a_session_comes_back_after_relaunch_with_its_transcript_facts_and_spend() {
         .collect();
     assert_eq!(spend.len(), 1);
     assert_eq!(spend[0].0, NOW_MS);
-    assert_eq!((spend[0].1.input_tokens, spend[0].1.output_tokens, spend[0].1.cache_read_tokens), (10, 20, 30));
+    assert_eq!((spend[0].1.input_tokens, spend[0].1.output_tokens, spend[0].1.cache_read_tokens, spend[0].1.cache_write_tokens), (10, 20, 30, 40));
     assert_eq!(spend[0].1.reported_usd, Some(0.5));
 }
 
@@ -242,7 +242,7 @@ fn a_request_pending_at_the_crash_is_cancelled_with_a_system_line_and_cannot_be_
         request_id: "req-1".into(),
         verdict: Verdict::AllowOnce,
     });
-    refusal(&answer);
+    assert!(refusal(&answer).starts_with("That request was cancelled"), "{answer:#?}");
     assert!(core.agents.launches().is_empty());
 }
 

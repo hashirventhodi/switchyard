@@ -1,0 +1,18 @@
+/* Dashboard: agent filter, worktree occupancy strip and activity feed (prototype CSS). */
+.sec .r{margin-left:auto}
+.mode-sel{display:inline-flex;border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.mode-sel button{height:22px;padding:0 8px;font-size:11px;color:var(--fg-2)}
+.mode-sel button.on{background:var(--bg-3);color:var(--fg)}
+.occ-list,.feed{list-style:none;margin:0 0 18px;padding:0}
+.occ{display:grid;grid-template-columns:200px 1fr;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px}
+.occ .n{font-family:var(--font-mono);color:var(--fg-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
+.occ .bar{position:relative;height:22px;background:var(--bg-2);border-radius:4px;overflow:hidden}
+.occ .seg{position:absolute;top:3px;bottom:3px;left:0;border-radius:3px;font:11px/16px var(--font-mono);padding:0 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#0b0d12;text-align:left}
+.occ .seg.free{background:var(--bg-3);color:var(--fg-2);width:100%}
+.feed .ev{display:grid;grid-template-columns:52px 10px 1fr;gap:8px;padding:5px 0;font-size:12px;align-items:start;max-width:860px}
+.feed .ev .tm{font:11px var(--font-mono);color:var(--fg-2);padding-top:2px}
+.feed .ev .d{width:8px;height:8px;border-radius:50%;background:var(--fg-2);margin-top:5px}
+.feed .ev .d.running{background:var(--ok)}.feed .ev .d.waiting{background:var(--warn)}.feed .ev .d.failed{background:var(--bad)}.feed .ev .d.done{background:var(--accent)}
+.feed .ev b{font-weight:500}
+.feed .ev code{font-size:11.5px}
+@media (max-width:860px){.occ{grid-template-columns:120px 1fr}}

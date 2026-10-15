@@ -2,5 +2,5 @@
 {"type":"agent_text","text":"Running the full test suite."}
 {"type":"tool_call_started","call_id":"toolu_01","tool":"Bash","input":{"command":"pnpm test","description":"Run tests"}}
 {"type":"tool_call_finished","call_id":"toolu_01","ok":false,"output":"Error: interrupted by user"}
-{"type":"token_usage","input_tokens":8,"output_tokens":40,"cache_read_tokens":11800,"cost_usd":0.0103}
+{"type":"token_usage","input_tokens":8,"output_tokens":40,"cache_read_tokens":11800,"cache_write_tokens":2100,"cost_usd":0.0103}
 {"type":"turn_complete"}

@@ -21,7 +21,7 @@ export function taskBranch(task: Task): string {
   return `${task.kind}/${[key, slug].filter(Boolean).join("-")}`;
 }
 
-/** The initial prompt for a session on a task: the ticket, then the repository's house rules. */
+/** The initial prompt for a session on a task: the task, then the repository's house rules. */
 export function taskPrompt(task: Task, houseRules: string | undefined): string {
   return [`Work on ${task.key}: ${task.title}.`, task.description.trim(), houseRules?.trim()].filter(Boolean).join("\n\n");
 }

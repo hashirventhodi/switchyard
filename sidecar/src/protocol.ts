@@ -41,6 +41,8 @@ export type ProtocolEvent =
       input_tokens: number;
       output_tokens: number;
       cache_read_tokens: number;
+      /** Left out when 0. */
+      cache_write_tokens?: number;
       cost_usd: number | null;
     }
   | { type: "classifier_denial"; tool: string; detail: string; reason: string | null };

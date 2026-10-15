@@ -70,7 +70,8 @@ fn codex_app_server_runs_in_the_worktree_and_its_turn_reaches_the_transcript() {
         .unwrap();
     let worktree = repo.add_worktree("feat/x");
     let mut core = Harness::launch_with(fake.launcher.clone());
-    core.add_repository(&repo.path);
+    let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
+    core.dispatch(Command::EnableMcpServer { repository_id, name: "docs".into() });
 
     core.dispatch(start(&worktree, "hello"));
     let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
@@ -110,7 +111,8 @@ fn codex_and_the_mcp_servers_it_starts_get_granted_secrets_and_none_of_the_other
     let mut core = Harness::launch_with(fake.launcher.clone());
     let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
     core.secrets.in_keychain("SY26_CX_NPM_TOKEN", "npm-123");
-    core.dispatch(Command::GrantSecret { repository_id, name: "SY26_CX_NPM_TOKEN".into() });
+    core.dispatch(Command::GrantSecret { repository_id: repository_id.clone(), name: "SY26_CX_NPM_TOKEN".into() });
+    core.dispatch(Command::EnableMcpServer { repository_id, name: "npm".into() });
 
     core.dispatch(start(&worktree, "hello"));
     core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));

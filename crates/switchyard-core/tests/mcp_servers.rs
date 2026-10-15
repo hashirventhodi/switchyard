@@ -2,6 +2,9 @@
 //! the launcher, and only those; nothing is written into any CLI config file (ADR-0004);
 //! each server's connection state comes from the session init (and later status reports)
 //! and lands on the session's facts for Context.
+//!
+//! `.mcp.json` is committed, so it declares servers but enables none (ADR-0006): a server
+//! is passed only once the user enabled it, for exactly the definition they saw.
 mod harness;
 
 use std::collections::BTreeMap;
@@ -10,11 +13,12 @@ use std::path::PathBuf;
 use harness::{added_repository, started_session, Harness, TempRepo};
 use switchyard_core::mcp::{McpServer, McpTransport};
 use adapter_protocol::{CliInfo, Event as AgentEvent, McpServerState, McpServerStatus, PermissionMode as AgentMode};
-use switchyard_schema::{Event, McpServerFact, McpState, PermissionMode};
+use switchyard_schema::{Command, DeclaredMcpServer, Event, McpServerFact, McpState, PermissionMode};
 
 struct Setup {
     core: Harness,
-    _repo: TempRepo,
+    repo: TempRepo,
+    repo_id: String,
     worktree: PathBuf,
 }
 
@@ -27,8 +31,38 @@ fn setup(mcp_json: Option<&str>) -> Setup {
     }
     let worktree = repo.add_worktree("feat/mcp");
     let mut core = Harness::launch();
-    added_repository(&core.add_repository(&repo.path));
-    Setup { core, _repo: repo, worktree }
+    let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    Setup { core, repo, repo_id, worktree }
+}
+
+impl Setup {
+    fn enable(&mut self, name: &str) -> Vec<Event> {
+        self.core.send(Command::EnableMcpServer { repository_id: self.repo_id.clone(), name: name.into() })
+    }
+
+    fn declared(&mut self) -> Vec<DeclaredMcpServer> {
+        let events = self.core.send(Command::ReadMcpServers { repository_id: self.repo_id.clone() });
+        declared_in(&events)
+    }
+}
+
+fn declared_in(events: &[Event]) -> Vec<DeclaredMcpServer> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::McpServersChanged { servers, .. } => Some(servers.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no mcpServersChanged in {events:#?}"))
+}
+
+/// Both servers enabled, as most tests here want them.
+fn setup_enabled(mcp_json: &str) -> Setup {
+    let mut s = setup(Some(mcp_json));
+    s.enable("docs");
+    s.enable("github");
+    s
 }
 
 const TWO_SERVERS: &str = r#"{
@@ -61,7 +95,7 @@ fn docs() -> McpServer {
 
 #[test]
 fn the_spawn_carries_the_repositorys_servers_and_only_them() {
-    let mut s = setup(Some(TWO_SERVERS));
+    let mut s = setup_enabled(TWO_SERVERS);
     let path = s.worktree.clone();
     started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
     assert_eq!(s.core.agents.launches()[0].mcp_servers, vec![docs(), github()]);
@@ -99,7 +133,7 @@ fn last_mcp_facts(events: &[Event]) -> Vec<McpServerFact> {
 
 #[test]
 fn context_shows_each_servers_state_from_the_init_event() {
-    let mut s = setup(Some(TWO_SERVERS));
+    let mut s = setup_enabled(TWO_SERVERS);
     let path = s.worktree.clone();
     started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
     let events = s.core.agent_says(
@@ -120,7 +154,7 @@ fn context_shows_each_servers_state_from_the_init_event() {
 
 #[test]
 fn a_server_the_cli_did_not_report_shows_as_not_connected() {
-    let mut s = setup(Some(TWO_SERVERS));
+    let mut s = setup_enabled(TWO_SERVERS);
     let path = s.worktree.clone();
     started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
     let events = s.core.agent_says(0, init(vec![status("docs", McpServerState::Connected, None)]));
@@ -132,7 +166,7 @@ fn a_server_the_cli_did_not_report_shows_as_not_connected() {
 
 #[test]
 fn a_server_pending_at_init_settles_from_a_later_status_report() {
-    let mut s = setup(Some(TWO_SERVERS));
+    let mut s = setup_enabled(TWO_SERVERS);
     let path = s.worktree.clone();
     started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
     s.core.agent_says(
@@ -250,4 +284,50 @@ fn context_names_a_servers_transport_without_its_arguments() {
         },
     };
     assert_eq!(with_token.summary(), "http · mcp.example.com");
+}
+
+#[test]
+fn a_committed_server_is_declared_but_not_enabled_and_never_passed_until_enabled() {
+    let mut s = setup(Some(TWO_SERVERS));
+    let declared = s.declared();
+    let summary: Vec<(&str, &str, bool, bool)> =
+        declared.iter().map(|d| (d.name.as_str(), d.transport.as_str(), d.enabled, d.changed)).collect();
+    assert_eq!(summary, vec![("docs", "http · docs.example.com", false, false), ("github", "stdio · npx", false, false)]);
+
+    let path = s.worktree.clone();
+    started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
+    assert_eq!(s.core.agents.launches()[0].mcp_servers, vec![], "nothing declared is passed");
+
+    let events = s.enable("github");
+    assert!(declared_in(&events).iter().any(|d| d.name == "github" && d.enabled));
+    s.core.send(Command::StopSession { session_id: "session-1".into() });
+    let other = s.repo.add_worktree("feat/two");
+    started_session(&s.core.start_session_in(&other, PermissionMode::AskFirst, "Again."));
+    assert_eq!(s.core.agents.launches()[1].mcp_servers, vec![github()]);
+}
+
+#[test]
+fn a_changed_definition_asks_again_and_is_not_passed_meanwhile() {
+    let mut s = setup_enabled(TWO_SERVERS);
+    let changed = TWO_SERVERS.replace("@modelcontextprotocol/server-github", "@evil/server-github");
+    std::fs::write(s.repo.path.join(".mcp.json"), changed).unwrap();
+
+    let github_now = s.declared().into_iter().find(|d| d.name == "github").unwrap();
+    assert!(!github_now.enabled && github_now.changed, "{github_now:?}");
+    let path = s.worktree.clone();
+    started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
+    assert_eq!(s.core.agents.launches()[0].mcp_servers, vec![docs()]);
+}
+
+#[test]
+fn disabling_a_server_stops_passing_it_and_unknown_names_are_refused() {
+    let mut s = setup_enabled(TWO_SERVERS);
+    let events = s.core.send(Command::DisableMcpServer { repository_id: s.repo_id.clone(), name: "docs".into() });
+    assert!(declared_in(&events).iter().any(|d| d.name == "docs" && !d.enabled));
+    let path = s.worktree.clone();
+    started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
+    assert_eq!(s.core.agents.launches()[0].mcp_servers, vec![github()]);
+
+    let events = s.enable("nope");
+    assert_eq!(refusals(&events), vec![".mcp.json declares no server nope".to_string()]);
 }

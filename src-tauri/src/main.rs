@@ -25,9 +25,44 @@ const SIDECAR: &str = "claude-sidecar.mjs";
 /// One Forge poll tick; a pull request with no news is polled every 1, 2, 4 then 8 ticks.
 const FORGE_POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Commands go to the core off the main thread, in the order the renderer sent them, on
+/// one worker; those that wait on the network (pull requests, issue sync, gh detection)
+/// get a thread of their own so they never hold up the rest.
+struct Dispatcher {
+    core: Arc<Core>,
+    queue: Mutex<mpsc::Sender<Command>>,
+}
+
+impl Dispatcher {
+    fn new(core: Core) -> Dispatcher {
+        let core = Arc::new(core);
+        let (tx, rx) = mpsc::channel::<Command>();
+        let worker = core.clone();
+        std::thread::spawn(move || {
+            for command in rx {
+                worker.dispatch(command);
+            }
+        });
+        Dispatcher { core, queue: Mutex::new(tx) }
+    }
+
+    fn send(&self, command: Command) {
+        let slow = matches!(
+            command,
+            Command::OpenPullRequest { .. } | Command::PruneMerged { .. } | Command::SyncTasks { .. } | Command::CheckForge
+        );
+        if slow {
+            let core = self.core.clone();
+            std::thread::spawn(move || core.dispatch(command));
+        } else {
+            let _ = self.queue.lock().expect("dispatch queue").send(command);
+        }
+    }
+}
+
 #[tauri::command]
-fn dispatch(command: Command, core: State<'_, Mutex<Core>>) {
-    core.lock().expect("core lock").dispatch(command);
+fn dispatch(command: Command, dispatcher: State<'_, Dispatcher>) {
+    dispatcher.send(command);
 }
 
 /// Open an install or update link in the default browser. Only https links: the renderer
@@ -95,9 +130,11 @@ fn main() {
                 secrets: Arc::new(SystemSecrets),
                 forge: Arc::new(GhForge::find()),
                 forge_poll_every: Some(FORGE_POLL_EVERY),
+                claude_home: switchyard_core::context::default_claude_home(),
+                sandbox_evidence: switchyard_core::detect_sandbox,
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
-            app.manage(Mutex::new(core));
+            app.manage(Dispatcher::new(core));
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 for event in rx {

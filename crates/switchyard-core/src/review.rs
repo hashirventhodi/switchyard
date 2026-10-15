@@ -15,6 +15,7 @@ pub(crate) use feedback::{comment_hunk, decide_hunk, send_feedback, HunkReview};
 use std::collections::HashMap;
 use std::path::Path;
 
+use switchyard_schema::command_name;
 use switchyard_schema::{ChangedFile, Decision, Event, FileStatus};
 
 use crate::{git, session_store, worktrees, Inner};
@@ -155,14 +156,14 @@ fn known(inner: &Inner, command: &str, worktree_path: &str) -> Option<git::GitWo
 }
 
 pub(crate) fn read(inner: &mut Inner, worktree_path: &str) {
-    const COMMAND: &str = "readChanges";
+    const COMMAND: &str = command_name::READ_CHANGES;
     if known(inner, COMMAND, worktree_path).is_none() {
         return;
     }
     emit_changes(inner, COMMAND, worktree_path);
 }
 
-fn emit_changes(inner: &mut Inner, command: &str, worktree_path: &str) {
+pub(crate) fn emit_changes(inner: &mut Inner, command: &str, worktree_path: &str) {
     match changes(inner, worktree_path) {
         Ok(list) => {
             let files = list.into_iter().map(|(f, _)| f).collect();
@@ -186,7 +187,7 @@ fn conflict(inner: &Inner, worktree_path: &str, file: &ChangedFile) -> Option<St
 }
 
 pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decision: Option<Decision>) {
-    const COMMAND: &str = "decideFile";
+    const COMMAND: &str = command_name::DECIDE_FILE;
     if known(inner, COMMAND, worktree_path).is_none() {
         return;
     }
@@ -216,7 +217,7 @@ pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decisio
 }
 
 pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
-    const COMMAND: &str = "commitAccepted";
+    const COMMAND: &str = command_name::COMMIT_ACCEPTED;
     let Some(worktree) = known(inner, COMMAND, worktree_path) else { return };
     let message = message.trim();
     if message.is_empty() {

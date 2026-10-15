@@ -22,7 +22,7 @@ export function RequestCard(props: {
   const { entry, answer, answerInChat } = props;
   const { request } = entry;
   const question = request.type === "question";
-  const heading = question ? "Question for you" : `Approval needed: ${KIND_LABEL[request.type]}`;
+  const heading = question ? "Question for you" : `Permission request: ${KIND_LABEL[request.type]}`;
   const pending = entry.state === "pending";
   // Always allow: command, network and MCP tool only; file writes never get it.
   const grant = suggestGrant(request);

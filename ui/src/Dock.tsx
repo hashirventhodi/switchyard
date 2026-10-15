@@ -11,6 +11,7 @@ import type { ShellStreams } from "./shellStreams";
 import type { SessionView, State } from "./state";
 import { AGENT_COLOR, AGENT_SHORT, Status } from "./status";
 import type { CreateTerminal } from "./terminal";
+import { rawAt } from "./rawLog";
 import { VirtualList } from "./VirtualList";
 import "./dock.css";
 
@@ -235,7 +236,7 @@ function RawEvents({ session }: { session: SessionView }) {
       estimate={estimate}
       renderRow={(i) => (
         <div className="l">
-          <span className="n">{i}</span> {at(rawEvents, i)}
+          <span className="n">{rawEvents.first + i}</span> {rawAt(rawEvents, i)}
         </div>
       )}
     />

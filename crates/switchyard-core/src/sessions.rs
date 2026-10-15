@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode};
 use serde_json::Value;
+use switchyard_schema::command_name;
 use switchyard_schema::{
     AgentKind, ArchivedSession, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
     Verdict,
@@ -49,8 +50,9 @@ struct SessionState {
     transcript: Vec<Entry>,
     /// Transcript index of each tool call, by call id.
     tool_calls: HashMap<String, usize>,
-    /// Every protocol event the agent sent, as JSON, for the Agent log's debug view.
-    raw_events: Vec<String>,
+    /// The newest protocol events the agent sent, as JSON, for the Agent log's debug view
+    /// (at most [`RAW_EVENT_BYTES`]; older ones are dropped, the rest keep their numbers).
+    raw_events: RawEvents,
     /// Transcript index of each Permission request, by request id.
     requests: HashMap<String, usize>,
     /// Every token_usage report, oldest first. Each holds running totals.
@@ -144,7 +146,7 @@ pub(crate) fn start(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    begin(inner, core, "startSession", worktree_path, agent, permission_mode, prompt, None);
+    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, prompt, None);
 }
 
 /// Start a session on a worktree; when `replacing` names its (Paused, Finished or Error)
@@ -190,7 +192,7 @@ fn begin(
     if let Err(reason) = policy::admit_mode(&repo, permission_mode) {
         return refuse(inner, reason);
     }
-    let mcp_servers = match mcp::load(std::path::Path::new(&repo.path)) {
+    let mcp_servers = match mcp::enabled(inner, &repo.id, std::path::Path::new(&repo.path)) {
         Ok(servers) => servers,
         Err(reason) => return refuse(inner, format!("Could not start the session: {reason}")),
     };
@@ -200,8 +202,8 @@ fn begin(
     }
     let id = format!("session-{}", inner.sessions.next_id + 1);
     // Grants reach the CLI as flags; the CLI's own settings files are never written.
-    let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
-    let sandboxed = policy::sandboxed(&repo);
+    let (allowed_tools, disallowed_tools) = policy::cli_grants(agent, &policy::resolve(inner, &repo));
+    let sandboxed = policy::sandboxed(inner, &repo);
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
     let spec = LaunchSpec {
         agent,
@@ -225,6 +227,7 @@ fn begin(
         archive::archive(inner, old);
     }
     inner.sessions.next_id += 1;
+    let state_repo = repo.id.clone();
     let session = Session {
         id: id.clone(),
         repository_id: repo.id,
@@ -241,7 +244,7 @@ fn begin(
         facts: SessionFacts { mcp_servers: mcp::facts(&mcp_servers), ..SessionFacts::default() },
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
-        raw_events: Vec::new(),
+        raw_events: RawEvents::default(),
         requests: HashMap::new(),
         usage: Vec::new(),
         expected_mode,
@@ -253,13 +256,20 @@ fn begin(
     let state = inner.sessions.list.last_mut().expect("just pushed");
     let entry = append(state, Entry::User { text: prompt.into() });
     inner.emit(entry);
+    // What the committed policy asks for but the user has not acknowledged does not apply.
+    if let Some(line) = policy::repository(inner, &state_repo).and_then(|r| policy::pending_summary(inner, &r)) {
+        if let Some(state) = find(inner, &id) {
+            let entry = append(state, Entry::System { text: line });
+            inner.emit(entry);
+        }
+    }
     send_to_agent(inner, &id, AgentCommand::SendText { text: prompt.into() });
 }
 
 pub(crate) fn stop(inner: &mut Inner, id: &str) {
-    const COMMAND: &str = "stopSession";
+    const COMMAND: &str = command_name::STOP_SESSION;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
-        return inner.refuse(COMMAND, format!("There is no session {id}"));
+        return inner.refuse(COMMAND, crate::no_session(&id));
     };
     let Some(status) = change_status(state, &Cause::UserStop) else {
         return inner.refuse(COMMAND, "The session is not running".into());
@@ -276,9 +286,9 @@ pub(crate) fn stop(inner: &mut Inner, id: &str) {
 }
 
 pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str, text: &str) {
-    const COMMAND: &str = "sendPrompt";
+    const COMMAND: &str = command_name::SEND_PROMPT;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
-        return inner.refuse(COMMAND, format!("There is no session {id}"));
+        return inner.refuse(COMMAND, crate::no_session(&id));
     };
     // While the agent asks something, what the user types is the answer to its question.
     if let Some(question) = requests::pending_question(state) {
@@ -309,9 +319,9 @@ pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str,
 /// A live agent is simply told to continue; one whose process is gone is relaunched first,
 /// through its CLI's resume-by-id, so it keeps its context.
 pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
-    const COMMAND: &str = "resumeSession";
+    const COMMAND: &str = command_name::RESUME_SESSION;
     let Some(state) = find(inner, id) else {
-        return inner.refuse(COMMAND, format!("There is no session {id}"));
+        return inner.refuse(COMMAND, crate::no_session(&id));
     };
     if transition(state.session.status, &Cause::Resume).is_none() {
         let label = status_label(state.session.status);
@@ -330,7 +340,7 @@ pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
 
 /// Make sure the session has a running agent: relaunch a gone one by its CLI session id.
 fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result<(), String> {
-    let Some(state) = find(inner, id) else { return Err(format!("There is no session {id}")) };
+    let Some(state) = find(inner, id) else { return Err(crate::no_session(&id)) };
     if state.agent.is_some() {
         return Ok(());
     }
@@ -348,12 +358,12 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     // The session's own mode (as last switched); the sandbox as the policy declares it now,
     // so a sandbox withdrawn since never relaunches into bypass.
     let ((allowed_tools, disallowed_tools), sandboxed) = match &repository {
-        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
+        Some(repo) => (policy::cli_grants(agent, &policy::resolve(inner, repo)), policy::sandboxed(inner, repo)),
         None => Default::default(),
     };
-    // The repository's MCP servers as its `.mcp.json` lists them now.
+    // The repository's MCP servers the user has enabled, as `.mcp.json` lists them now.
     let mcp_servers = match &repository {
-        Some(repo) => mcp::load(std::path::Path::new(&repo.path))
+        Some(repo) => mcp::enabled(inner, &repo.id, std::path::Path::new(&repo.path))
             .map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))?,
         None => Vec::new(),
     };
@@ -455,9 +465,9 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
 /// at start (it is the only kind allowed on a primary worktree), and the Repository's
 /// ceiling caps the switch as it caps the start.
 pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
-    const COMMAND: &str = "setPermissionMode";
+    const COMMAND: &str = command_name::SET_PERMISSION_MODE;
     let Some(state) = find(inner, id) else {
-        return inner.refuse(COMMAND, format!("There is no session {id}"));
+        return inner.refuse(COMMAND, crate::no_session(&id));
     };
     let (from, repository_id, status) = (state.session.permission_mode, state.session.repository_id.clone(), state.session.status);
     if from == mode {
@@ -473,12 +483,12 @@ pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
         return inner.refuse(COMMAND, "The agent has stopped; start a new session".into());
     }
     let Some(repo) = policy::repository(inner, &repository_id) else {
-        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
     };
     if let Err(reason) = policy::admit_mode(&repo, mode) {
         return inner.refuse(COMMAND, reason);
     }
-    let expected = agents::protocol_mode(mode, policy::sandboxed(&repo));
+    let expected = agents::protocol_mode(mode, policy::sandboxed(inner, &repo));
     let Some(state) = find(inner, id) else { return };
     state.session.permission_mode = mode;
     state.expected_mode = expected;
@@ -570,8 +580,8 @@ pub(crate) fn replay(inner: &Inner) {
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
         }
-        for (index, json) in state.raw_events.iter().enumerate() {
-            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index: index as u32, json: json.clone() });
+        for (index, json) in state.raw_events.numbered() {
+            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index, json: json.clone() });
         }
     }
     inner.emit(Event::SettingsChanged { settings: inner.sessions.settings.clone() });
@@ -668,12 +678,13 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     cause = Some(Cause::AgentFailed);
                 }
             }
-            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cost_usd } => {
+            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd } => {
                 let usage = Usage {
                     at_ms: (inner.runtime.now_ms)(),
                     input_tokens,
                     output_tokens,
                     cache_read_tokens,
+                    cache_write_tokens,
                     reported_usd: cost_usd,
                 };
                 state.usage.push(usage);
@@ -727,10 +738,41 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     }
 }
 
+/// How much raw protocol JSON a session keeps for the debug view (as a shell keeps its
+/// scrollback).
+pub(crate) const RAW_EVENT_BYTES: usize = 256 * 1024;
+
+/// The newest raw events, numbered from the session's first.
+#[derive(Default)]
+struct RawEvents {
+    /// The number of `kept[0]`.
+    first: u32,
+    kept: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+impl RawEvents {
+    /// Keep `json`, dropping the oldest beyond the budget; returns its number.
+    fn push(&mut self, json: String) -> u32 {
+        let index = self.first + self.kept.len() as u32;
+        self.bytes += json.len();
+        self.kept.push_back(json);
+        while self.bytes > RAW_EVENT_BYTES && self.kept.len() > 1 {
+            let dropped = self.kept.pop_front().expect("not empty");
+            self.bytes -= dropped.len();
+            self.first += 1;
+        }
+        index
+    }
+
+    fn numbered(&self) -> impl Iterator<Item = (u32, &String)> {
+        self.kept.iter().enumerate().map(|(i, json)| (self.first + i as u32, json))
+    }
+}
+
 fn record_raw(state: &mut SessionState, event: &AgentEvent) -> Event {
     let json = serde_json::to_string(event).unwrap_or_else(|e| format!("{{\"unserialisable\":\"{e}\"}}"));
-    let index = state.raw_events.len() as u32;
-    state.raw_events.push(json.clone());
+    let index = state.raw_events.push(json.clone());
     Event::AgentEventReceived { session_id: state.session.id.clone(), index, json }
 }
 

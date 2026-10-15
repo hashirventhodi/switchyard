@@ -223,6 +223,43 @@ pub enum Command {
         #[ts(rename = "worktreePath")]
         worktree_path: String,
     },
+    /// Acknowledge the Repository's pending policy request, named by its hash (refused when
+    /// the policy has changed since): its allow rules, sandbox, default mode and worktree
+    /// root apply from then on, until the request changes (ADR-0006).
+    AcknowledgePolicy {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        hash: String,
+    },
+    /// List the MCP servers the Repository's `.mcp.json` declares and which the user has
+    /// enabled. Answered with [`Event::McpServersChanged`].
+    ReadMcpServers {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Enable a declared MCP server for this Repository, for its definition as it stands
+    /// (ADR-0006): passed to agents from the next spawn until its definition changes.
+    EnableMcpServer {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    DisableMcpServer {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    /// Read the files an agent takes as instructions in a worktree (CLAUDE.md, AGENTS.md…)
+    /// and Claude Code's memory for it. Read-only; answered with [`Event::ContextRead`].
+    ReadContext {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// Answer a Session's pending Permission request. Every surface (toast, inbox, request
     /// card) sends this; the first answer wins and any later one is refused.
     AnswerRequest {
@@ -422,6 +459,131 @@ pub enum Command {
         name: String,
         value: String,
     },
+}
+
+/// Every [`Command`]'s wire name (its `type` tag), for refusals raised before or apart from
+/// the command value itself. A test checks the list against the serde tags.
+pub mod command_name {
+    pub const ATTACH: &str = "attach";
+    pub const ADD_REPOSITORY: &str = "addRepository";
+    pub const START_SESSION: &str = "startSession";
+    pub const STOP_SESSION: &str = "stopSession";
+    pub const SET_PERMISSION_MODE: &str = "setPermissionMode";
+    pub const SEND_PROMPT: &str = "sendPrompt";
+    pub const OPEN_SHELL: &str = "openShell";
+    pub const WRITE_SHELL: &str = "writeShell";
+    pub const RESIZE_SHELL: &str = "resizeShell";
+    pub const CLOSE_SHELL: &str = "closeShell";
+    pub const CLOSE_WORKTREE_SHELLS: &str = "closeWorktreeShells";
+    pub const CREATE_WORKTREE: &str = "createWorktree";
+    pub const START_SESSION_ON_NEW_WORKTREE: &str = "startSessionOnNewWorktree";
+    pub const REMOVE_WORKTREE: &str = "removeWorktree";
+    pub const REFRESH_WORKTREES: &str = "refreshWorktrees";
+    pub const CHECK_AGENTS: &str = "checkAgents";
+    pub const READ_CHANGES: &str = "readChanges";
+    pub const DECIDE_FILE: &str = "decideFile";
+    pub const COMMIT_ACCEPTED: &str = "commitAccepted";
+    pub const DECIDE_HUNK: &str = "decideHunk";
+    pub const COMMENT_HUNK: &str = "commentHunk";
+    pub const SEND_FEEDBACK: &str = "sendFeedback";
+    pub const REBASE_WORKTREE: &str = "rebaseWorktree";
+    pub const RESOLVE_CONFLICT: &str = "resolveConflict";
+    pub const ASK_AGENT_TO_REBASE: &str = "askAgentToRebase";
+    pub const READ_HISTORY: &str = "readHistory";
+    pub const ACKNOWLEDGE_POLICY: &str = "acknowledgePolicy";
+    pub const READ_MCP_SERVERS: &str = "readMcpServers";
+    pub const ENABLE_MCP_SERVER: &str = "enableMcpServer";
+    pub const DISABLE_MCP_SERVER: &str = "disableMcpServer";
+    pub const READ_CONTEXT: &str = "readContext";
+    pub const ANSWER_REQUEST: &str = "answerRequest";
+    pub const RESUME_SESSION: &str = "resumeSession";
+    pub const REPLACE_SESSION: &str = "replaceSession";
+    pub const READ_ARCHIVED_SESSION: &str = "readArchivedSession";
+    pub const EXPORT_TRANSCRIPT: &str = "exportTranscript";
+    pub const UPDATE_SETTINGS: &str = "updateSettings";
+    pub const READ_POLICY: &str = "readPolicy";
+    pub const REVOKE_GRANT: &str = "revokeGrant";
+    pub const CHECK_FORGE: &str = "checkForge";
+    pub const OPEN_PULL_REQUEST: &str = "openPullRequest";
+    pub const PRUNE_MERGED: &str = "pruneMerged";
+    pub const LOCAL_MERGE: &str = "localMerge";
+    pub const READ_TASKS: &str = "readTasks";
+    pub const SYNC_TASKS: &str = "syncTasks";
+    pub const CREATE_TASK: &str = "createTask";
+    pub const TICK_TASK: &str = "tickTask";
+    pub const LINK_TASK: &str = "linkTask";
+    pub const START_TASK_SESSION: &str = "startTaskSession";
+    pub const READ_SECRETS: &str = "readSecrets";
+    pub const GRANT_SECRET: &str = "grantSecret";
+    pub const REVOKE_SECRET: &str = "revokeSecret";
+    pub const ADD_SECRET: &str = "addSecret";
+    pub const REMOVE_SECRET: &str = "removeSecret";
+    pub const SET_SECRET_VALUE: &str = "setSecretValue";
+    /// Every name, in declaration order.
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+}
+
+impl Command {
+    /// This command's wire name (its `type` tag), as a `commandRefused` names it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Command::Attach { .. } => command_name::ATTACH,
+            Command::AddRepository { .. } => command_name::ADD_REPOSITORY,
+            Command::StartSession { .. } => command_name::START_SESSION,
+            Command::StopSession { .. } => command_name::STOP_SESSION,
+            Command::SetPermissionMode { .. } => command_name::SET_PERMISSION_MODE,
+            Command::SendPrompt { .. } => command_name::SEND_PROMPT,
+            Command::OpenShell { .. } => command_name::OPEN_SHELL,
+            Command::WriteShell { .. } => command_name::WRITE_SHELL,
+            Command::ResizeShell { .. } => command_name::RESIZE_SHELL,
+            Command::CloseShell { .. } => command_name::CLOSE_SHELL,
+            Command::CloseWorktreeShells { .. } => command_name::CLOSE_WORKTREE_SHELLS,
+            Command::CreateWorktree { .. } => command_name::CREATE_WORKTREE,
+            Command::StartSessionOnNewWorktree { .. } => command_name::START_SESSION_ON_NEW_WORKTREE,
+            Command::RemoveWorktree { .. } => command_name::REMOVE_WORKTREE,
+            Command::RefreshWorktrees { .. } => command_name::REFRESH_WORKTREES,
+            Command::CheckAgents { .. } => command_name::CHECK_AGENTS,
+            Command::ReadChanges { .. } => command_name::READ_CHANGES,
+            Command::DecideFile { .. } => command_name::DECIDE_FILE,
+            Command::CommitAccepted { .. } => command_name::COMMIT_ACCEPTED,
+            Command::DecideHunk { .. } => command_name::DECIDE_HUNK,
+            Command::CommentHunk { .. } => command_name::COMMENT_HUNK,
+            Command::SendFeedback { .. } => command_name::SEND_FEEDBACK,
+            Command::RebaseWorktree { .. } => command_name::REBASE_WORKTREE,
+            Command::ResolveConflict { .. } => command_name::RESOLVE_CONFLICT,
+            Command::AskAgentToRebase { .. } => command_name::ASK_AGENT_TO_REBASE,
+            Command::ReadHistory { .. } => command_name::READ_HISTORY,
+            Command::AcknowledgePolicy { .. } => command_name::ACKNOWLEDGE_POLICY,
+            Command::ReadMcpServers { .. } => command_name::READ_MCP_SERVERS,
+            Command::EnableMcpServer { .. } => command_name::ENABLE_MCP_SERVER,
+            Command::DisableMcpServer { .. } => command_name::DISABLE_MCP_SERVER,
+            Command::ReadContext { .. } => command_name::READ_CONTEXT,
+            Command::AnswerRequest { .. } => command_name::ANSWER_REQUEST,
+            Command::ResumeSession { .. } => command_name::RESUME_SESSION,
+            Command::ReplaceSession { .. } => command_name::REPLACE_SESSION,
+            Command::ReadArchivedSession { .. } => command_name::READ_ARCHIVED_SESSION,
+            Command::ExportTranscript { .. } => command_name::EXPORT_TRANSCRIPT,
+            Command::UpdateSettings { .. } => command_name::UPDATE_SETTINGS,
+            Command::ReadPolicy { .. } => command_name::READ_POLICY,
+            Command::RevokeGrant { .. } => command_name::REVOKE_GRANT,
+            Command::CheckForge { .. } => command_name::CHECK_FORGE,
+            Command::OpenPullRequest { .. } => command_name::OPEN_PULL_REQUEST,
+            Command::PruneMerged { .. } => command_name::PRUNE_MERGED,
+            Command::LocalMerge { .. } => command_name::LOCAL_MERGE,
+            Command::ReadTasks { .. } => command_name::READ_TASKS,
+            Command::SyncTasks { .. } => command_name::SYNC_TASKS,
+            Command::CreateTask { .. } => command_name::CREATE_TASK,
+            Command::TickTask { .. } => command_name::TICK_TASK,
+            Command::LinkTask { .. } => command_name::LINK_TASK,
+            Command::StartTaskSession { .. } => command_name::START_TASK_SESSION,
+            Command::ReadSecrets { .. } => command_name::READ_SECRETS,
+            Command::GrantSecret { .. } => command_name::GRANT_SECRET,
+            Command::RevokeSecret { .. } => command_name::REVOKE_SECRET,
+            Command::AddSecret { .. } => command_name::ADD_SECRET,
+            Command::RemoveSecret { .. } => command_name::REMOVE_SECRET,
+            Command::SetSecretValue { .. } => command_name::SET_SECRET_VALUE,
+        }
+    }
 }
 
 /// The user's answer to a Permission request.
@@ -676,6 +838,32 @@ pub enum Event {
         base: String,
         commits: Vec<Commit>,
     },
+    /// The Repository's declared MCP servers and whether each is enabled (replace-whole).
+    McpServersChanged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        servers: Vec<DeclaredMcpServer>,
+        /// Why `.mcp.json` could not be read, when it could not.
+        error: Option<String>,
+    },
+    /// Rebase on base stopped on conflicts and was left stopped: they are real conflicts in
+    /// the worktree now, to resolve (Keep ours / Keep base, or the agent), after which
+    /// Rebase again continues it.
+    RebaseStopped {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        base: String,
+        conflicts: Vec<String>,
+    },
+    /// The worktree's context files as they are on disk (replaces earlier ones for it).
+    ContextRead {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        files: Vec<ContextFile>,
+    },
     /// A Repository's Policy as it stands: sent after [`Command::ReadPolicy`], and whenever
     /// a local Grant is added or revoked. Replaces earlier policy for that Repository.
     PolicyChanged {
@@ -925,6 +1113,31 @@ pub struct Policy {
     /// Why the repository's policy file could not be read. While it is broken nothing is
     /// granted (its denials are unknown), so every request asks.
     pub error: Option<String>,
+    /// What the committed policy file asks for that would expand privilege and the user has
+    /// not acknowledged (ADR-0006): none of it applies until then.
+    #[serde(default)]
+    pub request: Option<PolicyRequest>,
+}
+
+/// The privilege-expanding parts of a Repository's committed policy, awaiting the user's
+/// acknowledgement (ADR-0006).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PolicyRequest {
+    /// What [`Command::AcknowledgePolicy`] must name: a hash of exactly these parts.
+    pub hash: String,
+    /// The committed allow rules (not applied until acknowledged).
+    pub allow: Vec<Grant>,
+    /// The policy declares a sandbox (Full auto would bypass the CLI's checks).
+    pub sandbox: bool,
+    /// A default mode above Ask first (Ask first is used until acknowledged).
+    pub default_mode: Option<PermissionMode>,
+    /// A worktree root of the repository's own (Switchyard's is used until acknowledged).
+    pub worktrees_root: Option<String>,
+    /// What Switchyard detected that supports a sandbox claim (a container or VM it runs
+    /// in); none when it cannot verify one.
+    pub sandbox_evidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1099,6 +1312,46 @@ pub enum LineKind {
     Context,
     Added,
     Removed,
+}
+
+/// An MCP server the Repository's `.mcp.json` declares (ADR-0006).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeclaredMcpServer {
+    pub name: String,
+    /// "stdio · npx", "http · host": never arguments, environment or headers.
+    pub transport: String,
+    /// Enabled for exactly this definition: passed to agents.
+    pub enabled: bool,
+    /// Enabled once, but its definition has changed since: asks again.
+    pub changed: bool,
+}
+
+/// A file an agent reads as context: instructions in the worktree, or memory the CLI
+/// keeps for it. Shown read-only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ContextFile {
+    /// As the user knows it: `CLAUDE.md`, `.claude/CLAUDE.md`, `MEMORY.md`.
+    pub name: String,
+    /// Where it is on disk.
+    pub path: String,
+    pub kind: ContextKind,
+    pub text: String,
+    /// Only the start of a long file is sent.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ContextKind {
+    /// In the worktree; committed with the repository (or kept local beside it).
+    Instructions,
+    /// What the agent CLI remembers for this worktree, outside the repository.
+    Memory,
 }
 
 /// One commit on a worktree's branch.
@@ -1322,13 +1575,17 @@ pub enum McpState {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Spend {
-    /// Input tokens, not counting cache reads.
+    /// Input tokens, not counting cache reads or writes.
     #[ts(type = "number")]
     pub input_tokens: u64,
     #[ts(type = "number")]
     pub output_tokens: u64,
     #[ts(type = "number")]
     pub cache_read_tokens: u64,
+    /// Tokens written to the prompt cache (priced apart from input).
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub cache_write_tokens: u64,
     /// Cost the CLI reported, in USD.
     pub reported_usd: Option<f64>,
     /// Cost estimated from the price table, in USD: only when the CLI reported none and the

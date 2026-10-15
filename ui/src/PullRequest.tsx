@@ -53,7 +53,7 @@ export function PrBadge({ state, worktreePath }: { state: State; worktreePath: s
  * its repository has a remote, Local merge into base when it has none. Nothing on the
  * primary worktree.
  */
-export function ShipActions(props: {
+export function PullRequestActions(props: {
   state: State;
   worktreePath: string;
   send: (command: Command) => void;

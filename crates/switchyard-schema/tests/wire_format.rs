@@ -82,6 +82,7 @@ fn spend_records_keep_reported_and_estimated_cost_apart() {
             input_tokens: 300_000,
             output_tokens: 50_000,
             cache_read_tokens: 1_000_000,
+            cache_write_tokens: 200_000,
             reported_usd: None,
             estimated_usd: Some(1.6),
             price_table_version: Some("2026-10-15".into()),
@@ -97,6 +98,7 @@ fn spend_records_keep_reported_and_estimated_cost_apart() {
                 "inputTokens": 300_000,
                 "outputTokens": 50_000,
                 "cacheReadTokens": 1_000_000,
+                "cacheWriteTokens": 200_000,
                 "reportedUsd": null,
                 "estimatedUsd": 1.6,
                 "priceTableVersion": "2026-10-15"
@@ -317,4 +319,22 @@ fn session_facts_list_mcp_servers_with_their_state() {
     // Facts stored before MCP servers existed still read.
     let old: SessionFacts = serde_json::from_value(json!({"model": null, "cliVersion": null, "cliPermissionMode": null, "turns": 0})).unwrap();
     assert!(old.mcp_servers.is_empty());
+}
+
+/// `command_name` lists exactly the serde tags of `Command`: serde's "unknown variant"
+/// error names every tag it expects, and each listed name is one of them.
+#[test]
+fn command_names_are_the_wire_tags() {
+    use switchyard_schema::command_name;
+    let err = serde_json::from_value::<Command>(json!({ "type": "noSuchCommand" })).unwrap_err().to_string();
+    let expected = err.split("expected one of ").nth(1).expect("serde lists the variants");
+    let mut tags: Vec<String> = expected.split(", ").map(|t| t.trim().trim_matches('`').to_string()).collect();
+    tags.sort();
+    let mut names: Vec<String> = command_name::ALL.iter().map(|n| n.to_string()).collect();
+    names.sort();
+    assert_eq!(names, tags);
+    // And name() agrees with serde for a command with fields.
+    let command = Command::OpenPullRequest { worktree_path: "/wt".into() };
+    assert_eq!(serde_json::to_value(&command).unwrap()["type"], command.name());
+    assert_eq!(Command::Attach.name(), "attach");
 }

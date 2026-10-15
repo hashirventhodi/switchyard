@@ -68,9 +68,14 @@ pub enum Event {
         fatal: bool,
     },
     TokenUsage {
+        /// Excluding cache reads and cache writes.
         input_tokens: u64,
         output_tokens: u64,
         cache_read_tokens: u64,
+        /// Tokens written to the prompt cache (cache creation); 0, and left out, when the
+        /// CLI reports none.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        cache_write_tokens: u64,
         /// Cost as reported by the CLI, when it reports one.
         cost_usd: Option<f64>,
     },
@@ -186,4 +191,8 @@ pub enum Verdict {
     Answer {
         text: String,
     },
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }

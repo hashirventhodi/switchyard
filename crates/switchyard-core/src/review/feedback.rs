@@ -7,6 +7,7 @@
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{ChangedFile, Decision, Event, Hunk, LineKind, SessionStatus};
 
 use super::{changes, conflict, known, save};
@@ -75,7 +76,7 @@ fn update(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, cha
 }
 
 pub(crate) fn decide_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, decision: Option<Decision>) {
-    const COMMAND: &str = "decideHunk";
+    const COMMAND: &str = command_name::DECIDE_HUNK;
     let Some(file) = find(inner, COMMAND, worktree_path, path, hunk_id) else { return };
     if decision.is_some() {
         if let Some(reason) = conflict(inner, worktree_path, &file) {
@@ -98,7 +99,7 @@ pub(crate) fn decide_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hu
 }
 
 pub(crate) fn comment_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, comment: Option<&str>) {
-    const COMMAND: &str = "commentHunk";
+    const COMMAND: &str = command_name::COMMENT_HUNK;
     if find(inner, COMMAND, worktree_path, path, hunk_id).is_none() {
         return;
     }
@@ -122,7 +123,7 @@ pub(super) fn clear_rejections(inner: &mut Inner, worktree_path: &str, file: &Ch
 const QUOTED_LINES: usize = 12;
 
 pub(crate) fn send_feedback(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &str) {
-    const COMMAND: &str = "sendFeedback";
+    const COMMAND: &str = command_name::SEND_FEEDBACK;
     if known(inner, COMMAND, worktree_path).is_none() {
         return;
     }

@@ -5,7 +5,9 @@ import type { ChangedFile } from "./ChangedFile";
 import type { Commit } from "./Commit";
 import type { ConflictFile } from "./ConflictFile";
 import type { ConflictSide } from "./ConflictSide";
+import type { ContextFile } from "./ContextFile";
 import type { Decision } from "./Decision";
+import type { DeclaredMcpServer } from "./DeclaredMcpServer";
 import type { Entry } from "./Entry";
 import type { ForgeSetup } from "./ForgeSetup";
 import type { PermissionMode } from "./PermissionMode";
@@ -46,7 +48,11 @@ hunks: number, } | { "type": "conflictsRead", worktreePath: string, base: string
 /**
  * The base branch the commits sit above.
  */
-base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
+base: string, commits: Array<Commit>, } | { "type": "mcpServersChanged", repositoryId: string, servers: Array<DeclaredMcpServer>, 
+/**
+ * Why `.mcp.json` could not be read, when it could not.
+ */
+error: string | null, } | { "type": "rebaseStopped", worktreePath: string, base: string, conflicts: Array<string>, } | { "type": "contextRead", worktreePath: string, files: Array<ContextFile>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
 /**
  * The pull request's number; `null` for a Local merge.
  */

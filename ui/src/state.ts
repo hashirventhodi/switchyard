@@ -1,10 +1,13 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
+import { emptyRawLog, pushRaw, type RawLog } from "./rawLog";
 import type { AgentSetup } from "./schema/AgentSetup";
 import type { ArchivedSession } from "./schema/ArchivedSession";
 import type { Settings } from "./schema/Settings";
 import type { ChangedFile } from "./schema/ChangedFile";
 import type { ConflictFile } from "./schema/ConflictFile";
+import type { ContextFile } from "./schema/ContextFile";
+import type { DeclaredMcpServer } from "./schema/DeclaredMcpServer";
 import type { Entry } from "./schema/Entry";
 import type { Policy } from "./schema/Policy";
 import type { Secret } from "./schema/Secret";
@@ -13,7 +16,9 @@ import type { Repository } from "./schema/Repository";
 import type { Request } from "./schema/Request";
 import { detail, verb } from "./requests";
 import { AGENT_LABEL } from "./status";
+import type { AgentKind } from "./schema/AgentKind";
 import type { Session } from "./schema/Session";
+import type { SessionStatus } from "./schema/SessionStatus";
 import type { SessionFacts } from "./schema/SessionFacts";
 import type { Shell } from "./schema/Shell";
 import type { SpendSample } from "./spend";
@@ -32,7 +37,7 @@ export interface SessionView extends Session {
   facts: SessionFacts;
   transcript: Chunked<Entry>;
   /** Raw adapter-protocol events (JSON), for the Agent log's debug view. */
-  rawEvents: Chunked<string>;
+  rawEvents: RawLog;
   /** Running spend totals as recorded, oldest first. */
   spend: SpendSample[];
 }
@@ -100,6 +105,64 @@ export interface State {
   houseRules: Record<string, string>;
   /** The Task each Session (live or archived) is linked to, by session id. */
   taskLinks: Record<string, string>;
+  /** Each Repository's declared MCP servers (its .mcp.json) and which are enabled, by id. */
+  mcpDeclared: Record<string, { servers: DeclaredMcpServer[]; error: string | null }>;
+  /** Each worktree's context files (instructions and agent memory), by path, as last read. */
+  contextFiles: Record<string, ContextFile[]>;
+  /** What happened, newest first (at most ACTIVITY_KEEP): the Dashboard's activity feed. */
+  activity: Activity[];
+}
+
+/** One line of the activity feed. */
+export interface Activity {
+  id: string;
+  atMs: number;
+  /** Who, when a session did it. */
+  agent: AgentKind | null;
+  branch: string;
+  text: string;
+  /** Dot colour: a session status, or none. */
+  tone: SessionStatus | null;
+}
+
+export const ACTIVITY_KEEP = 30;
+
+const ACTIVITY_TEXT: Record<SessionStatus, string> = {
+  running: "running",
+  waiting: "needs you",
+  idle: "paused",
+  done: "finished",
+  failed: "error",
+};
+
+/** Add `a` in time order (newest first); a line with the same id is kept once. */
+function addActivity(state: State, a: Activity): State {
+  if (state.activity.some((x) => x.id === a.id)) return state;
+  const activity = [...state.activity, a].sort((x, y) => y.atMs - x.atMs).slice(0, ACTIVITY_KEEP);
+  return { ...state, activity };
+}
+
+let activitySeq = 0;
+
+function branchAt(state: State, path: string): string {
+  return state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === path)?.branch ?? path;
+}
+
+function sessionActivity(state: State, sessionId: string, text: string, tone: SessionStatus | null): State {
+  const s = state.sessions[sessionId];
+  if (!s) return state;
+  return addActivity(state, {
+    id: `a${++activitySeq}`,
+    atMs: Date.now(),
+    agent: s.agent,
+    branch: s.branch ?? s.worktreePath,
+    text,
+    tone,
+  });
+}
+
+function worktreeActivity(state: State, path: string, text: string): State {
+  return addActivity(state, { id: `a${++activitySeq}`, atMs: Date.now(), agent: null, branch: branchAt(state, path), text, tone: null });
 }
 
 export interface WorktreeConflicts {
@@ -134,6 +197,9 @@ export const initialState: State = {
   houseRules: {},
   taskLinks: {},
   conflicts: {},
+  activity: [],
+  contextFiles: {},
+  mcpDeclared: {},
 };
 
 const noFacts: SessionFacts = {
@@ -203,21 +269,48 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "mcpServersChanged":
+      return { ...state, mcpDeclared: { ...state.mcpDeclared, [event.repositoryId]: { servers: event.servers, error: event.error } } };
+    case "contextRead":
+      return { ...state, contextFiles: { ...state.contextFiles, [event.worktreePath]: event.files } };
     case "worktreeHistory":
       return { ...state, history: { ...state.history, [event.worktreePath]: { base: event.base, commits: event.commits } } };
     case "worktreeRebased": {
       const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
       return resultToast(state, `Rebased ${worktree?.branch ?? event.worktreePath} on ${event.base}`, "ok");
     }
+    case "rebaseStopped": {
+      const branch = branchAt(state, event.worktreePath);
+      const files = event.conflicts.length ? ` on conflicts in ${event.conflicts.join(", ")}` : "";
+      return resultToast(
+        state,
+        `Rebasing ${branch} on ${event.base} stopped${files}: resolve them in Changes, then Rebase again to continue`,
+        "warn",
+      );
+    }
     case "commandRefused":
       return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {
       const s = event.session;
-      const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyChunked<string>(), spend: [] };
-      return { ...state, sessions: { ...state.sessions, [s.id]: view } };
+      const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyRawLog(), spend: [] };
+      const started = { ...state, sessions: { ...state.sessions, [s.id]: view } };
+      // Replayed on every attach: the start time makes it the same line each time.
+      return addActivity(started, {
+        id: `started:${s.id}`,
+        atMs: s.startedAtMs,
+        agent: s.agent,
+        branch: s.branch ?? s.worktreePath,
+        text: "started",
+        tone: "running",
+      });
     }
     case "sessionStatusChanged":
-      return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
+      return sessionActivity(
+        updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status })),
+        event.sessionId,
+        ACTIVITY_TEXT[event.status],
+        event.status,
+      );
     case "sessionModeChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, permissionMode: event.permissionMode }));
     case "sessionFactsChanged":
@@ -237,7 +330,7 @@ export function reduce(state: State, event: Event): State {
     case "agentEventReceived":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
-        rawEvents: put(s.rawEvents, event.index, event.json),
+        rawEvents: pushRaw(s.rawEvents, event.index, event.json),
       }));
     case "shellOpened":
       return { ...state, shells: [...state.shells.filter((s) => s.id !== event.shell.id), event.shell] };
@@ -284,7 +377,8 @@ export function reduce(state: State, event: Event): State {
     case "committed": {
       const n = event.files.length;
       const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})`;
-      return resultToast(state, text, "ok");
+      const noted = worktreeActivity(state, event.worktreePath, `committed ${n} file${n === 1 ? "" : "s"} (${event.commit})`);
+      return resultToast(noted, text, "ok");
     }
     case "sessionArchived": {
       const { session } = event.archived;
@@ -322,14 +416,22 @@ export function reduce(state: State, event: Event): State {
       return { ...state, pullRequests };
     }
     case "pullRequestOpened": {
-      const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
-      return resultToast(state, `Opened PR #${event.pullRequest.number} for ${worktree?.branch ?? event.worktreePath}`, "ok");
+      const branch = branchAt(state, event.worktreePath);
+      const noted = worktreeActivity(state, event.worktreePath, `opened PR #${event.pullRequest.number}`);
+      return resultToast(noted, `Opened PR #${event.pullRequest.number} for ${branch}`, "ok");
     }
     case "branchMerged": {
       const { branch, base, pullRequest, removed, kept } = event;
       const what = pullRequest === null ? `Merged ${branch} into ${base}` : `PR #${pullRequest} merged`;
       // One toast for the whole cleanup, not one for the merge and one for the removal.
-      const quiet = withoutRemovedToasts(state, [branch]);
+      const quiet = addActivity(withoutRemovedToasts(state, [branch]), {
+        id: `a${++activitySeq}`,
+        atMs: Date.now(),
+        agent: null,
+        branch,
+        text: pullRequest === null ? `merged into ${base}` : `PR #${pullRequest} merged`,
+        tone: "done",
+      });
       return removed
         ? resultToast(quiet, `${what} · removed worktree ${branch}`, "ok")
         : resultToast(quiet, `${what} · kept ${branch}: ${kept ?? "it could not be removed"}`, "warn");

@@ -6,9 +6,11 @@
 //! [`agents::AgentLauncher`] in the [`Runtime`]; their output re-enters the core on the
 //! launcher's threads and leaves as events on the same channel.
 
+mod acknowledgements;
 pub mod agents;
 pub mod codex;
 pub mod compat;
+pub mod context;
 pub mod forge;
 mod git;
 pub mod mcp;
@@ -24,6 +26,7 @@ mod shells;
 pub mod sidecar;
 mod spend;
 mod store;
+mod subprocess;
 mod tasks;
 mod worktrees;
 
@@ -31,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{Command, Event, Repository, Worktree};
 
 use agents::{AgentLauncher, NoAgents};
@@ -63,6 +67,12 @@ pub struct Runtime {
     /// How often the core polls the Forge on its own; `None`: only when
     /// [`Core::poll_forge`] is called (tests tick it by hand).
     pub forge_poll_every: Option<std::time::Duration>,
+    /// What supports a repository's sandbox claim on this machine (a container or VM
+    /// Switchyard runs in), shown beside the request; `None`: nothing to show.
+    pub sandbox_evidence: fn() -> Option<String>,
+    /// Claude Code's home (`~/.claude`): where it keeps each project's memory, read for
+    /// Context.
+    pub claude_home: PathBuf,
 }
 
 impl Default for Runtime {
@@ -77,6 +87,8 @@ impl Default for Runtime {
             secrets: Arc::new(secrets::NoSecrets),
             forge: Arc::new(NoForge),
             forge_poll_every: None,
+            claude_home: context::default_claude_home(),
+            sandbox_evidence: policy::detect_sandbox,
         }
     }
 }
@@ -92,6 +104,8 @@ pub fn default_worktree_root() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     home.join(".switchyard").join("worktrees")
 }
+
+pub use policy::detect_sandbox;
 
 pub fn system_now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -172,7 +186,18 @@ impl Core {
         self.inner.lock().expect("core lock").shells.set_program(ShellProgram { program, args });
     }
 
-    pub fn dispatch(&mut self, command: Command) {
+    /// Handle one command. Commands that wait on the network (the Forge: `gh`, `git push`)
+    /// hold the core only while they read or change its state, so agent output, shells and
+    /// other commands carry on meanwhile; `dispatch` may be called from several threads.
+    pub fn dispatch(&self, command: Command) {
+        match command {
+            Command::OpenPullRequest { worktree_path } => return forge::open_pull_request(&self.inner, &worktree_path),
+            Command::PruneMerged { repository_id } => return forge::prune(&self.inner, &repository_id),
+            Command::CheckForge => return forge::check(&self.inner),
+            Command::SyncTasks { repository_id } => return tasks::sync(&self.inner, &repository_id),
+            Command::Attach => forge::detect_if_unknown(&self.inner),
+            _ => {}
+        }
         let mut inner = self.inner.lock().expect("core lock");
         match command {
             Command::Attach => inner.attach(),
@@ -193,7 +218,7 @@ impl Core {
             Command::CloseShell { shell_id } => shells::close(&mut inner, &shell_id),
             Command::CloseWorktreeShells { worktree_path } => shells::close_worktree(&mut inner, &worktree_path),
             Command::CreateWorktree { repository_id, branch } => {
-                worktrees::create(&mut inner, "createWorktree", &repository_id, &branch);
+                worktrees::create(&mut inner, command_name::CREATE_WORKTREE, &repository_id, &branch);
             }
             Command::StartSessionOnNewWorktree { repository_id, branch, agent, permission_mode, prompt } => {
                 worktrees::start_session_on_new(&mut inner, &self.inner, &repository_id, &branch, agent, permission_mode, &prompt)
@@ -231,6 +256,11 @@ impl Core {
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
+            Command::ReadContext { worktree_path } => context::read_context(&inner, &worktree_path),
+            Command::AcknowledgePolicy { repository_id, hash } => policy::acknowledge(&inner, &repository_id, &hash),
+            Command::ReadMcpServers { repository_id } => mcp::read(&inner, &repository_id),
+            Command::EnableMcpServer { repository_id, name } => mcp::set_enabled(&inner, &repository_id, &name, true),
+            Command::DisableMcpServer { repository_id, name } => mcp::set_enabled(&inner, &repository_id, &name, false),
             Command::ReadSecrets { repository_id } => secrets::read(&inner, &repository_id),
             Command::GrantSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, true),
             Command::RevokeSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, false),
@@ -239,12 +269,11 @@ impl Core {
             Command::SetSecretValue { repository_id, name, value } => {
                 secrets::set_value(&mut inner, &repository_id, &name, &value)
             }
-            Command::CheckForge => forge::check(&mut inner),
-            Command::OpenPullRequest { worktree_path } => forge::open_pull_request(&mut inner, &worktree_path),
-            Command::PruneMerged { repository_id } => forge::prune(&mut inner, &repository_id),
+            Command::CheckForge | Command::OpenPullRequest { .. } | Command::PruneMerged { .. } | Command::SyncTasks { .. } => {
+                unreachable!("handled above without holding the core")
+            }
             Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),
             Command::ReadTasks { repository_id } => tasks::read(&inner, &repository_id),
-            Command::SyncTasks { repository_id } => tasks::sync(&mut inner, &repository_id),
             Command::CreateTask { repository_id, title, description, kind, checklist } => {
                 tasks::create(&inner, &repository_id, tasks::NewTask { title, description, kind, checklist })
             }
@@ -258,6 +287,16 @@ impl Core {
         }
         sessions::flush(&mut inner);
     }
+}
+
+/// The refusal for a repository id the core does not know.
+pub(crate) fn no_repository(id: &str) -> String {
+    format!("There is no repository {id}")
+}
+
+/// The refusal for a session id the core does not know.
+pub(crate) fn no_session(id: &str) -> String {
+    format!("There is no session {id}")
 }
 
 impl Inner {
@@ -276,11 +315,11 @@ impl Inner {
         forge::replay_setup(self);
         let stored = match self.store.repositories() {
             Ok(list) => list,
-            Err(e) => return self.refuse("attach", format!("cannot read the store: {e}")),
+            Err(e) => return self.refuse(command_name::ATTACH, format!("cannot read the store: {e}")),
         };
         for repo in stored {
             if let Err(reason) = self.announce(&repo) {
-                self.refuse("attach", reason);
+                self.refuse(command_name::ATTACH, reason);
             }
         }
         sessions::replay(self);
@@ -290,7 +329,7 @@ impl Inner {
     }
 
     fn add_repository(&mut self, path: &str) {
-        const COMMAND: &str = "addRepository";
+        const COMMAND: &str = command_name::ADD_REPOSITORY;
         let dir = Path::new(path);
         if !dir.is_dir() {
             return self.refuse(COMMAND, format!("{path} does not exist or is not a folder"));
@@ -351,6 +390,15 @@ impl Inner {
     /// a known repository's worktrees. Re-read from git every time.
     pub(crate) fn find_worktree(&self, path: &str) -> Option<(StoredRepository, git::GitWorktree)> {
         let repos = self.store.repositories().ok()?;
+        // Which repository `path` belongs to is read from its `.git` (no subprocess), so git
+        // runs once, for that repository, instead of once per repository.
+        if let Some(common) = git::common_dir(Path::new(path)) {
+            let owner = repos.iter().find(|r| git::common_dir(Path::new(&r.path)).as_ref() == Some(&common));
+            if let Some(repo) = owner {
+                let wt = git::worktrees(Path::new(&repo.path)).ok()?.into_iter().find(|w| w.path == Path::new(path))?;
+                return Some((repo.clone(), wt));
+            }
+        }
         repos.into_iter().find_map(|repo| {
             let list = git::worktrees(Path::new(&repo.path)).ok()?;
             let wt = list.into_iter().find(|w| w.path == Path::new(path))?;

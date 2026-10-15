@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
@@ -16,7 +17,7 @@ use crate::{git, repo_policy, review, sessions, shells, Inner};
 pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, branch: &str) -> Option<Worktree> {
     let branch = branch.trim();
     let Some(repo) = repository(inner, repository_id) else {
-        inner.refuse(command, format!("There is no repository {repository_id}"));
+        inner.refuse(command, crate::no_repository(&repository_id));
         return None;
     };
     let dir = Path::new(&repo.path);
@@ -35,8 +36,10 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
     // The repository's policy may name its own root (for tooling that assumes worktrees
     // sit next to or inside the checkout); otherwise one folder per repository under ours.
     let parent = match repo_policy::load(dir) {
+        // A committed root is a request until acknowledged (ADR-0006).
         Ok(policy) => policy
             .worktree_root(dir)
+            .filter(|_| crate::policy::acknowledged(inner, &repo.id, &policy))
             .unwrap_or_else(|| inner.runtime.worktree_root.join(repository_folder(dir))),
         Err(reason) => {
             inner.refuse(command, format!("Could not create the worktree: {reason}"));
@@ -83,7 +86,7 @@ pub(crate) fn start_session_on_new(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    const COMMAND: &str = "startSessionOnNewWorktree";
+    const COMMAND: &str = command_name::START_SESSION_ON_NEW_WORKTREE;
     if prompt.trim().is_empty() {
         return inner.refuse(COMMAND, "Write a prompt for the agent first".into());
     }
@@ -106,7 +109,7 @@ pub(crate) fn start_session_on_new(
 /// worktree). The branch stays. Shells on the worktree close with it, once git has removed it.
 pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     if let Err(reason) = try_remove(inner, worktree_path) {
-        inner.refuse("removeWorktree", reason);
+        inner.refuse(command_name::REMOVE_WORKTREE, reason);
     }
 }
 

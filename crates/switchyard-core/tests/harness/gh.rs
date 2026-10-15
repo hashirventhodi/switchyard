@@ -5,8 +5,8 @@
 //! the head commit) and answers `pr list --head <branch>` from what it holds. Tests change
 //! what GitHub reports with `set_state`, `set_checks`, `set_review` and `set_prs`.
 //!
-//! `issue list` prints what `set_issues` holds; `issue close` only logs (tests read the
-//! calls and change the issues themselves).
+//! `issue list` prints what `set_issues` holds. There is no `issue close`: Switchyard never
+//! writes to the tracker (a call would fail as unknown).
 //!
 //! Until `install` is called there is no `gh` at all (the CLI is missing).
 
@@ -21,8 +21,14 @@ pub struct FakeGh {
 
 const SCRIPT: &str = r#"#!/bin/sh
 state="@STATE@"
-for a in "$@"; do printf '%s\037' "$a"; done >> "$state/calls"
+# One call per line: arguments end in \037, newlines inside one are logged as \036.
+for a in "$@"; do printf '%s\037' "$a" | tr '\n' '\036'; done >> "$state/calls"
 printf '\n' >> "$state/calls"
+hold="$state/hold-$1-$2"
+if [ -f "$hold" ]; then
+  touch "$state/held-$1-$2"
+  while [ -f "$hold" ]; do sleep 0.02; done
+fi
 head=""
 prev=""
 for a in "$@"; do
@@ -56,10 +62,6 @@ case "$1 $2" in
   "issue list")
     if [ -f "$state/signed-out" ]; then echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4; fi
     if [ -f "$state/issues.json" ]; then cat "$state/issues.json"; else echo "[]"; fi
-    ;;
-  "issue close")
-    if [ -f "$state/close-fails" ]; then cat "$state/close-fails" >&2; exit 1; fi
-    echo "Closed issue #$3"
     ;;
   *)
     echo "fake gh: unknown command $*" >&2
@@ -108,11 +110,31 @@ impl FakeGh {
         std::fs::write(self.state().join("create-fails"), message).unwrap();
     }
 
+    /// From now on `gh <verb>` waits (after logging the call) until `release(verb)`: a slow
+    /// network, under the test's control.
+    pub fn hold(&self, verb: [&str; 2]) {
+        std::fs::write(self.state().join(format!("hold-{}-{}", verb[0], verb[1])), "").unwrap();
+    }
+
+    /// Wait until a `gh <verb>` is waiting on `hold` (panics after 20 s).
+    pub fn wait_until_held(&self, verb: [&str; 2]) {
+        let held = self.state().join(format!("held-{}-{}", verb[0], verb[1]));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !held.exists() {
+            assert!(std::time::Instant::now() < deadline, "gh {} {} never ran", verb[0], verb[1]);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    pub fn release(&self, verb: [&str; 2]) {
+        let _ = std::fs::remove_file(self.state().join(format!("hold-{}-{}", verb[0], verb[1])));
+    }
+
     /// Every invocation so far, as argument lists.
     pub fn calls(&self) -> Vec<Vec<String>> {
         let text = std::fs::read_to_string(self.state().join("calls")).unwrap_or_default();
         text.lines()
-            .map(|line| line.split('\u{1f}').filter(|a| !a.is_empty()).map(str::to_owned).collect())
+            .map(|line| line.split('\u{1f}').filter(|a| !a.is_empty()).map(|a| a.replace('\u{1e}', "\n")).collect())
             .collect()
     }
 
@@ -131,10 +153,6 @@ impl FakeGh {
         std::fs::write(self.state().join("issues.json"), issues.to_string()).unwrap();
     }
 
-    /// `issue close` fails with `message` on stderr.
-    pub fn fail_close(&self, message: &str) {
-        std::fs::write(self.state().join("close-fails"), message).unwrap();
-    }
 
     fn file(&self, branch: &str) -> PathBuf {
         self.state().join("prs").join(format!("{}.json", branch.replace('/', "_")))

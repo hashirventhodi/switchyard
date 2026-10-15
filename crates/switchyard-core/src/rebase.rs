@@ -5,9 +5,10 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{Commit, Event, SessionStatus};
 
-use crate::{git, sessions, worktrees, Inner};
+use crate::{git, review, sessions, worktrees, Inner};
 
 /// The base branch name of the repository whose primary worktree is at `repo`.
 fn base_of(repo: &Path) -> Option<String> {
@@ -16,50 +17,59 @@ fn base_of(repo: &Path) -> Option<String> {
 }
 
 pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
-    const COMMAND: &str = "rebaseWorktree";
+    const COMMAND: &str = command_name::REBASE_WORKTREE;
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };
     let Some(base) = base_of(Path::new(&repo.path)) else {
         return inner.refuse(COMMAND, format!("{} is no longer a readable git repository", repo.path));
     };
-    let Some(name) = worktree.branch.clone() else {
+    // A stopped rebase detaches HEAD; the branch is the one being rebased.
+    let Some(name) = worktree.branch.clone().or_else(|| git::rebasing_branch(&worktree.path)) else {
         return inner.refuse(COMMAND, format!("{worktree_path} has no branch checked out (detached HEAD)"));
     };
     if worktree.primary {
         return inner.refuse(COMMAND, format!("{name} is the primary worktree; only branch worktrees are rebased on {base}"));
     }
-    // Switchyard never rewrites the tree under a working agent.
+    // A mechanical action: only when no agent is mid-conversation in the tree. Running and
+    // Needs you (a request, or a finished turn awaiting the next prompt) both refuse.
     if let Some(status) = sessions::occupant(inner, worktree_path) {
-        if status == SessionStatus::Running {
+        if matches!(status, SessionStatus::Running | SessionStatus::Waiting) {
+            let label = sessions::status_label(status);
             return inner.refuse(
                 COMMAND,
-                format!("{name} has a Running session; stop it or ask the agent to rebase"),
+                format!("{name} has a {label} session; rebase when it is Paused, Finished or Error, or ask the agent to rebase"),
             );
         }
     }
-    if sessions::awaits_request(inner, worktree_path) {
-        return inner.refuse(
-            COMMAND,
-            format!("{name}'s agent is waiting on a request mid-turn; answer its request first"),
-        );
-    }
-    match git::dirty_count(&worktree.path) {
-        Ok(0) => {}
-        Ok(1) => return inner.refuse(COMMAND, format!("{name} has 1 uncommitted file; commit or discard it before rebasing")),
-        Ok(n) => return inner.refuse(COMMAND, format!("{name} has {n} uncommitted files; commit or discard them before rebasing")),
-        Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {name}: {e}")),
-    }
     let onto = git::base_ref(&worktree.path, &base);
-    match git::rebase(&worktree.path, &onto) {
+    // Rebase again on a stopped rebase continues it, once its conflicts are resolved.
+    let result = if git::rebase_in_progress(&worktree.path) {
+        let unmerged = git::unmerged_files(&worktree.path);
+        if !unmerged.is_empty() {
+            return inner.refuse(
+                COMMAND,
+                format!("Resolve the conflicts in {} first; then Rebase again continues", unmerged.join(", ")),
+            );
+        }
+        git::continue_rebase(&worktree.path)
+    } else {
+        match git::dirty_count(&worktree.path) {
+            Ok(0) => {}
+            Ok(1) => return inner.refuse(COMMAND, format!("{name} has 1 uncommitted file; commit or discard it before rebasing")),
+            Ok(n) => return inner.refuse(COMMAND, format!("{name} has {n} uncommitted files; commit or discard them before rebasing")),
+            Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {name}: {e}")),
+        }
+        git::rebase(&worktree.path, &onto)
+    };
+    match result {
         Ok(git::Rebase::Done) => {
             inner.emit(Event::WorktreeRebased { worktree_path: worktree_path.into(), base: base.clone() });
         }
-        Ok(git::Rebase::Aborted { conflicts }) => {
-            inner.refuse(
-                COMMAND,
-                format!("Rebasing {name} on {base} stopped on conflicts in {}; aborted, the branch is unchanged", conflicts.join(", ")),
-            );
+        Ok(git::Rebase::Stopped { conflicts }) => {
+            inner.emit(Event::RebaseStopped { worktree_path: worktree_path.into(), base: base.clone(), conflicts });
+            // Real conflicts now: the Changes tab gets them with their hunks.
+            review::emit_changes(inner, COMMAND, worktree_path);
         }
         Err(git::GitError(e)) => inner.refuse(COMMAND, format!("Could not rebase {name} on {base}: {e}")),
     }
@@ -69,9 +79,9 @@ pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
 /// One message asking the agent to rebase on base and resolve conflicts itself, delivered
 /// as the user's next prompt (the agent sees it in its context, as if typed).
 pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id: &str) {
-    const COMMAND: &str = "askAgentToRebase";
+    const COMMAND: &str = command_name::ASK_AGENT_TO_REBASE;
     let Some((worktree_path, status)) = sessions::worktree_and_status(inner, session_id) else {
-        return inner.refuse(COMMAND, format!("There is no session {session_id}"));
+        return inner.refuse(COMMAND, crate::no_session(&session_id));
     };
     match status {
         SessionStatus::Running => {
@@ -102,7 +112,7 @@ pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id:
 const HISTORY_LIMIT: usize = 200;
 
 pub(crate) fn history(inner: &Inner, worktree_path: &str) {
-    const COMMAND: &str = "readHistory";
+    const COMMAND: &str = command_name::READ_HISTORY;
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };

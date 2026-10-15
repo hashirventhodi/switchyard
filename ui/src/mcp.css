@@ -4,3 +4,19 @@
 .ctx .kv .k small{font-family:var(--font-ui);color:var(--fg-2);margin-left:6px;font-size:11px}
 .ctx .kv .v.ok{color:var(--ok)}
 .ctx .kv .v.no{color:var(--fg-2)}
+
+/* Context's Instructions and Memory: read-only files, opened in place. */
+.context-files ul{list-style:none;margin:0;padding:0}
+.context-files .cf button.kv{width:100%;text-align:left}
+.context-files .cf-text{margin:4px 0 8px;padding:8px;max-height:280px;overflow:auto;background:var(--bg-2);border-radius:4px;font:11.5px/1.5 var(--font-mono);white-space:pre-wrap;word-break:break-word}
+.context-files .note{font-size:11px;color:var(--fg-2);margin:0 0 8px}
+
+/* Declared MCP servers: committed requests with Enable/Disable (ADR-0006). */
+.mcp.declared .kv{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center}
+.mcp.declared .note{font-size:11px;color:var(--fg-2);margin:4px 0 0}
+.mcp.declared .note.bad{color:var(--bad)}
+
+/* The committed policy's pending request (ADR-0006). */
+.policy-request{border:1px solid var(--warn);background:var(--warn-soft);border-radius:var(--radius);padding:8px 10px}
+.policy-request ul{margin:4px 0 8px;padding-left:16px;font-size:12px}
+.policy-request .note,.policy-request .evidence{font-size:11px;color:var(--fg-2)}

@@ -70,24 +70,20 @@ test("Rebase on base is offered on a behind worktree's card only, and runs throu
   expect(sent).toContainEqual({ type: "rebaseWorktree", worktreePath: "/wt/acme/feat" });
 });
 
-test("a finished rebase is a result toast; one that hit conflicts is the core's refusal", () => {
+test("a finished rebase is a result toast; one stopped on conflicts says how to go on", () => {
   const { emit } = launch(behind("/wt/acme/feat", 2));
 
   act(() => emit({ type: "worktreeRebased", worktreePath: "/wt/acme/feat", base: "main" }));
   expect(screen.getByRole("status").textContent).toContain("Rebased feat/login on main");
 
-  act(() =>
-    emit({
-      type: "commandRefused",
-      command: "rebaseWorktree",
-      reason: "Rebasing feat/login on main stopped on conflicts in README; aborted, the branch is unchanged",
-    }),
+  act(() => emit({ type: "rebaseStopped", worktreePath: "/wt/acme/feat", base: "main", conflicts: ["README"] }));
+  expect(screen.getByRole("status").textContent).toContain(
+    "Rebasing feat/login on main stopped on conflicts in README: resolve them in Changes, then Rebase again to continue",
   );
-  expect(screen.getByRole("status").textContent).toContain("stopped on conflicts in README");
 });
 
 test("History lists the branch's commits above the base marker and offers Rebase when behind", () => {
-  const { sent, emit } = launch({ type: "sessionStarted", session }, behind("/wt/acme/fix", 1));
+  const { sent, emit } = launch({ type: "sessionStarted", session: { ...session, status: "done" } }, behind("/wt/acme/fix", 1));
   openSession();
 
   fireEvent.click(screen.getByRole("tab", { name: /History/ }));
@@ -143,7 +139,7 @@ test("History re-reads when the branch moves", () => {
 });
 
 test("Context shows where the branch stands with a rebase action when behind", () => {
-  const { sent } = launch({ type: "sessionStarted", session }, behind("/wt/acme/fix", 4));
+  const { sent } = launch({ type: "sessionStarted", session: { ...session, status: "idle" } }, behind("/wt/acme/fix", 4));
   openSession();
 
   fireEvent.click(screen.getByRole("tab", { name: "Context" }));
@@ -164,4 +160,17 @@ test("returning to the window re-reads every worktree's facts from git", () => {
   });
 
   expect(sent.filter((c) => c.type === "refreshWorktrees").length).toBe(before + 1);
+});
+
+test("Rebase is a mechanical action: not while the session is Running or Needs you", () => {
+  const { emit } = launch({ type: "sessionStarted", session }, behind("/wt/acme/fix", 1));
+  openSession();
+  fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+  act(() => emit({ type: "worktreeHistory", worktreePath: "/wt/acme/fix", base: "main", commits: [] }));
+  const rebaseButton = () =>
+    within(screen.getByRole("list", { name: "Commits on fix/readme" })).getByRole("button", { name: "Rebase" }) as HTMLButtonElement;
+  expect(rebaseButton().disabled).toBe(true);
+  expect(rebaseButton().title).toContain("Paused, Finished or Error");
+  act(() => emit({ type: "sessionStatusChanged", sessionId: "session-1", status: "idle" }));
+  expect(rebaseButton().disabled).toBe(false);
 });

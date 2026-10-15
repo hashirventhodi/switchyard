@@ -26,7 +26,7 @@ export interface SessionViewProps {
   branchState?: ReactNode;
   /** How the branch leaves the worktree (Open pull request, Local merge), on the header and
    * the Finished box. */
-  ship?: ReactNode;
+  pullRequestActions?: ReactNode;
   /** Text drafted elsewhere (Ask agent in review) for the composer; a new seq replaces it. */
   draft?: Draft;
   /** The review pane beside this one is hidden (⌘⇧D). */
@@ -37,6 +37,10 @@ export interface SessionViewProps {
   onToggleChanges?: () => void;
   /** The repository's policy: its ceiling caps the composer's mode segment. */
   policy?: Policy;
+  /** Show the review pane on its Changes tab (the Finished and Paused boxes). */
+  onReviewChanges?: () => void;
+  /** Open a shell in the session's worktree (the Error box). */
+  onOpenTerminal?: () => void;
 }
 
 export interface Draft {
@@ -83,7 +87,7 @@ export function SessionView(props: SessionViewProps) {
             Resume
           </button>
         )}
-        {props.ship}
+        {props.pullRequestActions}
         <button
           className="btn sm ghost"
           title="Write the transcript as JSONL, one entry per line"
@@ -108,12 +112,13 @@ export function SessionView(props: SessionViewProps) {
         answerInChat={() => composer.current?.focus()}
         reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
       />
-      {session.status === "done" && (
-        <div className="endbox done" role="group" aria-label="Finished">
-          <span className="tx">The agent says it is done.</span>
-          {props.ship}
-        </div>
-      )}
+      <EndBox
+        session={session}
+        send={send}
+        pullRequestActions={props.pullRequestActions}
+        onReviewChanges={props.onReviewChanges}
+        onOpenTerminal={props.onOpenTerminal}
+      />
       <Composer
         session={session}
         send={send}
@@ -124,6 +129,89 @@ export function SessionView(props: SessionViewProps) {
       />
     </section>
   );
+}
+
+/** The last entry of `type` matching `test`, newest first. */
+function lastEntry<T extends Entry["type"]>(
+  session: Session,
+  type: T,
+  test: (e: Entry & { type: T }) => boolean = () => true,
+): (Entry & { type: T }) | undefined {
+  for (let i = session.transcript.length - 1; i >= 0; i--) {
+    const e = at(session.transcript, i);
+    if (e?.type === type && test(e as Entry & { type: T })) return e as Entry & { type: T };
+  }
+  return undefined;
+}
+
+/** After the transcript of a stopped session: what happened, and what to do next. */
+function EndBox(props: {
+  session: Session;
+  send: (command: Command) => void;
+  pullRequestActions?: ReactNode;
+  onReviewChanges?: () => void;
+  onOpenTerminal?: () => void;
+}) {
+  const { session, send, pullRequestActions, onReviewChanges, onOpenTerminal } = props;
+  const prompt = (text: string) => send({ type: "sendPrompt", sessionId: session.id, text });
+  const resume = (
+    <button className="btn sm" onClick={() => send({ type: "resumeSession", sessionId: session.id })}>
+      Resume session
+    </button>
+  );
+  const review = onReviewChanges && (
+    <button className="btn sm" onClick={onReviewChanges}>
+      Review changes
+    </button>
+  );
+  switch (session.status) {
+    case "failed": {
+      const failed = lastEntry(session, "tool", (e) => e.state === "failed");
+      const why = lastEntry(session, "system")?.text ?? "The agent stopped after an error.";
+      const retry = failed ? `Run \`${failed.summary}\` again.` : (lastEntry(session, "user")?.text ?? "Try again.");
+      return (
+        <div className="endbox err" role="group" aria-label="Error">
+          <span className="tx">{why}</span>
+          <div className="acts">
+            <button className="btn sm primary" onClick={() => prompt(retry)}>
+              Retry last command
+            </button>
+            <button className="btn sm" onClick={() => prompt("Fix the error above and continue.")}>
+              Tell agent to fix and continue
+            </button>
+            {onOpenTerminal && (
+              <button className="btn sm ghost" onClick={onOpenTerminal}>
+                Open terminal
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    case "done":
+      return (
+        <div className="endbox done" role="group" aria-label="Finished">
+          <span className="tx">The agent says it is done.</span>
+          <div className="acts">
+            {review}
+            {pullRequestActions}
+            {resume}
+          </div>
+        </div>
+      );
+    case "idle":
+      return (
+        <div className="endbox" role="group" aria-label="Paused">
+          <span className="tx">Paused. Resume picks the conversation up where it stopped.</span>
+          <div className="acts">
+            {resume}
+            {review}
+          </div>
+        </div>
+      );
+    default:
+      return null;
+  }
 }
 
 function SummaryStrip({ session }: { session: Session }) {
@@ -302,6 +390,9 @@ function EntryRow(props: {
   }
 }
 
+/** Chips that put a slash command in the composer, as the agent CLIs take them. */
+const SLASH_COMMANDS = ["/review changes", "/commit", "/test", "/explain this diff", "/open pr"];
+
 function Composer(props: {
   session: Session;
   send: (command: Command) => void;
@@ -337,26 +428,42 @@ function Composer(props: {
       ? "The agent is working…"
       : "Paused. Resume to continue.";
   return (
-    <div className="composer">
-      <ModeSegment session={session} send={send} ceiling={ceiling} />
-      <textarea
-        ref={input}
-        aria-label="Message the agent"
-        rows={2}
-        value={text}
-        placeholder={placeholder}
-        disabled={!ready}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (matches(e, "composer.send")) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-      />
-      <button className="btn primary" disabled={!ready || !text.trim()} onClick={submit}>
-        Send
-      </button>
-    </div>
+    <>
+      <div className="slash" role="group" aria-label="Slash commands">
+        {SLASH_COMMANDS.map((c) => (
+          <button
+            key={c}
+            disabled={!ready}
+            onClick={() => {
+              setText(c);
+              input.current?.focus();
+            }}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+      <div className="composer">
+        <ModeSegment session={session} send={send} ceiling={ceiling} />
+        <textarea
+          ref={input}
+          aria-label="Message the agent"
+          rows={2}
+          value={text}
+          placeholder={placeholder}
+          disabled={!ready}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (matches(e, "composer.send")) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <button className="btn primary" disabled={!ready || !text.trim()} onClick={submit}>
+          Send
+        </button>
+      </div>
+    </>
   );
 }

@@ -70,3 +70,9 @@
 @media (max-width:860px){
   .lane-head,.summary,.transcript,.composer{padding-left:16px;padding-right:16px}
 }
+
+/* Slash-command chips above the composer (prototype .slash). */
+.slash{display:flex;gap:6px;padding:0 20px 8px;flex-wrap:wrap}
+.slash button{font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--fg-2);background:var(--bg-1)}
+.slash button:hover:not(:disabled){color:var(--fg);border-color:var(--line-2)}
+.slash button:disabled{opacity:.5}

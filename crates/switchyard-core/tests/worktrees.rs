@@ -89,6 +89,8 @@ fn a_repository_policy_can_name_its_own_worktree_root() {
     .unwrap();
     let mut core = Harness::launch();
     let repository = added_repository(&core.add_repository(&repo.path));
+    // A committed root is a request (ADR-0006); once acknowledged it is used.
+    core.acknowledge_policy(&repository.id);
 
     let worktree = added_worktree(&create(&mut core, &repository.id, "feat/login"));
 

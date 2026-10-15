@@ -21,6 +21,10 @@
 //!   - NPM_TOKEN               # (values live in the keychain or environment, never here)
 //! ```
 //!
+//! Committed, so a request (ADR-0006): denials and the ceiling apply at once; allow rules,
+//! `sandbox`, a `default_mode` above Ask first and `worktrees.root` apply only once the user
+//! acknowledged exactly them (`crate::policy::acknowledged`).
+//!
 //! Unknown top-level keys are ignored; a rule must name exactly one of `command`,
 //! `network` or `mcp`, so a misspelt denial is an error rather than silently dropped.
 
@@ -131,13 +135,13 @@ pub fn load(primary: &Path) -> Result<RepoPolicy, String> {
         return Ok(RepoPolicy::default());
     }
     let policy: RepoPolicy = serde_yaml::from_str(&text).map_err(|e| format!("{POLICY_FILE} is not valid: {e}"))?;
-    policy.rules().map_err(|e| format!("{POLICY_FILE} is not valid: {e}"))?;
+    policy.grants().map_err(|e| format!("{POLICY_FILE} is not valid: {e}"))?;
     Ok(policy)
 }
 
 impl RepoPolicy {
     /// The file's allow rules and deny rules, in file order.
-    pub fn rules(&self) -> Result<(Vec<GrantRule>, Vec<GrantRule>), String> {
+    pub fn grants(&self) -> Result<(Vec<GrantRule>, Vec<GrantRule>), String> {
         let read = |list: &[RuleSpec], key: &str| -> Result<Vec<GrantRule>, String> {
             list.iter().enumerate().map(|(i, r)| r.rule().map_err(|e| format!("permissions.{key}[{i}]: {e}"))).collect()
         };

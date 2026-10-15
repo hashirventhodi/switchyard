@@ -1,6 +1,7 @@
 //! Behind, rebase and conflict detection through seam 1, against real temporary git
 //! repositories: ahead/behind and conflicting files read from git, a dry-run merge that
-//! never touches the working tree or the index, rebase that completes or aborts cleanly,
+//! never touches the working tree or the index, rebase that completes or stops on real
+//! conflicts for resolving (and continues when asked again),
 //! and the branch's history above its base.
 mod harness;
 
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use harness::{added_repository, git, worktree_snapshot, Harness, TempRepo};
 use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
-use switchyard_schema::{Command, Entry, Event, SessionStatus, WorktreeFacts};
+use switchyard_schema::{Command, ConflictKind, ConflictSide, Entry, Event, SessionStatus, WorktreeFacts};
 
 /// A repository with an identity for the commits a rebase rewrites (CI has no global one),
 /// added to a fresh core, plus a worktree on `feat/login` made through the core.
@@ -136,28 +137,45 @@ fn a_rebase_without_conflicts_puts_the_branch_on_base_and_clears_behind() {
 }
 
 #[test]
-fn a_rebase_that_hits_conflicts_aborts_cleanly_and_names_the_files() {
+fn a_rebase_that_hits_conflicts_stops_with_them_in_the_tree_and_rebase_again_continues() {
     let (repo, mut core, path) = setup();
     commit(&path, "README", "hello from the branch\n", "branch edit");
     commit(&repo.path, "README", "hello from main\n", "main edit");
-    let head_before = head(&path);
-    let tree_before = worktree_snapshot(&path);
 
     let events = rebase(&mut core, &path);
 
-    let reason = events
+    assert!(
+        events.iter().any(|e| matches!(e, Event::RebaseStopped { base, conflicts, .. }
+            if base == "main" && *conflicts == vec!["README".to_string()])),
+        "{events:#?}"
+    );
+    assert!(!events.iter().any(|e| matches!(e, Event::CommandRefused { .. })), "not a refusal: {events:#?}");
+    assert!(rebase_in_progress(&path), "left stopped, not aborted");
+    // Real conflicts now: the Changes tab gets them with their hunks.
+    let files = events
         .iter()
         .find_map(|e| match e {
-            Event::CommandRefused { command, reason } if command == "rebaseWorktree" => Some(reason.clone()),
+            Event::ConflictsRead { files, .. } => Some(files.clone()),
             _ => None,
         })
-        .unwrap_or_else(|| panic!("no refusal in {events:#?}"));
-    assert!(reason.contains("README") && reason.contains("aborted"), "{reason}");
-    assert!(!events.iter().any(|e| matches!(e, Event::WorktreeRebased { .. })));
-    assert_eq!(head(&path), head_before);
-    assert_eq!(worktree_snapshot(&path), tree_before);
+        .expect("conflicts read");
+    assert_eq!(files.iter().map(|f| (f.path.as_str(), f.kind)).collect::<Vec<_>>(), vec![("README", ConflictKind::Unmerged)]);
+
+    // Rebase again before resolving: refused, naming the file.
+    assert!(refused(&rebase(&mut core, &path)).contains("README"));
+
+    // Keep ours, then Rebase again continues and finishes it.
+    let hunk = files[0].hunks[0].id.clone();
+    core.send(Command::ResolveConflict {
+        worktree_path: path.to_string_lossy().into_owned(),
+        path: "README".into(),
+        hunk_id: hunk,
+        side: ConflictSide::Ours,
+    });
+    let events = rebase(&mut core, &path);
+    assert!(events.iter().any(|e| matches!(e, Event::WorktreeRebased { .. })), "{events:#?}");
     assert!(!rebase_in_progress(&path));
-    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec!["README".into()] });
+    assert_eq!(std::fs::read_to_string(path.join("README")).unwrap(), "hello from the branch\n");
 }
 
 #[test]
@@ -212,8 +230,32 @@ fn a_worktree_whose_agent_waits_on_a_permission_request_is_not_rebased_mid_turn(
 
     let reason = refused(&rebase(&mut core, &path));
 
-    assert!(reason.contains("request"), "{reason}");
+    assert!(reason.contains("Needs you"), "{reason}");
     assert_eq!(head(&path), head_before);
+}
+
+#[test]
+fn a_worktree_whose_agent_awaits_the_next_prompt_is_not_rebased() {
+    let (repo, mut core, path) = setup();
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+    core.start_session(&path, "Add a login form.");
+    core.agent_says(0, AgentEvent::TurnComplete);
+    let head_before = head(&path);
+
+    let reason = refused(&rebase(&mut core, &path));
+
+    assert!(reason.contains("Needs you") && reason.contains("Paused, Finished or Error"), "{reason}");
+    assert_eq!(head(&path), head_before);
+}
+
+#[test]
+fn a_paused_finished_or_failed_session_does_not_stop_a_rebase() {
+    let (repo, mut core, path) = setup();
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+    let id = harness::started_session(&core.start_session(&path, "Add a login form."));
+    core.send(Command::StopSession { session_id: id });
+    let events = rebase(&mut core, &path);
+    assert!(events.iter().any(|e| matches!(e, Event::WorktreeRebased { .. })), "{events:#?}");
 }
 
 #[test]

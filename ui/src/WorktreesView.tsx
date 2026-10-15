@@ -6,7 +6,7 @@ import type { NewSessionPreset } from "./NewSession";
 import type { Command } from "./schema/Command";
 import type { Worktree } from "./schema/Worktree";
 import { sessionOn, type RepositoryView, type State } from "./state";
-import { PrBadge, PruneMerged, ShipActions } from "./PullRequest";
+import { PrBadge, PruneMerged, PullRequestActions } from "./PullRequest";
 import type { OpenLink } from "./Setup";
 import { AGENT_LABEL, STATUS_LABEL, Status } from "./status";
 
@@ -151,9 +151,14 @@ function WorktreeCard(props: {
               Start agent here
             </button>
           )}
-          <ShipActions state={state} worktreePath={w.path} send={send} openLink={openLink} />
+          <PullRequestActions state={state} worktreePath={w.path} send={send} openLink={openLink} />
           {!w.primary && !!facts?.behind && (
-            <button className="btn sm" onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}>
+            <button
+              className="btn sm"
+              disabled={occupant?.status === "running" || occupant?.status === "waiting"}
+              title="Rebase when no agent is at work here (Paused, Finished or Error)"
+              onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}
+            >
               Rebase on {repository.baseBranch}
             </button>
           )}

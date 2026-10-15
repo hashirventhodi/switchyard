@@ -8,6 +8,8 @@ import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView, State } from "./state";
 import { ContextArchive } from "./ContextArchive";
 import { ContextGrants } from "./ContextGrants";
+import { ContextDeclaredMcp } from "./ContextDeclaredMcp";
+import { ContextFiles } from "./ContextFiles";
 import { ContextMcp } from "./ContextMcp";
 import { ContextTask } from "./ContextTask";
 import { HistoryPullRequest } from "./HistoryPullRequest";
@@ -106,6 +108,8 @@ export function BranchPane(props: {
               <BranchContext {...props} />
               <ContextGrants {...props} />
               <ContextMcp {...props} />
+              <ContextDeclaredMcp {...props} />
+              <ContextFiles {...props} />
               <ContextSecrets {...props} />
               <ContextArchive {...props} />
             </>
@@ -129,6 +133,8 @@ export function HistoryTab({ state, session, send }: { state: State; session: Se
   const base = history?.base ?? repository?.baseBranch ?? "base";
   const behind = facts?.behind ?? 0;
   const canAsk = session.status === "waiting" || session.status === "done" || session.status === "failed";
+  // Rebase is mechanical: never under an agent mid-conversation (Running, Needs you).
+  const canRebase = session.status === "idle" || session.status === "done" || session.status === "failed";
   return (
     <ul className="graph" aria-label={`Commits on ${session.branch ?? path}`}>
       {history?.commits.map((c) => (
@@ -149,7 +155,12 @@ export function HistoryTab({ state, session, send }: { state: State; session: Se
         <span className="t">
           {behind > 0 && (
             <>
-              <button className="btn sm" onClick={() => send({ type: "rebaseWorktree", worktreePath: path })}>
+              <button
+                className="btn sm"
+                disabled={!canRebase}
+                title={canRebase ? `Rebase on ${base}; a conflict stops it for you to resolve` : "Rebase when the session is Paused, Finished or Error, or ask the agent"}
+                onClick={() => send({ type: "rebaseWorktree", worktreePath: path })}
+              >
                 Rebase
               </button>
               <button
@@ -190,7 +201,11 @@ export function BranchContext({ state, session, send }: { state: State; session:
               {facts.behind > 0 && `↓${facts.behind} `}
               {!facts.ahead && !facts.behind && "up to date"}
               {facts.behind > 0 && (
-                <button aria-label={`Rebase on ${base}`} onClick={() => send({ type: "rebaseWorktree", worktreePath: path })}>
+                <button
+                  aria-label={`Rebase on ${base}`}
+                  disabled={session.status === "running" || session.status === "waiting"}
+                  onClick={() => send({ type: "rebaseWorktree", worktreePath: path })}
+                >
                   rebase
                 </button>
               )}

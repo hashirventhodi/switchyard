@@ -83,17 +83,17 @@ test("statuses and counts follow each session on its own, and both requests are 
   expect(within(card("feat/tests")).getByTestId("status").dataset.status).toBe("waiting");
   expect(within(card("fix/docs")).getByTestId("status").dataset.status).toBe("running");
   expect(statusbar().getByText(/running/).textContent).toBe("1 running");
-  expect(statusbar().getByText(/waiting/).textContent).toBe("1 waiting");
+  expect(statusbar().getByText(/Needs you/).textContent).toBe("1 Needs you");
 
   act(() => emit(...asks("session-1", "req-1", "pnpm lint")));
   expect(screen.getByRole("button", { name: /^Needs you: \d+$/ }).querySelector(".v")?.textContent).toBe("2");
   const needsYou = within(screen.getByRole("region", { name: "Needs you" }));
   expect(needsYou.getByText("Wants to run: pnpm test")).toBeTruthy();
   expect(needsYou.getByText("Wants to run: pnpm lint")).toBeTruthy();
-  // One toast per request, each naming its agent; Approve answers without leaving the Dashboard.
+  // One toast per request, each naming its agent; Run once answers without leaving the Dashboard.
   const toasts = [...screen.getByRole("status").querySelectorAll<HTMLElement>(".toast")];
   expect(toasts.map((t) => t.textContent?.split(" wants")[0])).toEqual(["OpenAI Codex on feat/tests", "Claude Code on fix/docs"]);
-  for (const toast of toasts) fireEvent.click(within(toast).getByRole("button", { name: "Approve" }));
+  for (const toast of toasts) fireEvent.click(within(toast).getByRole("button", { name: "Run once" }));
 
   expect(sent).toContainEqual({ type: "answerRequest", sessionId: "session-2", requestId: "0", verdict: { type: "allowOnce" } });
   expect(sent).toContainEqual({ type: "answerRequest", sessionId: "session-1", requestId: "req-1", verdict: { type: "allowOnce" } });

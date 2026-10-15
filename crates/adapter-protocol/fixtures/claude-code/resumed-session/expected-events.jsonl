@@ -1,4 +1,4 @@
 {"type":"session_init","external_session_id":"5b0c2d1e-7a44-4c55-9a1f-2f0e3c9d8b10","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":"claude-opus-5-5"}
 {"type":"agent_text","text":"Picking up where I stopped: the README link is fixed; the tests still need a run."}
-{"type":"token_usage","input_tokens":20,"output_tokens":240,"cache_read_tokens":25800,"cost_usd":0.0521}
+{"type":"token_usage","input_tokens":20,"output_tokens":240,"cache_read_tokens":25800,"cache_write_tokens":2100,"cost_usd":0.0521}
 {"type":"turn_complete"}

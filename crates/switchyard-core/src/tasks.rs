@@ -19,6 +19,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
+use switchyard_schema::command_name;
 use switchyard_schema::{
     AgentKind, ChecklistItem, Event, PermissionMode, Task, TaskColumn, TaskKind, TaskSessionTarget, TaskSourceKind,
 };
@@ -90,19 +91,26 @@ pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
 /// The TaskSources of a repository: its local tasks, and its GitHub Issues when it has a
 /// remote.
 fn sources<'a>(inner: &'a Inner, repo: &StoredRepository) -> Vec<Box<dyn TaskSource + 'a>> {
+    [TaskSourceKind::Local, TaskSourceKind::Github].into_iter().filter_map(|kind| source(inner, repo, kind)).collect()
+}
+
+/// The repository's one source of `kind`, if it has one. Only GitHub Issues runs git (to
+/// see which branches are linked); local tasks are a file.
+fn source<'a>(inner: &'a Inner, repo: &StoredRepository, kind: TaskSourceKind) -> Option<Box<dyn TaskSource + 'a>> {
     let dir = Path::new(&repo.path);
-    let folder = worktrees::repository_folder(dir);
-    let mut list: Vec<Box<dyn TaskSource + 'a>> = vec![Box::new(LocalTasks::new(&inner.data_dir, &folder))];
-    if git::remote(dir).is_some() {
-        list.push(Box::new(GithubIssues {
-            db: inner.store.db(),
-            forge: inner.runtime.forge.clone(),
-            repository_id: repo.id.clone(),
-            dir: dir.to_path_buf(),
-            progress: issue_progress(inner, repo),
-        }));
+    match kind {
+        TaskSourceKind::Local => {
+            Some(Box::new(LocalTasks::new(&inner.data_dir, &worktrees::repository_folder(dir))))
+        }
+        TaskSourceKind::Github => {
+            git::remote(dir)?;
+            Some(Box::new(GithubIssues {
+                db: inner.store.db(),
+                repository_id: repo.id.clone(),
+                progress: issue_progress(inner, repo),
+            }))
+        }
     }
-    list
 }
 
 /// How far the work on each open issue has got, by Switchyard's facts: In progress once a
@@ -111,8 +119,8 @@ fn sources<'a>(inner: &'a Inner, repo: &StoredRepository) -> Vec<Box<dyn TaskSou
 fn issue_progress(inner: &Inner, repo: &StoredRepository) -> HashMap<u32, TaskColumn> {
     let db = inner.store.db();
     let issue_of = |task_id: &str| -> Option<u32> {
-        let key = task_id.strip_prefix(&format!("{}/github/", repo.id))?;
-        github::number_of(key)
+        let id = TaskId::parse(task_id).filter(|id| id.repository_id == repo.id && id.source == TaskSourceKind::Github)?;
+        github::number_of(&id.key)
     };
     let mut progress = HashMap::new();
     let mut reach = |n: u32, column: TaskColumn| {
@@ -134,7 +142,6 @@ fn issue_progress(inner: &Inner, repo: &StoredRepository) -> HashMap<u32, TaskCo
             .iter()
             .filter_map(|s| linked_task(db, s))
             .filter_map(|t| issue_of(&t))
-            .chain(github::named_issue(&branch))
             .collect();
         let column =
             if forge::has_open_pull_request(inner, &path) { TaskColumn::InReview } else { TaskColumn::InProgress };
@@ -152,13 +159,36 @@ fn source_name(kind: TaskSourceKind) -> &'static str {
     }
 }
 
-/// `<repository id>/<source>/<key>`: unique across repositories and sources.
-fn task_id(repo: &StoredRepository, kind: TaskSourceKind, key: &str) -> String {
-    format!("{}/{}/{key}", repo.id, source_name(kind))
+/// A Task's id, `<repository id>/<source>/<key>`: unique across repositories and sources.
+/// The key may itself contain `/`; the repository id and source name never do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskId {
+    repository_id: String,
+    source: TaskSourceKind,
+    key: String,
+}
+
+impl TaskId {
+    fn new(repo: &StoredRepository, source: TaskSourceKind, key: &str) -> TaskId {
+        TaskId { repository_id: repo.id.clone(), source, key: key.to_string() }
+    }
+
+    fn parse(id: &str) -> Option<TaskId> {
+        let mut parts = id.splitn(3, '/');
+        let (repository_id, source, key) = (parts.next()?, parts.next()?, parts.next()?);
+        let source = [TaskSourceKind::Local, TaskSourceKind::Github].into_iter().find(|k| source_name(*k) == source)?;
+        Some(TaskId { repository_id: repository_id.into(), source, key: key.into() })
+    }
+}
+
+impl std::fmt::Display for TaskId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}/{}", self.repository_id, source_name(self.source), self.key)
+    }
 }
 
 fn task(db: &Connection, repo: &StoredRepository, kind: TaskSourceKind, t: SourceTask) -> Task {
-    let id = task_id(repo, kind, &t.key);
+    let id = TaskId::new(repo, kind, &t.key).to_string();
     let ticked = ticks(db, &id);
     Task {
         checklist: t
@@ -223,31 +253,37 @@ fn announce(inner: &Inner, command: &str, repo: &StoredRepository) {
 /// [`Command::ReadTasks`](switchyard_schema::Command::ReadTasks).
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse("readTasks", format!("There is no repository {repository_id}"));
+        return inner.refuse(command_name::READ_TASKS, crate::no_repository(&repository_id));
     };
-    announce(inner, "readTasks", &repo);
+    announce(inner, command_name::READ_TASKS, &repo);
 }
 
 /// [`Command::SyncTasks`](switchyard_schema::Command::SyncTasks): read the repository's
 /// issues through the Forge (nothing is written), then announce the board. When the Forge
 /// cannot be used the board stays as last synced and the refusal says why.
-pub(crate) fn sync(inner: &mut Inner, repository_id: &str) {
-    const COMMAND: &str = "syncTasks";
-    let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
+    const COMMAND: &str = command_name::SYNC_TASKS;
+    let (repo, dir, forge) = {
+        let inner = core.lock().expect("core lock");
+        let Some(repo) = worktrees::repository(&inner, repository_id) else {
+            return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+        };
+        let dir = Path::new(&repo.path).to_path_buf();
+        if git::remote(&dir).is_none() {
+            announce(&inner, COMMAND, &repo);
+            let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| repo.path.clone());
+            return inner.refuse(COMMAND, format!("{name} has no remote, so no GitHub issues; its tasks are local"));
+        }
+        (repo, dir, inner.runtime.forge.clone())
     };
-    let dir = Path::new(&repo.path).to_path_buf();
-    if git::remote(&dir).is_none() {
-        announce(inner, COMMAND, &repo);
-        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| repo.path.clone());
-        return inner.refuse(COMMAND, format!("{name} has no remote, so no GitHub issues; its tasks are local"));
-    }
-    let read = forge::admit(inner).and_then(|()| inner.runtime.forge.issues(&dir));
+    // `gh` runs without holding the core.
+    let read = forge::admit(core).and_then(|()| forge.issues(&dir));
+    let inner = core.lock().expect("core lock");
     let failed = match read {
         Ok(issues) => github::save(inner.store.db(), &repo.id, &issues).err(),
         Err(reason) => Some(reason),
     };
-    announce(inner, COMMAND, &repo);
+    announce(&inner, COMMAND, &repo);
     if let Some(reason) = failed {
         inner.refuse(COMMAND, format!("Could not sync GitHub issues: {reason}"));
     }
@@ -255,9 +291,9 @@ pub(crate) fn sync(inner: &mut Inner, repository_id: &str) {
 
 /// [`Command::CreateTask`](switchyard_schema::Command::CreateTask): a local task in To do.
 pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
-    const COMMAND: &str = "createTask";
+    const COMMAND: &str = command_name::CREATE_TASK;
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
     };
     let title = new.title.trim().to_string();
     if title.is_empty() {
@@ -277,17 +313,18 @@ pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
     }
 }
 
-/// A task found by id, with its repository.
+/// A task found by id, with its repository: only the task's own source is read.
 fn find(inner: &Inner, id: &str) -> Option<(StoredRepository, Task)> {
-    let repo_id = id.split('/').next()?;
-    let repo = worktrees::repository(inner, repo_id)?;
-    let found = list(inner, &repo).ok()?.into_iter().find(|t| t.id == id)?;
+    let TaskId { repository_id, source: kind, key } = TaskId::parse(id)?;
+    let repo = worktrees::repository(inner, &repository_id)?;
+    let found = source(inner, &repo, kind)?.tasks().ok()?.into_iter().find(|t| t.key == key)?;
+    let found = task(inner.store.db(), &repo, kind, found);
     Some((repo, found))
 }
 
 /// [`Command::TickTask`](switchyard_schema::Command::TickTask): kept in the store only.
 pub(crate) fn tick(inner: &Inner, task_id: &str, item: u32, done: bool) {
-    const COMMAND: &str = "tickTask";
+    const COMMAND: &str = command_name::TICK_TASK;
     let Some((repo, found)) = find(inner, task_id) else {
         return inner.refuse(COMMAND, format!("There is no task {task_id}"));
     };
@@ -312,9 +349,9 @@ fn linked_task(db: &Connection, session_id: &str) -> Option<String> {
 
 /// [`Command::LinkTask`](switchyard_schema::Command::LinkTask).
 pub(crate) fn link(inner: &Inner, session_id: &str, task_id: Option<&str>, relink: bool) {
-    const COMMAND: &str = "linkTask";
+    const COMMAND: &str = command_name::LINK_TASK;
     let Some(session) = sessions::live(inner, session_id) else {
-        return inner.refuse(COMMAND, format!("There is no session {session_id}"));
+        return inner.refuse(COMMAND, crate::no_session(&session_id));
     };
     let db = inner.store.db();
     let Some(task_id) = task_id else {
@@ -348,7 +385,7 @@ fn attach(inner: &Inner, command: &str, session_id: &str, repo: &StoredRepositor
     }
     inner.emit(Event::TaskLinked { session_id: session_id.into(), task_id: Some(found.id.clone()) });
     if advance(inner, repo, found, TaskColumn::InProgress, None) {
-        announce(inner, "moveTask", repo);
+        announce(inner, command, repo);
     }
 }
 
@@ -360,14 +397,9 @@ fn advance(inner: &Inner, repo: &StoredRepository, found: &Task, to: TaskColumn,
         // that moves it there already shows when it is read: announce it all the same.
         return found.source == TaskSourceKind::Github && found.column == to && to != TaskColumn::Done;
     }
-    let mut moved = false;
-    for mut source in sources(inner, repo) {
-        if source.kind() == found.source {
-            // A source that cannot be written now keeps its column; the board says so.
-            moved = source.move_to(&found.key, to, pull_request).is_ok();
-        }
-    }
-    moved
+    // Only the task's own source is built; one that cannot be written now keeps its
+    // column, and the board says so.
+    source(inner, repo, found.source).is_some_and(|mut source| source.move_to(&found.key, to, pull_request).is_ok())
 }
 
 /// [`Command::StartTaskSession`](switchyard_schema::Command::StartTaskSession).
@@ -380,7 +412,7 @@ pub(crate) fn start_session(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    const COMMAND: &str = "startTaskSession";
+    const COMMAND: &str = command_name::START_TASK_SESSION;
     let Some((repo, found)) = find(inner, task_id) else {
         return inner.refuse(COMMAND, format!("There is no task {task_id}"));
     };
@@ -407,21 +439,26 @@ pub(crate) fn start_session(
 }
 
 /// The tasks of `branch` at `path`: those linked to any session, live or archived, that ran
-/// there, and the issue the branch is named for (`fix/412-…`), as GitHub links them.
+/// there. A branch's name links nothing.
 fn tasks_on(inner: &Inner, path: &str, branch: &str) -> Vec<(StoredRepository, Task)> {
     let db = inner.store.db();
     let mut ids: Vec<String> =
         sessions::ids_on_branch(inner, path, branch).iter().filter_map(|s| linked_task(db, s)).collect();
-    if let (Some(n), Some((repo, _))) = (github::named_issue(branch), inner.find_worktree(path)) {
-        ids.push(task_id(&repo, TaskSourceKind::Github, &format!("#{n}")));
-    }
     ids.sort();
     ids.dedup();
     ids.iter().filter_map(|id| find(inner, id)).collect()
 }
 
 /// Move the tasks of `branch` at `path` to `to`, announcing each changed board once.
-fn advance_all(inner: &Inner, tasks: Vec<(StoredRepository, Task)>, to: TaskColumn, pull_request: Option<&str>) {
+/// `command`: what moved them, to name if the board cannot be read; none for the poller,
+/// which then leaves the board as it was without a word.
+fn advance_all(
+    inner: &Inner,
+    command: Option<&str>,
+    tasks: Vec<(StoredRepository, Task)>,
+    to: TaskColumn,
+    pull_request: Option<&str>,
+) {
     let mut changed: Vec<StoredRepository> = Vec::new();
     for (repo, found) in tasks {
         if advance(inner, &repo, &found, to, pull_request) && !changed.iter().any(|r| r.id == repo.id) {
@@ -429,21 +466,28 @@ fn advance_all(inner: &Inner, tasks: Vec<(StoredRepository, Task)>, to: TaskColu
         }
     }
     for repo in changed {
-        announce(inner, "moveTask", &repo);
+        match command {
+            Some(command) => announce(inner, command, &repo),
+            None => {
+                if let Ok(tasks) = list(inner, &repo) {
+                    inner.emit(Event::TasksChanged { repository_id: repo.id.clone(), tasks, house_rules: house_rules(&repo) });
+                }
+            }
+        }
     }
 }
 
 /// The worktree's pull request is open (opened from Switchyard, or found by the poller):
 /// its tasks move to In review.
-pub(crate) fn pull_request_open(inner: &Inner, path: &str, branch: &str) {
-    advance_all(inner, tasks_on(inner, path, branch), TaskColumn::InReview, None);
+pub(crate) fn pull_request_open(inner: &Inner, command: Option<&str>, path: &str, branch: &str) {
+    advance_all(inner, command, tasks_on(inner, path, branch), TaskColumn::InReview, None);
 }
 
 /// The Forge reports the worktree's branch Merged by `pull_request` (its address), or a
 /// Local merge finished: its tasks move to Done. Call it before the worktree is removed,
 /// so the branch's issue is still found.
-pub(crate) fn merged(inner: &Inner, path: &str, branch: &str, pull_request: Option<&str>) {
-    advance_all(inner, tasks_on(inner, path, branch), TaskColumn::Done, pull_request);
+pub(crate) fn merged(inner: &Inner, command: Option<&str>, path: &str, branch: &str, pull_request: Option<&str>) {
+    advance_all(inner, command, tasks_on(inner, path, branch), TaskColumn::Done, pull_request);
 }
 
 /// On attach: every link of a session the core still knows (live or archived).
@@ -456,6 +500,61 @@ pub(crate) fn replay_links(inner: &Inner) {
     for (session_id, task_id) in read().unwrap_or_default() {
         if sessions::known(inner, &session_id) {
             inner.emit(Event::TaskLinked { session_id, task_id: Some(task_id) });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_task_id_reads_back_what_it_writes_and_keeps_slashes_in_the_key() {
+        let repo = StoredRepository { id: "repo-3".into(), path: "/src/acme".into() };
+        let id = TaskId::new(&repo, TaskSourceKind::Github, "#412");
+        assert_eq!(id.to_string(), "repo-3/github/#412");
+        assert_eq!(TaskId::parse("repo-3/github/#412"), Some(id));
+        let odd = TaskId::parse("repo-3/local/L-1/x").unwrap();
+        assert_eq!((odd.source, odd.key.as_str()), (TaskSourceKind::Local, "L-1/x"));
+        assert_eq!(TaskId::parse("repo-3/jira/X-1"), None);
+        assert_eq!(TaskId::parse("repo-3"), None);
+    }
+}
+
+/// The GitHub issue numbers linked to the sessions that ran on `branch` at `path`: what a
+/// pull request opened from there closes on merge.
+pub(crate) fn linked_issues(inner: &Inner, path: &str, branch: &str) -> Vec<u32> {
+    let db = inner.store.db();
+    let mut issues: Vec<u32> = sessions::ids_on_branch(inner, path, branch)
+        .iter()
+        .filter_map(|s| linked_task(db, s))
+        .filter_map(|t| TaskId::parse(&t))
+        .filter(|id| id.source == TaskSourceKind::Github)
+        .filter_map(|id| github::number_of(&id.key))
+        .collect();
+    issues.sort_unstable();
+    issues.dedup();
+    issues
+}
+
+/// Read a repository's issues again (after a merge) and announce the board; quiet when the
+/// Forge cannot answer. Runs `gh` without holding the core. Only for a repository that
+/// has been synced before.
+pub(crate) fn refresh_issues(core: &Arc<Mutex<Inner>>, repository_id: &str) {
+    let (dir, forge) = {
+        let inner = core.lock().expect("core lock");
+        let Some(repo) = worktrees::repository(&inner, repository_id) else { return };
+        if !github::synced(inner.store.db(), repository_id) {
+            return;
+        }
+        (Path::new(&repo.path).to_path_buf(), inner.runtime.forge.clone())
+    };
+    let Ok(issues) = forge.issues(&dir) else { return };
+    let inner = core.lock().expect("core lock");
+    let Some(repo) = worktrees::repository(&inner, repository_id) else { return };
+    if github::save(inner.store.db(), &repo.id, &issues).is_ok() {
+        if let Ok(tasks) = list(&inner, &repo) {
+            inner.emit(Event::TasksChanged { repository_id: repo.id.clone(), tasks, house_rules: house_rules(&repo) });
         }
     }
 }

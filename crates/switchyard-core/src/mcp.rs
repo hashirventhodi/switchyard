@@ -19,6 +19,10 @@
 //! secrets granted to the repository, because the agent process it inherits from was spawned
 //! with only those (`crate::secrets`; [`codex_config_for_spawn`] for Codex).
 //!
+//! `.mcp.json` is committed, so it only declares servers (ADR-0006): a server reaches an
+//! agent once the user has enabled it ([`enabled`]), an Acknowledgement pinned to a hash
+//! of its definition, so any change to the definition asks again.
+//!
 //! [`LaunchSpec::mcp_servers`]: crate::agents::LaunchSpec::mcp_servers
 
 use std::collections::BTreeMap;
@@ -288,4 +292,89 @@ fn toml_key(key: &str) -> String {
     } else {
         Value::String(key.to_string()).to_string()
     }
+}
+
+/// A server's definition as it is pinned when enabled: everything that decides what runs
+/// or where it connects (command, args, env, url, headers).
+fn definition_hash(server: &McpServer) -> String {
+    let definition = match &server.transport {
+        McpTransport::Stdio { command, args, env } => json!({ "type": "stdio", "command": command, "args": args, "env": env }),
+        McpTransport::Http { url, headers } => json!({ "type": "http", "url": url, "headers": headers }),
+        McpTransport::Sse { url, headers } => json!({ "type": "sse", "url": url, "headers": headers }),
+    };
+    crate::acknowledgements::hash(&format!("{}\n{definition}", server.name))
+}
+
+fn subject(name: &str) -> String {
+    format!("mcp:{name}")
+}
+
+/// The repository's servers the user has enabled for their current definition: the only
+/// ones passed to agents. A broken `.mcp.json` is an error naming it.
+pub(crate) fn enabled(inner: &crate::Inner, repository_id: &str, primary: &Path) -> Result<Vec<McpServer>, String> {
+    let db = inner.store.db();
+    Ok(load(primary)?
+        .into_iter()
+        .filter(|s| crate::acknowledgements::holds(db, repository_id, &subject(&s.name), &definition_hash(s)))
+        .collect())
+}
+
+fn announce(inner: &crate::Inner, repo: &crate::store::StoredRepository) {
+    let db = inner.store.db();
+    let (servers, error) = match load(Path::new(&repo.path)) {
+        Ok(servers) => (servers, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    let servers = servers
+        .iter()
+        .map(|s| {
+            let acknowledged = crate::acknowledgements::get(db, &repo.id, &subject(&s.name));
+            let enabled = acknowledged.as_deref() == Some(definition_hash(s).as_str());
+            switchyard_schema::DeclaredMcpServer {
+                name: s.name.clone(),
+                transport: s.summary(),
+                enabled,
+                changed: acknowledged.is_some() && !enabled,
+            }
+        })
+        .collect();
+    inner.emit(switchyard_schema::Event::McpServersChanged { repository_id: repo.id.clone(), servers, error });
+}
+
+/// [`Command::ReadMcpServers`](switchyard_schema::Command::ReadMcpServers).
+pub(crate) fn read(inner: &crate::Inner, repository_id: &str) {
+    match crate::worktrees::repository(inner, repository_id) {
+        Some(repo) => announce(inner, &repo),
+        None => inner.refuse(switchyard_schema::command_name::READ_MCP_SERVERS, crate::no_repository(repository_id)),
+    }
+}
+
+/// [`Command::EnableMcpServer`] / [`Command::DisableMcpServer`]: takes effect at the next
+/// spawn.
+///
+/// [`Command::EnableMcpServer`]: switchyard_schema::Command::EnableMcpServer
+/// [`Command::DisableMcpServer`]: switchyard_schema::Command::DisableMcpServer
+pub(crate) fn set_enabled(inner: &crate::Inner, repository_id: &str, name: &str, on: bool) {
+    use switchyard_schema::command_name::{DISABLE_MCP_SERVER, ENABLE_MCP_SERVER};
+    let command = if on { ENABLE_MCP_SERVER } else { DISABLE_MCP_SERVER };
+    let Some(repo) = crate::worktrees::repository(inner, repository_id) else {
+        return inner.refuse(command, crate::no_repository(repository_id));
+    };
+    let db = inner.store.db();
+    let saved = if on {
+        let servers = match load(Path::new(&repo.path)) {
+            Ok(servers) => servers,
+            Err(reason) => return inner.refuse(command, reason),
+        };
+        let Some(server) = servers.iter().find(|s| s.name == name) else {
+            return inner.refuse(command, format!("{MCP_FILE} declares no server {name}"));
+        };
+        crate::acknowledgements::set(db, &repo.id, &subject(name), &definition_hash(server))
+    } else {
+        crate::acknowledgements::remove(db, &repo.id, &subject(name))
+    };
+    if let Err(reason) = saved {
+        return inner.refuse(command, format!("Could not change {name}: {reason}"));
+    }
+    announce(inner, &repo);
 }
