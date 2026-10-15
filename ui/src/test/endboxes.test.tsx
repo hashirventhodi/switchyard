@@ -80,6 +80,23 @@ test("Paused offers Resume and Review changes", () => {
   expect(sent).toContainEqual({ type: "resumeSession", sessionId: "session-1" });
 });
 
+test("slash-command chips fill the composer for the user to send", () => {
+  const { sent } = launch("waiting");
+  const chips = screen.getByRole("group", { name: "Slash commands" });
+  expect(within(chips).getAllByRole("button").map((b) => b.textContent)).toEqual([
+    "/review changes",
+    "/commit",
+    "/test",
+    "/explain this diff",
+    "/open pr",
+  ]);
+  fireEvent.click(within(chips).getByRole("button", { name: "/test" }));
+  const composer = screen.getByRole("textbox", { name: "Message the agent" }) as HTMLTextAreaElement;
+  expect(composer.value).toBe("/test");
+  expect(document.activeElement).toBe(composer);
+  expect(sent.some((c) => c.type === "sendPrompt")).toBe(false);
+});
+
 test("a running session has no box", () => {
   launch("running");
   for (const name of ["Error", "Finished", "Paused"]) expect(screen.queryByRole("group", { name })).toBeNull();

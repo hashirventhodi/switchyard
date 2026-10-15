@@ -390,6 +390,9 @@ function EntryRow(props: {
   }
 }
 
+/** Chips that put a slash command in the composer, as the agent CLIs take them. */
+const SLASH_COMMANDS = ["/review changes", "/commit", "/test", "/explain this diff", "/open pr"];
+
 function Composer(props: {
   session: Session;
   send: (command: Command) => void;
@@ -425,26 +428,42 @@ function Composer(props: {
       ? "The agent is working…"
       : "Paused. Resume to continue.";
   return (
-    <div className="composer">
-      <ModeSegment session={session} send={send} ceiling={ceiling} />
-      <textarea
-        ref={input}
-        aria-label="Message the agent"
-        rows={2}
-        value={text}
-        placeholder={placeholder}
-        disabled={!ready}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (matches(e, "composer.send")) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-      />
-      <button className="btn primary" disabled={!ready || !text.trim()} onClick={submit}>
-        Send
-      </button>
-    </div>
+    <>
+      <div className="slash" role="group" aria-label="Slash commands">
+        {SLASH_COMMANDS.map((c) => (
+          <button
+            key={c}
+            disabled={!ready}
+            onClick={() => {
+              setText(c);
+              input.current?.focus();
+            }}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+      <div className="composer">
+        <ModeSegment session={session} send={send} ceiling={ceiling} />
+        <textarea
+          ref={input}
+          aria-label="Message the agent"
+          rows={2}
+          value={text}
+          placeholder={placeholder}
+          disabled={!ready}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (matches(e, "composer.send")) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <button className="btn primary" disabled={!ready || !text.trim()} onClick={submit}>
+          Send
+        </button>
+      </div>
+    </>
   );
 }
