@@ -2,6 +2,7 @@
 import type { AgentSetup } from "./AgentSetup";
 import type { Commit } from "./Commit";
 import type { Entry } from "./Entry";
+import type { Policy } from "./Policy";
 import type { Repository } from "./Repository";
 import type { Session } from "./Session";
 import type { SessionFacts } from "./SessionFacts";
@@ -22,4 +23,4 @@ atMs: number, spend: Spend, } | { "type": "transcriptEntry", sessionId: string, 
 /**
  * The base branch the commits sit above.
  */
-base: string, commits: Array<Commit>, };
+base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, };

@@ -2,6 +2,7 @@
 import { emptyChunked, put, type Chunked } from "./chunked";
 import type { AgentSetup } from "./schema/AgentSetup";
 import type { Entry } from "./schema/Entry";
+import type { Policy } from "./schema/Policy";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
 import type { Request } from "./schema/Request";
@@ -67,6 +68,8 @@ export interface State {
   worktreeFacts: Record<string, WorktreeFacts>;
   /** The commits each worktree's branch has above its base, by path, as last read. */
   history: Record<string, WorktreeHistory>;
+  /** Each Repository's resolved Policy, by repository id, once the core has sent it. */
+  policies: Record<string, Policy>;
 }
 
 export interface WorktreeHistory {
@@ -84,6 +87,7 @@ export const initialState: State = {
   agents: [],
   worktreeFacts: {},
   history: {},
+  policies: {},
 };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
@@ -181,6 +185,8 @@ export function reduce(state: State, event: Event): State {
       return state;
     case "agentsChecked":
       return { ...state, agents: event.agents };
+    case "policyChanged":
+      return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
   }
 }
 

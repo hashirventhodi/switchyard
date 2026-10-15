@@ -1,6 +1,7 @@
 // A stand-in for the Claude Code sidecar that speaks the adapter protocol on stdio without
-// any SDK or CLI: it reports its working directory and launch config, echoes prompts as a
-// finished turn, writes unreadable lines on "garbage" and exits on "crash".
+// any SDK or CLI: it reports its working directory and launch config (allowed/disallowed
+// tools, when it was given any), echoes prompts as a finished turn, writes unreadable lines
+// on "garbage" and exits on "crash".
 import { createInterface } from "node:readline";
 
 const config = JSON.parse(process.argv[process.argv.indexOf("--config") + 1]);
@@ -15,6 +16,8 @@ say({
   model: null,
 });
 say({ type: "agent_text", text: `cwd=${process.cwd()}` });
+if (config.allowed_tools?.length || config.disallowed_tools?.length)
+  say({ type: "agent_text", text: `allowed=${config.allowed_tools.join(",")} disallowed=${config.disallowed_tools.join(",")}` });
 
 for await (const line of createInterface({ input: process.stdin })) {
   const command = JSON.parse(line);

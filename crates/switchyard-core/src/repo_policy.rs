@@ -1,15 +1,28 @@
 //! The Repository's committed policy, `.switchyard/policy.yml` in its primary worktree.
-//! Only the worktree root is read so far; the PolicyEngine (grants, denials, modes and the
-//! ceiling) extends [`RepoPolicy`] rather than parsing the file a second time.
+//! It is reviewed in pull requests and versioned with the code; the PolicyEngine
+//! (`crate::policy`) layers it with the user's local Grants.
 //!
 //! ```yaml
 //! worktrees:
 //!   root: ../acme-worktrees   # relative to the repository; `~/` is the home folder
+//! permissions:
+//!   default_mode: auto_edit   # explore | ask_first | auto_edit | full_auto
+//!   ceiling: auto_edit        # no Session may run in a more autonomous mode
+//!   allow:
+//!     - command: pnpm *       # a command prefix plus a glob on the rest
+//!     - network: registry.npmjs.org
+//!     - mcp: { server: github, tool: get_issue }   # tool `*`: every tool of the server
+//!   deny:                     # wins over any allow, in any layer
+//!     - command: git push *
 //! ```
+//!
+//! Unknown top-level keys are ignored; a rule must name exactly one of `command`,
+//! `network` or `mcp`, so a misspelt denial is an error rather than silently dropped.
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use switchyard_schema::{GrantRule, PermissionMode};
 
 pub const POLICY_FILE: &str = ".switchyard/policy.yml";
 
@@ -17,6 +30,71 @@ pub const POLICY_FILE: &str = ".switchyard/policy.yml";
 pub struct RepoPolicy {
     #[serde(default)]
     pub worktrees: WorktreesPolicy,
+    #[serde(default)]
+    pub permissions: PermissionsPolicy,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct PermissionsPolicy {
+    pub default_mode: Option<ModeName>,
+    pub ceiling: Option<ModeName>,
+    #[serde(default)]
+    pub allow: Vec<RuleSpec>,
+    #[serde(default)]
+    pub deny: Vec<RuleSpec>,
+}
+
+/// A Permission mode as the file spells it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeName {
+    Explore,
+    AskFirst,
+    AutoEdit,
+    FullAuto,
+}
+
+impl From<ModeName> for PermissionMode {
+    fn from(mode: ModeName) -> Self {
+        match mode {
+            ModeName::Explore => PermissionMode::Explore,
+            ModeName::AskFirst => PermissionMode::AskFirst,
+            ModeName::AutoEdit => PermissionMode::AutoEdit,
+            ModeName::FullAuto => PermissionMode::FullAuto,
+        }
+    }
+}
+
+/// One grant or denial: exactly one of its fields.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSpec {
+    pub command: Option<String>,
+    pub network: Option<String>,
+    pub mcp: Option<McpSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpSpec {
+    pub server: String,
+    pub tool: String,
+}
+
+impl RuleSpec {
+    fn rule(&self) -> Result<GrantRule, String> {
+        let non_empty = |s: &str| !s.trim().is_empty();
+        match (&self.command, &self.network, &self.mcp) {
+            (Some(pattern), None, None) if non_empty(pattern) => Ok(GrantRule::Command { pattern: pattern.trim().into() }),
+            (None, Some(domain), None) if non_empty(domain) => {
+                Ok(GrantRule::Network { domain: domain.trim().to_ascii_lowercase() })
+            }
+            (None, None, Some(m)) if non_empty(&m.server) && non_empty(&m.tool) => {
+                Ok(GrantRule::McpTool { server: m.server.trim().into(), tool: m.tool.trim().into() })
+            }
+            _ => Err("each rule names exactly one of command, network or mcp".into()),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -37,10 +115,20 @@ pub fn load(primary: &Path) -> Result<RepoPolicy, String> {
     if text.trim().is_empty() {
         return Ok(RepoPolicy::default());
     }
-    serde_yaml::from_str(&text).map_err(|e| format!("{POLICY_FILE} is not valid: {e}"))
+    let policy: RepoPolicy = serde_yaml::from_str(&text).map_err(|e| format!("{POLICY_FILE} is not valid: {e}"))?;
+    policy.rules().map_err(|e| format!("{POLICY_FILE} is not valid: {e}"))?;
+    Ok(policy)
 }
 
 impl RepoPolicy {
+    /// The file's allow rules and deny rules, in file order.
+    pub fn rules(&self) -> Result<(Vec<GrantRule>, Vec<GrantRule>), String> {
+        let read = |list: &[RuleSpec], key: &str| -> Result<Vec<GrantRule>, String> {
+            list.iter().enumerate().map(|(i, r)| r.rule().map_err(|e| format!("permissions.{key}[{i}]: {e}"))).collect()
+        };
+        Ok((read(&self.permissions.allow, "allow")?, read(&self.permissions.deny, "deny")?))
+    }
+
     /// The worktree root this policy names, resolved against the repository's primary
     /// worktree, if it names one.
     pub fn worktree_root(&self, primary: &Path) -> Option<PathBuf> {

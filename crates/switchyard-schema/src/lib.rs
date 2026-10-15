@@ -145,6 +145,23 @@ pub enum Command {
         request_id: String,
         verdict: Verdict,
     },
+    /// Read a Repository's Policy (its committed `.switchyard/policy.yml` and the user's
+    /// local Grants for it) again. The core answers with [`Event::PolicyChanged`].
+    ReadPolicy {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Revoke one of the user's local Grants. Grants from the repository's policy file are
+    /// changed in the file, through a pull request, never here.
+    RevokeGrant {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        #[serde(rename = "grantId")]
+        #[ts(rename = "grantId")]
+        grant_id: String,
+    },
 }
 
 /// The user's answer to a Permission request.
@@ -154,6 +171,13 @@ pub enum Command {
 pub enum Verdict {
     /// Run once: approve this request without creating a Grant.
     AllowOnce,
+    /// Always allow: approve this request and keep a local Grant for the Repository, so the
+    /// next matching request in any of its Sessions is answered without asking. `pattern`
+    /// is the command pattern to grant (a command prefix plus a glob on the rest, e.g.
+    /// `pnpm test *`); the core suggests one when it is absent and refuses one that does
+    /// not cover the request. Network and MCP-tool grants are the request's domain or
+    /// server + tool. File writes and questions are never granted.
+    AllowAlways { pattern: Option<String> },
     /// Skip: the agent carries on without it.
     Deny,
     /// The answer to a question: one of its options, or the user's own words.
@@ -284,6 +308,78 @@ pub enum Event {
         base: String,
         commits: Vec<Commit>,
     },
+    /// A Repository's Policy as it stands: sent after [`Command::ReadPolicy`], and whenever
+    /// a local Grant is added or revoked. Replaces earlier policy for that Repository.
+    PolicyChanged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        policy: Policy,
+    },
+}
+
+/// What may run without asking in a Repository, resolved across layers (organisation,
+/// the repository's committed policy file, the user's local Grants). A denial in any
+/// layer wins over an allow in any other.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Policy {
+    /// The Permission mode New session starts in, when the repository's policy names one.
+    pub default_mode: Option<PermissionMode>,
+    /// The most autonomous Permission mode a Session may run in, when the policy caps it.
+    pub ceiling: Option<PermissionMode>,
+    /// Every Grant and denial that applies: repository file first, then local.
+    pub grants: Vec<Grant>,
+    /// Why the repository's policy file could not be read. While it is broken nothing is
+    /// granted (its denials are unknown), so every request asks.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Grant {
+    pub id: String,
+    pub layer: PolicyLayer,
+    pub effect: GrantEffect,
+    pub rule: GrantRule,
+}
+
+/// Where a Grant comes from. Only local Grants can be revoked in Switchyard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PolicyLayer {
+    /// Organisation policy (modelled; not synced before M4).
+    Org,
+    /// The Repository's committed `.switchyard/policy.yml`.
+    Repo,
+    /// The user's own Grants for the Repository, made with Always allow.
+    Local,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum GrantEffect {
+    Allow,
+    Deny,
+}
+
+/// What a Grant matches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum GrantRule {
+    /// A command prefix plus a glob on the rest (`git push *`). No shell parsing; a
+    /// wildcard never matches an interpreter prefix (`bash -c`, `sh -c`, `eval`, `xargs`,
+    /// `env`, `npx`) or a chained command.
+    Command { pattern: String },
+    /// A network domain (`registry.npmjs.org`; `*.example.com` for its subdomains).
+    Network { domain: String },
+    /// An MCP server's tool (`*` for every tool of the server).
+    McpTool { server: String, tool: String },
 }
 
 /// One commit on a worktree's branch.
@@ -533,6 +629,8 @@ pub enum RequestState {
     Pending,
     /// Run once.
     Allowed,
+    /// Always allow: approved and a local Grant kept; `answer` holds what was granted.
+    AlwaysAllowed,
     /// Skipped.
     Denied,
     /// A question the user answered.

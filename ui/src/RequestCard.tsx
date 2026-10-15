@@ -2,11 +2,12 @@
 // mono block and its answers; afterwards uncoloured with the verdict line.
 import type { Entry } from "./schema/Entry";
 import type { Verdict } from "./schema/Verdict";
+import { suggestGrant } from "./grants";
 import { KIND_LABEL, detail } from "./requests";
 
 type RequestEntry = Entry & { type: "request" };
 
-const VERDICT_LINE: Record<Exclude<RequestEntry["state"], "answered">, string> = {
+const VERDICT_LINE: Record<Exclude<RequestEntry["state"], "answered" | "alwaysAllowed">, string> = {
   pending: "",
   allowed: "Allowed once.",
   denied: "Skipped. The agent continues without it.",
@@ -23,6 +24,8 @@ export function RequestCard(props: {
   const question = request.type === "question";
   const heading = question ? "Question for you" : `Approval needed: ${KIND_LABEL[request.type]}`;
   const pending = entry.state === "pending";
+  // Always allow: command, network and MCP tool only; file writes never get it.
+  const grant = suggestGrant(request);
   return (
     <div className="msg" data-entry="request">
       <div />
@@ -61,11 +64,18 @@ export function RequestCard(props: {
                 </button>
               </>
             ) : (
-              // Always allow arrives with Grants; file writes never get it.
               <>
                 <button className="btn ok sm" onClick={() => answer({ type: "allowOnce" })}>
                   Run once
                 </button>
+                {grant !== null && (
+                  <button
+                    className="btn sm"
+                    onClick={() => answer({ type: "allowAlways", pattern: request.type === "command" ? grant : null })}
+                  >
+                    Always allow <code>{grant}</code> in this repo
+                  </button>
+                )}
                 <button className="btn danger sm" onClick={() => answer({ type: "deny" })}>
                   Skip
                 </button>
@@ -74,7 +84,11 @@ export function RequestCard(props: {
           </div>
         ) : (
           <div className="verdict">
-            {entry.state === "answered" ? `You answered: ${entry.answer ?? ""}` : VERDICT_LINE[entry.state]}
+            {entry.state === "answered"
+              ? `You answered: ${entry.answer ?? ""}`
+              : entry.state === "alwaysAllowed"
+                ? `Always allowed in this repo: ${entry.answer ?? ""}`
+                : VERDICT_LINE[entry.state]}
           </div>
         )}
       </div>

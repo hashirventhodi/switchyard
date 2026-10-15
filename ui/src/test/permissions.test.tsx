@@ -113,7 +113,7 @@ test("Approve on the toast answers the request without changing view; the answer
   expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
 });
 
-test("the request card in the session offers Run once and Skip, then shows the verdict line", () => {
+test("the request card in the session offers Run once, Always allow and Skip, then shows the verdict line", () => {
   const { sent, emit } = launch(...asks());
   openSession();
 
@@ -121,7 +121,7 @@ test("the request card in the session offers Run once and Skip, then shows the v
   expect(pending.className).toContain("perm");
   expect(within(pending).getByText("pnpm test").tagName).toBe("CODE");
   expect(within(pending).getByText("Run the test suite")).toBeTruthy();
-  expect(within(pending).getAllByRole("button").map((b) => b.textContent)).toEqual(["Run once", "Skip"]);
+  expect(within(pending).getAllByRole("button").map((b) => b.textContent)).toEqual(["Run once", "Always allow pnpm test * in this repo", "Skip"]);
   fireEvent.click(within(pending).getByRole("button", { name: "Skip" }));
   expect(sent).toContainEqual({ type: "answerRequest", sessionId: "session-1", requestId: "req-1", verdict: { type: "deny" } });
 
@@ -132,19 +132,20 @@ test("the request card in the session offers Run once and Skip, then shows the v
   expect(resolved.textContent).toContain("Skipped. The agent continues without it.");
 });
 
-test.each<[string, Request, string, string]>([
-  ["command", pnpmTest, "Approval needed: command", "pnpm test"],
-  ["file write", { type: "fileWrite", path: "README.md", diff: "+hello" }, "Approval needed: file write", "README.md"],
-  ["network", { type: "network", domain: "docs.example.com", url: "https://docs.example.com/x" }, "Approval needed: network", "https://docs.example.com/x"],
-  ["MCP tool", { type: "mcpTool", server: "github", tool: "create_issue", input: '{"title":"x"}' }, "Approval needed: MCP tool", "github · create_issue"],
-])("a %s request renders its detail in a mono block with Run once and Skip only", (_, request, heading, detail) => {
+const always = (grant: string) => `Always allow ${grant} in this repo`;
+test.each<[string, Request, string, string, string[]]>([
+  ["command", pnpmTest, "Approval needed: command", "pnpm test", ["Run once", always("pnpm test *"), "Skip"]],
+  ["file write", { type: "fileWrite", path: "README.md", diff: "+hello" }, "Approval needed: file write", "README.md", ["Run once", "Skip"]],
+  ["network", { type: "network", domain: "docs.example.com", url: "https://docs.example.com/x" }, "Approval needed: network", "https://docs.example.com/x", ["Run once", always("docs.example.com"), "Skip"]],
+  ["MCP tool", { type: "mcpTool", server: "github", tool: "create_issue", input: '{"title":"x"}' }, "Approval needed: MCP tool", "github · create_issue", ["Run once", always("github · create_issue"), "Skip"]],
+])("a %s request renders its detail in a mono block with its answers", (_, request, heading, detail, buttons) => {
   launch(...asks(request));
   openSession();
 
   const pending = requestCard();
   expect(within(pending).getByText(heading)).toBeTruthy();
-  expect(within(pending).getByText(detail).tagName).toBe("CODE");
-  expect(within(pending).getAllByRole("button").map((b) => b.textContent)).toEqual(["Run once", "Skip"]);
+  expect(within(pending).getAllByText(detail)[0].tagName).toBe("CODE");
+  expect(within(pending).getAllByRole("button").map((b) => b.textContent)).toEqual(buttons);
 });
 
 test("a question offers its options and Answer in chat; an option answers it", () => {

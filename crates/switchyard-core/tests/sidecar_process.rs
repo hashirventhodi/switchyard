@@ -64,6 +64,28 @@ fn the_sidecar_runs_in_the_worktree_and_streams_protocol_events_back() {
 }
 
 #[test]
+fn the_sidecar_is_told_the_resolved_grants_as_cli_rules() {
+    let repo = TempRepo::new("acme");
+    std::fs::create_dir_all(repo.path.join(".switchyard")).unwrap();
+    std::fs::write(
+        repo.path.join(".switchyard/policy.yml"),
+        "permissions:\n  allow:\n    - command: pnpm test *\n  deny:\n    - command: git push *\n",
+    )
+    .unwrap();
+    let worktree = repo.add_worktree("feat/x");
+    let mut core = Harness::launch_with(fake_sidecar());
+    core.add_repository(&repo.path);
+
+    core.dispatch(start(&worktree));
+    let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+
+    assert!(
+        agent_texts(&events).contains(&"allowed=Bash(pnpm test:*) disallowed=Bash(git push:*)".to_string()),
+        "{events:#?}"
+    );
+}
+
+#[test]
 fn a_sidecar_that_dies_turns_the_session_to_error_with_its_stderr() {
     let repo = TempRepo::new("acme");
     let worktree = repo.add_worktree("feat/x");
