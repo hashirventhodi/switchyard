@@ -48,6 +48,7 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `send_text` | `text` |
 | `answer_request` | `request_id`, `verdict` (below) |
 | `interrupt` | (none) |
+| `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
 | `resume` | `external_session_id` |
 
 A `verdict` is tagged by `decision`: `allow_once` (Run once), `allow_always` (Grant), `deny` with `message`, or `answer` with `text` (for `question` requests).

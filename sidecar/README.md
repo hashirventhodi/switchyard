@@ -57,6 +57,25 @@ recording, never an edited one, and an updated supported range in
    NOTES.md if you said yes). Repeat once answering Skip: the card reads "Skipped…".
 6. Optional: record it with `SWITCHYARD_RECORD_DIR` (above) as `permission-relay-live`.
 
+## Manual permission-mode check (real CLI, model calls)
+
+Unverified against a live CLI so far; the fixtures `mode-*`, `full-auto-unavailable` and
+`classifier-denial` are synthesised.
+
+1. New session in Full auto on a hand-made worktree. If `auto` is unavailable for the
+   account, the summary strip and the Dashboard card show "Asked for Full auto, but Claude
+   Code started in Ask first (manual)"; otherwise the strip reads `Full auto (CLI: auto)`.
+2. In Full auto, ask the agent to `rm -rf ~/some-scratch-dir-outside-the-worktree`: the
+   classifier refuses it, the strip shows "1 denied by classifier", a system line notes it,
+   and the session never turns amber.
+3. Switch the composer segment to Auto edit; ask for `rm -rf build` inside the worktree. The
+   CLI's acceptEdits would approve it on its own: check the PreToolUse hook sends it to
+   Switchyard as a request card instead. Grant `git *` (Always allow) and then ask for
+   `git push`: it still prompts. A grant `git push *` answers it without asking.
+4. With `.switchyard/policy.yml` `permissions: { ceiling: auto_edit }`, Full auto is not
+   offered in New session or the composer. With `permissions: { sandbox: true }`, Full auto
+   starts the CLI in `bypassPermissions` (strip: `CLI: bypassPermissions`), only there.
+
 ## Manual compat check (real CLI, no model call)
 
 1. `pnpm tauri dev` with `claude` on PATH in the supported range: the Dashboard shows no Setup

@@ -6,6 +6,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { PermissionMode, ProtocolEvent } from "./protocol.ts";
+import { classes } from "./dangerous.ts";
 import { CLI_MODE, ClaudeTranslator, type PermissionResult } from "./translate.ts";
 
 export interface SidecarConfig {
@@ -18,7 +19,12 @@ export interface SidecarConfig {
   allowed_tools?: string[];
   /** Switchyard's resolved denials as CLI permission rules (`--disallowedTools`). */
   disallowed_tools?: string[];
+  /** The repository's policy declares a sandbox: the CLI's bypass mode may be used. */
+  allow_bypass?: boolean;
 }
+
+/** Modes in which dangerous commands always reach the host (everything below Full auto). */
+const GUARDED: PermissionMode[] = ["explore", "ask_first", "auto_edit"];
 
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => Query;
 
@@ -74,6 +80,24 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       );
     });
 
+  // The mode the CLI is in now (the composer can switch it), for the dangerous-command hook.
+  let mode = config.permission_mode;
+  // Below Full auto, network, delete, migration and push commands are asked of the host
+  // even when the CLI's mode (acceptEdits approves rm) or an allow rule would approve them.
+  const guardDangerous = async (input: { tool_name?: string; tool_input?: { command?: unknown } }) => {
+    const command = input.tool_input?.command;
+    if (!GUARDED.includes(mode) || typeof command !== "string") return {};
+    const found = classes(command);
+    if (!found.length) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: `Switchyard always asks before ${found.join(", ")} commands in this mode`,
+      },
+    };
+  };
+
   const prompts = new Pushable<SDKUserMessage>();
   const q = query({
     prompt: prompts,
@@ -81,6 +105,8 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       cwd: config.cwd,
       // Always passed: when omitted the CLI picks its own default mode.
       permissionMode: CLI_MODE[config.permission_mode] as Options["permissionMode"],
+      // Bypass-everything is only ever made available where the policy declares a sandbox.
+      ...(config.allow_bypass ? { allowDangerouslySkipPermissions: true } : {}),
       pathToClaudeCodeExecutable: config.claude_path ?? undefined,
       // Grants are Switchyard's data, passed per spawn as flags; never written into the
       // CLI's settings files (ADR-0004).
@@ -89,6 +115,7 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       // Everything that would prompt comes to canUseTool and from there to the user's queue.
       permissionPrompts: "host",
       canUseTool,
+      hooks: { PreToolUse: [{ matcher: "Bash", hooks: [guardDangerous] }] },
       env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
     } as Options,
   });
@@ -109,6 +136,10 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       for (const op of ops) {
         if (op.op === "push_user_message") prompts.push(op.message as SDKUserMessage);
         else if (op.op === "interrupt") await q.interrupt();
+        else if (op.op === "set_permission_mode") {
+          await q.setPermissionMode(op.mode as Parameters<Query["setPermissionMode"]>[0]);
+          mode = op.permission_mode;
+        }
         else if (op.op === "resolve_permission") {
           waiting.get(op.request_id)?.(op.result);
           waiting.delete(op.request_id);

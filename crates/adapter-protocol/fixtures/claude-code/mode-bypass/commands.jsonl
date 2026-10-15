@@ -1,0 +1,2 @@
+{"after_input": 1, "command": {"type": "set_permission_mode", "permission_mode": "ask_first"}, "expect_responses": [{"op": "set_permission_mode", "mode": "default", "permission_mode": "ask_first"}]}
+{"after_input": 1, "command": {"type": "set_permission_mode", "permission_mode": "bypass"}, "expect_responses": [{"op": "set_permission_mode", "mode": "bypassPermissions", "permission_mode": "bypass"}]}

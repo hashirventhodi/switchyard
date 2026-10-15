@@ -6,7 +6,7 @@
 //! The sidecar is started as `<node> <script> --config <json>` in the worktree, where the
 //! config is `{"cwd", "permission_mode" (protocol vocabulary), "claude_path" (or null),
 //! "allowed_tools", "disallowed_tools" (Claude Code permission rules from the resolved
-//! Policy)}`.
+//! Policy), "allow_bypass" (the repository's policy declares a sandbox)}`.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -40,6 +40,7 @@ impl AgentLauncher for SidecarLauncher {
             "claude_path": self.claude,
             "allowed_tools": spec.allowed_tools,
             "disallowed_tools": spec.disallowed_tools,
+            "allow_bypass": spec.sandboxed,
         });
         let mut child = Command::new(&self.node)
             .arg(&self.script)

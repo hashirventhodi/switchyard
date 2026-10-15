@@ -17,6 +17,8 @@
 //   {"op":"interrupt"}                                   await query.interrupt()
 //   {"op":"resolve_permission","request_id","result":PermissionResult}
 //                                                        settle that canUseTool call
+//   {"op":"set_permission_mode","mode":"<CLI mode>","permission_mode":"<protocol mode>"}
+//                                                        await query.setPermissionMode(mode)
 
 import {
   PROTOCOL_RANGE,
@@ -58,7 +60,8 @@ function switchyardMode(cliMode: string): PermissionMode {
 export type DriverOp =
   | { op: "push_user_message"; message: { type: "user"; message: { role: "user"; content: string }; parent_tool_use_id: null } }
   | { op: "interrupt" }
-  | { op: "resolve_permission"; request_id: string; result: PermissionResult };
+  | { op: "resolve_permission"; request_id: string; result: PermissionResult }
+  | { op: "set_permission_mode"; mode: string; permission_mode: PermissionMode };
 
 /** The Agent SDK's answer to canUseTool. Never carries `updatedPermissions`: grants are
  * Switchyard data and are never written into the CLI's settings (ADR-0004). */
@@ -124,6 +127,8 @@ export class ClaudeTranslator {
         ];
       case "interrupt":
         return [{ op: "interrupt" }];
+      case "set_permission_mode":
+        return [{ op: "set_permission_mode", mode: CLI_MODE[command.permission_mode], permission_mode: command.permission_mode }];
       case "answer_request":
         // The CLI gave up on it (the turn was interrupted): nothing is waiting for the answer.
         if (this.abandoned.delete(command.request_id)) return [];
