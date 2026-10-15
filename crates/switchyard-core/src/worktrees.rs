@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
-use crate::{git, repo_policy, sessions, Inner};
+use crate::{git, repo_policy, sessions, shells, Inner};
 
 /// Create a worktree on a new `branch` from the repository's base; announce it and its
 /// facts. Returns it, or refuses `command` with the reason.
@@ -98,8 +98,7 @@ pub(crate) fn start_session_on_new(
 
 /// Remove a worktree that is not primary, has no session at work and no uncommitted files.
 /// A Paused, Finished or Error session on it is archived (its transcript outlives the
-/// worktree). The branch stays. Shells on the worktree close with it (once the dock owns shells, close
-/// them here, after git succeeds).
+/// worktree). The branch stays. Shells on the worktree close with it, once git has removed it.
 pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     const COMMAND: &str = "removeWorktree";
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
@@ -126,6 +125,7 @@ pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     }
     // Checked above: whatever session is left there is not at work.
     let _ = sessions::archive_occupant(inner, worktree_path);
+    shells::close_worktree(inner, worktree_path);
     inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
 }
 
@@ -143,14 +143,25 @@ pub(crate) fn refresh(inner: &Inner) {
     }
 }
 
+/// Re-read one worktree's facts from git and emit them (after an agent turn, say).
+pub(crate) fn refresh_one(inner: &Inner, worktree_path: &str) {
+    let Some((repo, worktree)) = inner.find_worktree(worktree_path) else { return };
+    let dir = Path::new(&repo.path);
+    let Some(primary) = git::worktrees(dir).ok().and_then(|l| l.into_iter().next()) else { return };
+    emit_facts(inner, &worktree.path, &git::base_branch(dir, &primary));
+}
+
 /// Emit what git says about the worktree at `path` relative to `base`. A worktree git
 /// cannot read (deleted behind our back, say) gets no facts.
-fn emit_facts(inner: &Inner, path: &Path, base: &str) {
+pub(crate) fn emit_facts(inner: &Inner, path: &Path, base: &str) {
     let Ok(dirty) = git::dirty_count(path) else { return };
-    let (ahead, behind) = git::ahead_behind(path, &git::base_ref(path, base)).unwrap_or((0, 0));
+    let base = git::base_ref(path, base);
+    let (ahead, behind) = git::ahead_behind(path, &base).unwrap_or((0, 0));
+    // Not behind means base is already in the branch: nothing to conflict with.
+    let conflicts = if behind > 0 { git::conflicting_files(path, &base).unwrap_or_default() } else { Vec::new() };
     inner.emit(Event::WorktreeFactsChanged {
         worktree_path: path.to_string_lossy().into_owned(),
-        facts: WorktreeFacts { ahead, behind, dirty },
+        facts: WorktreeFacts { ahead, behind, dirty, conflicts },
     });
 }
 

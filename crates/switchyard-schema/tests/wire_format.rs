@@ -120,11 +120,45 @@ fn worktree_lifecycle_commands_and_events_use_camel_case() {
 
     let event = Event::WorktreeFactsChanged {
         worktree_path: "/wt/x".into(),
-        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3 },
+        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3, conflicts: vec!["src/a.rs".into()] },
     };
     assert_eq!(
         serde_json::to_value(event).unwrap(),
-        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3}})
+        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3, "conflicts": ["src/a.rs"]}})
+    );
+}
+
+#[test]
+fn rebase_and_history_commands_and_events_are_camel_case() {
+    use switchyard_schema::Commit;
+    let rebase: Command = serde_json::from_value(json!({"type": "rebaseWorktree", "worktreePath": "/wt/x"})).unwrap();
+    assert_eq!(rebase, Command::RebaseWorktree { worktree_path: "/wt/x".into() });
+    let ask: Command = serde_json::from_value(json!({"type": "askAgentToRebase", "sessionId": "session-1"})).unwrap();
+    assert_eq!(ask, Command::AskAgentToRebase { session_id: "session-1".into() });
+    let history: Command = serde_json::from_value(json!({"type": "readHistory", "worktreePath": "/wt/x"})).unwrap();
+    assert_eq!(history, Command::ReadHistory { worktree_path: "/wt/x".into() });
+
+    let rebased = Event::WorktreeRebased { worktree_path: "/wt/x".into(), base: "main".into() };
+    assert_eq!(
+        serde_json::to_value(rebased).unwrap(),
+        json!({"type": "worktreeRebased", "worktreePath": "/wt/x", "base": "main"})
+    );
+    let event = Event::WorktreeHistory {
+        worktree_path: "/wt/x".into(),
+        base: "main".into(),
+        commits: vec![Commit {
+            hash: "abc123".into(),
+            short: "abc1".into(),
+            subject: "Add login".into(),
+            author: "Ada".into(),
+            at_ms: 1_000,
+        }],
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"type": "worktreeHistory", "worktreePath": "/wt/x", "base": "main", "commits": [
+            {"hash": "abc123", "short": "abc1", "subject": "Add login", "author": "Ada", "atMs": 1000}
+        ]})
     );
 }
 
