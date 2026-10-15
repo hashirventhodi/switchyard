@@ -75,6 +75,11 @@ impl Harness {
         Self::launch_in(data_dir, FakeAgents::default())
     }
 
+    /// The core's data directory (where a test may drop a `price-table.json`).
+    pub fn data_dir(&self) -> &Path {
+        self.data_dir.path()
+    }
+
     pub fn send(&mut self, command: Command) -> Vec<Event> {
         self.core.dispatch(command);
         self.drain()

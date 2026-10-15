@@ -11,6 +11,7 @@ use switchyard_schema::{
     AgentKind, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, ToolState,
 };
 
+use crate::spend::{PriceTable, Usage};
 use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::Inner;
 
@@ -26,6 +27,8 @@ struct SessionState {
     transcript: Vec<Entry>,
     /// Transcript index of each tool call, by call id.
     tool_calls: HashMap<String, usize>,
+    /// Every token_usage report, oldest first. Each holds running totals.
+    usage: Vec<Usage>,
     agent: Box<dyn AgentHandle>,
 }
 
@@ -127,6 +130,7 @@ pub(crate) fn start(
         facts: SessionFacts::default(),
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
+        usage: Vec::new(),
         agent: handle,
     });
     let state = inner.sessions.list.last_mut().expect("just pushed");
@@ -168,12 +172,16 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
-/// Emit every session, its facts and its transcript (on attach).
+/// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
 pub(crate) fn replay(inner: &Inner) {
+    let table = PriceTable::read(&inner.data_dir);
     for state in &inner.sessions.list {
         let id = &state.session.id;
         inner.emit(Event::SessionStarted { session: state.session.clone() });
         inner.emit(Event::SessionFactsChanged { session_id: id.clone(), facts: state.facts.clone() });
+        for usage in &state.usage {
+            inner.emit(spend_event(state, usage, &table));
+        }
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
         }
@@ -233,11 +241,17 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     cause = Some(Cause::AgentFailed);
                 }
             }
-            AgentEvent::TokenUsage { cost_usd, .. } => {
-                if cost_usd.is_some() {
-                    state.facts.cost_usd = cost_usd;
-                    out.push(facts(state));
-                }
+            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cost_usd } => {
+                let usage = Usage {
+                    at_ms: (inner.runtime.now_ms)(),
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    reported_usd: cost_usd,
+                };
+                state.usage.push(usage);
+                let table = PriceTable::read(&inner.data_dir);
+                out.push(spend_event(state, &usage, &table));
             }
             AgentEvent::ClassifierDenial { tool, detail, .. } => {
                 out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}") }))
@@ -280,6 +294,11 @@ fn append(state: &mut SessionState, entry: Entry) -> Event {
     let index = state.transcript.len() as u32;
     state.transcript.push(entry.clone());
     Event::TranscriptEntry { session_id: state.session.id.clone(), index, entry }
+}
+
+fn spend_event(state: &SessionState, usage: &Usage, table: &PriceTable) -> Event {
+    let spend = usage.spend(state.facts.model.as_deref(), table);
+    Event::SpendRecorded { session_id: state.session.id.clone(), at_ms: usage.at_ms, spend }
 }
 
 fn facts(state: &SessionState) -> Event {

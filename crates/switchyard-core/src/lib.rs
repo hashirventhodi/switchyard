@@ -10,9 +10,10 @@ pub mod agents;
 mod git;
 mod sessions;
 pub mod sidecar;
+mod spend;
 mod store;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -47,6 +48,7 @@ pub struct Core {
 }
 
 pub(crate) struct Inner {
+    data_dir: PathBuf,
     events: Sender<Event>,
     store: Store,
     runtime: Runtime,
@@ -67,7 +69,7 @@ impl Core {
         std::fs::create_dir_all(data_dir)
             .map_err(|e| CoreError(format!("cannot create {}: {e}", data_dir.display())))?;
         let store = Store::open(data_dir).map_err(|e| CoreError(format!("cannot open store: {e}")))?;
-        let inner = Inner { events, store, runtime, sessions: Sessions::default() };
+        let inner = Inner { data_dir: data_dir.to_path_buf(), events, store, runtime, sessions: Sessions::default() };
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
     }
 
