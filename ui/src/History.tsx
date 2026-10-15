@@ -87,6 +87,7 @@ export function BranchPane(props: {
           base={repository?.baseBranch}
           send={send}
           onAsk={onAsk}
+          conflicts={state.conflicts[path]?.files}
         />
       ) : (
         <div className="pane-body" role="tabpanel">
