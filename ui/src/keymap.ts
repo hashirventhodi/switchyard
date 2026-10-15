@@ -19,6 +19,7 @@ export type ActionId =
   | "review.reject"
   | "review.nextFile"
   | "review.prevFile"
+  | "review.commit"
   | "help.open"
   | "composer.send"
   | "composer.newline"
@@ -74,6 +75,7 @@ export const BINDINGS: Binding[] = [
   b("help.open", { key: "?" }, "outsideText", "Keyboard shortcuts"),
   b("composer.send", { key: "Enter" }, "composer"),
   b("composer.newline", { key: "Enter", shift: true }, "composer"),
+  b("review.commit", { key: "Enter", mod: true }, "composer"),
   b("terminal.clear", { key: "l", ctrl: true }, "terminal"),
   b("escape", { key: "Escape" }, "global"),
 ];
@@ -90,6 +92,7 @@ export const HELP_ROWS: { label: string; actions: ActionId[]; range?: boolean }[
   { label: "Accept / reject current file (review)", actions: ["review.accept", "review.reject"] },
   { label: "Next / previous file (review)", actions: ["review.nextFile", "review.prevFile"] },
   { label: "Send / newline (composer)", actions: ["composer.send", "composer.newline"] },
+  { label: "Commit (commit message)", actions: ["review.commit"] },
   { label: "Clear terminal (shell tab)", actions: ["terminal.clear"] },
   { label: "Close overlay · cancel confirm · interrupt agent", actions: ["escape"] },
   { label: "This help", actions: ["help.open"] },
