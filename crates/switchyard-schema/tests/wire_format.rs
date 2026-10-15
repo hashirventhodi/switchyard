@@ -297,3 +297,24 @@ fn hunk_feedback_wire_format() {
         json!({"type": "feedbackSent", "worktreePath": "/wt/x", "sessionId": "session-1", "hunks": 2})
     );
 }
+
+#[test]
+fn session_facts_list_mcp_servers_with_their_state() {
+    use switchyard_schema::{McpServerFact, McpState, SessionFacts};
+    let facts = SessionFacts {
+        mcp_servers: vec![McpServerFact {
+            name: "linear".into(),
+            transport: "http · mcp.linear.app".into(),
+            state: McpState::NeedsAuth,
+            error: None,
+        }],
+        ..SessionFacts::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&facts).unwrap()["mcpServers"],
+        json!([{"name": "linear", "transport": "http · mcp.linear.app", "state": "needsAuth", "error": null}])
+    );
+    // Facts stored before MCP servers existed still read.
+    let old: SessionFacts = serde_json::from_value(json!({"model": null, "cliVersion": null, "cliPermissionMode": null, "turns": 0})).unwrap();
+    assert!(old.mcp_servers.is_empty());
+}

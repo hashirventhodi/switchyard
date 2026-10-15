@@ -19,6 +19,7 @@ use crate::agents::{self, AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::processes::{self, Recorded};
 use crate::session_store::{self, Row, CHUNK};
+use crate::mcp;
 use crate::policy;
 use crate::Inner;
 
@@ -188,6 +189,10 @@ fn begin(
     if let Err(reason) = policy::admit_mode(&repo, permission_mode) {
         return refuse(inner, reason);
     }
+    let mcp_servers = match mcp::load(std::path::Path::new(&repo.path)) {
+        Ok(servers) => servers,
+        Err(reason) => return refuse(inner, format!("Could not start the session: {reason}")),
+    };
     // Before the first session, not mid-session: an unsupported CLI never starts (#13).
     if let Err(reason) = compat::admit(inner, agent) {
         return refuse(inner, reason);
@@ -197,8 +202,15 @@ fn begin(
     let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
     let sandboxed = policy::sandboxed(&repo);
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
-    let spec =
-        LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
+    let spec = LaunchSpec {
+        agent,
+        cwd: worktree.path.clone(),
+        permission_mode,
+        sandboxed,
+        allowed_tools,
+        disallowed_tools,
+        mcp_servers: mcp_servers.clone(),
+    };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -224,7 +236,7 @@ fn begin(
     inner.emit(Event::SessionStarted { session: session.clone() });
     inner.sessions.list.push(SessionState {
         session,
-        facts: SessionFacts::default(),
+        facts: SessionFacts { mcp_servers: mcp::facts(&mcp_servers), ..SessionFacts::default() },
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
         raw_events: Vec::new(),
@@ -333,12 +345,26 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     let repository = policy::repository(inner, &repository_id);
     // The session's own mode (as last switched); the sandbox as the policy declares it now,
     // so a sandbox withdrawn since never relaunches into bypass.
-    let ((allowed_tools, disallowed_tools), sandboxed) = match repository {
-        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, &repo)), policy::sandboxed(&repo)),
+    let ((allowed_tools, disallowed_tools), sandboxed) = match &repository {
+        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
         None => Default::default(),
     };
+    // The repository's MCP servers as its `.mcp.json` lists them now.
+    let mcp_servers = match &repository {
+        Some(repo) => mcp::load(std::path::Path::new(&repo.path))
+            .map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))?,
+        None => Vec::new(),
+    };
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
-    let spec = LaunchSpec { agent, cwd: cwd.into(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
+    let spec = LaunchSpec {
+        agent,
+        cwd: cwd.into(),
+        permission_mode,
+        sandboxed,
+        allowed_tools,
+        disallowed_tools,
+        mcp_servers: mcp_servers.clone(),
+    };
     let mut handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.to_string())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -352,6 +378,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     state.agent = Some(handle);
     state.process = process;
     state.expected_mode = expected_mode;
+    // A new process: its servers' states come from its own init.
+    state.facts.mcp_servers = mcp::facts(&mcp_servers);
     sent.map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))
 }
 
@@ -537,7 +565,15 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
-            AgentEvent::SessionInit { external_session_id, permission_mode, cli_permission_mode, cli, model, .. } => {
+            AgentEvent::SessionInit {
+                external_session_id,
+                permission_mode,
+                cli_permission_mode,
+                cli,
+                model,
+                mcp_servers,
+            } => {
+                mcp::on_init(&mut state.facts.mcp_servers, mcp_servers, agent_name(state.session.agent));
                 state.facts.mode_warning = (permission_mode != state.expected_mode).then(|| {
                     format!(
                         "Asked for {}, but {} started in {} ({cli_permission_mode})",
@@ -550,6 +586,10 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 state.facts.model = model;
                 state.facts.cli_version = Some(cli.version);
                 state.facts.cli_permission_mode = Some(cli_permission_mode);
+                out.push(facts(state));
+            }
+            AgentEvent::McpStatus { servers } => {
+                mcp::on_status(&mut state.facts.mcp_servers, servers);
                 out.push(facts(state));
             }
             AgentEvent::AgentText { text } => out.push(append(state, Entry::Agent { text })),

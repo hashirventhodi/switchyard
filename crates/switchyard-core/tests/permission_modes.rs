@@ -160,6 +160,7 @@ fn init(mode: AgentMode, cli_mode: &str) -> AgentEvent {
         cli_permission_mode: cli_mode.into(),
         cli: CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
         model: Some("claude-opus-5-5".into()),
+        mcp_servers: vec![],
     }
 }
 

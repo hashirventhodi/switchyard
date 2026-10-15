@@ -34,7 +34,7 @@ const session: Session = {
 const facts = (more: Partial<SessionFacts>): Event => ({
   type: "sessionFactsChanged",
   sessionId: "session-1",
-  facts: { model: "m", cliVersion: "2.1.300", cliPermissionMode: "auto", turns: 1, modeWarning: null, classifierDenials: 0, ...more },
+  facts: { model: "m", cliVersion: "2.1.300", cliPermissionMode: "auto", turns: 1, modeWarning: null, classifierDenials: 0, mcpServers: [], ...more },
 });
 const policy = (more: Partial<Policy>): Event => ({
   type: "policyChanged",

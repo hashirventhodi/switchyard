@@ -26,6 +26,10 @@ pub struct LaunchSpec {
     pub allowed_tools: Vec<String>,
     /// The resolved denials, as the CLI's deny rules (`--disallowedTools`).
     pub disallowed_tools: Vec<String>,
+    /// The repository's MCP servers (`.mcp.json`), and only those: the launcher passes
+    /// them through the CLI's per-invocation flags (strict for Claude Code, so no
+    /// user-level server leaks in) and never writes a CLI config file.
+    pub mcp_servers: Vec<crate::mcp::McpServer>,
 }
 
 /// The protocol mode a launcher asks its CLI for: Full auto bypasses every check only in

@@ -112,6 +112,7 @@ const noFacts: SessionFacts = {
   turns: 0,
   modeWarning: null,
   classifierDenials: 0,
+  mcpServers: [],
 };
 
 let toastSeq = 0;
