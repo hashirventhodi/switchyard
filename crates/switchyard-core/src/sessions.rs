@@ -11,7 +11,9 @@ use switchyard_schema::{
     AgentKind, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, ToolState, Verdict,
 };
 
+use crate::spend::{PriceTable, Usage};
 use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
+use crate::compat::{self, FailureClass};
 use crate::Inner;
 
 mod requests;
@@ -31,6 +33,8 @@ struct SessionState {
     tool_calls: HashMap<String, usize>,
     /// Transcript index of each Permission request, by request id.
     requests: HashMap<String, usize>,
+    /// Every token_usage report, oldest first. Each holds running totals.
+    usage: Vec<Usage>,
     agent: Box<dyn AgentHandle>,
 }
 
@@ -112,11 +116,18 @@ pub(crate) fn start(
         };
         return inner.refuse(COMMAND, reason);
     }
+    // Before the first session, not mid-session: an unsupported CLI never starts (#13).
+    if let Err(reason) = compat::admit(inner, agent) {
+        return inner.refuse(COMMAND, reason);
+    }
     let id = format!("session-{}", inner.sessions.next_id + 1);
     let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
-        Err(reason) => return inner.refuse(COMMAND, format!("Could not start {}: {reason}", agent_name(agent))),
+        Err(reason) => {
+            compat::record(inner, agent, FailureClass::SpawnFailure, None, &reason);
+            return inner.refuse(COMMAND, format!("Could not start {}: {reason}", agent_name(agent)));
+        }
     };
     inner.sessions.next_id += 1;
     let session = Session {
@@ -136,6 +147,7 @@ pub(crate) fn start(
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
         requests: HashMap::new(),
+        usage: Vec::new(),
         agent: handle,
     });
     let state = inner.sessions.list.last_mut().expect("just pushed");
@@ -188,12 +200,16 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
-/// Emit every session, its facts and its transcript (on attach).
+/// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
 pub(crate) fn replay(inner: &Inner) {
+    let table = PriceTable::read(&inner.data_dir);
     for state in &inner.sessions.list {
         let id = &state.session.id;
         inner.emit(Event::SessionStarted { session: state.session.clone() });
         inner.emit(Event::SessionFactsChanged { session_id: id.clone(), facts: state.facts.clone() });
+        for usage in &state.usage {
+            inner.emit(spend_event(state, usage, &table));
+        }
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
         }
@@ -220,6 +236,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else { return };
     let mut out = Vec::new();
     let mut cause = None;
+    let mut failure = None;
     match output {
         AgentOutput::Event(event) => match event {
             AgentEvent::SessionInit { cli_permission_mode, cli, model, .. } => {
@@ -260,22 +277,36 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     cause = Some(Cause::AgentFailed);
                 }
             }
-            AgentEvent::TokenUsage { cost_usd, .. } => {
-                if cost_usd.is_some() {
-                    state.facts.cost_usd = cost_usd;
-                    out.push(facts(state));
-                }
+            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cost_usd } => {
+                let usage = Usage {
+                    at_ms: (inner.runtime.now_ms)(),
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    reported_usd: cost_usd,
+                };
+                state.usage.push(usage);
+                let table = PriceTable::read(&inner.data_dir);
+                out.push(spend_event(state, &usage, &table));
             }
             AgentEvent::ClassifierDenial { tool, detail, .. } => {
                 out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}") }))
             }
         },
+        AgentOutput::Unreadable { line } => {
+            failure = Some((compat::classify_unreadable(&line), format!("unreadable adapter output: {line}")));
+            out.push(append(state, Entry::System { text: format!("Agent error: the adapter wrote an unreadable line: {line}") }));
+        }
         AgentOutput::Exited { code, stderr } => {
             let code = code.map_or("a signal".to_string(), |c| format!("code {c}"));
             let mut text = format!("The agent process exited ({code}).");
             if !stderr.trim().is_empty() {
                 text.push('\n');
                 text.push_str(stderr.trim());
+            }
+            // Ending before the CLI even initialised is the adapter failing to start.
+            if state.facts.cli_version.is_none() {
+                failure = Some((FailureClass::SpawnFailure, format!("exited before session_init: {text}")));
             }
             out.push(append(state, Entry::System { text }));
             cause = Some(Cause::AgentFailed);
@@ -284,8 +315,12 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     if let Some(event) = cause.and_then(|c| change_status(state, &c)) {
         out.push(event);
     }
+    let (agent, cli_version) = (state.session.agent, state.facts.cli_version.clone());
     for event in out {
         inner.emit(event);
+    }
+    if let Some((class, detail)) = failure {
+        compat::record(inner, agent, class, cli_version.as_deref(), &detail);
     }
 }
 
@@ -307,6 +342,11 @@ fn append(state: &mut SessionState, entry: Entry) -> Event {
     let index = state.transcript.len() as u32;
     state.transcript.push(entry.clone());
     Event::TranscriptEntry { session_id: state.session.id.clone(), index, entry }
+}
+
+fn spend_event(state: &SessionState, usage: &Usage, table: &PriceTable) -> Event {
+    let spend = usage.spend(state.facts.model.as_deref(), table);
+    Event::SpendRecorded { session_id: state.session.id.clone(), at_ms: usage.at_ms, spend }
 }
 
 fn facts(state: &SessionState) -> Event {

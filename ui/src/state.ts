@@ -1,5 +1,6 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
+import type { AgentSetup } from "./schema/AgentSetup";
 import type { Entry } from "./schema/Entry";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
@@ -8,6 +9,7 @@ import { detail, verb } from "./requests";
 import { AGENT_LABEL } from "./status";
 import type { Session } from "./schema/Session";
 import type { SessionFacts } from "./schema/SessionFacts";
+import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 
 export interface RepositoryView extends Repository {
@@ -17,6 +19,8 @@ export interface RepositoryView extends Repository {
 export interface SessionView extends Session {
   facts: SessionFacts;
   transcript: Chunked<Entry>;
+  /** Running spend totals as recorded, oldest first. */
+  spend: SpendSample[];
 }
 
 /** A Permission request waiting for the user. */
@@ -50,11 +54,13 @@ export interface State {
   /** Pending Permission requests by session, in transcript order. */
   requests: Record<string, PendingRequest[]>;
   toasts: Toast[];
+  /** What the core detected about each agent CLI; empty until it reports. */
+  agents: AgentSetup[];
 }
 
-export const initialState: State = { repositories: [], sessions: {}, requests: {}, toasts: [] };
+export const initialState: State = { repositories: [], sessions: {}, requests: {}, toasts: [], agents: [] };
 
-const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0, costUsd: null };
+const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
 let toastSeq = 0;
 
@@ -84,12 +90,17 @@ export function reduce(state: State, event: Event): State {
       return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {
       const s = event.session;
-      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked() } } };
+      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked(), spend: [] } } };
     }
     case "sessionStatusChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
+    case "spendRecorded":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        spend: [...s.spend, { atMs: event.atMs, spend: event.spend }],
+      }));
     case "transcriptEntry": {
       const next = updateSession(state, event.sessionId, (s) => ({
         ...s,
@@ -97,6 +108,8 @@ export function reduce(state: State, event: Event): State {
       }));
       return event.entry.type === "request" ? trackRequest(next, event.sessionId, event.index, event.entry) : next;
     }
+    case "agentsChecked":
+      return { ...state, agents: event.agents };
   }
 }
 

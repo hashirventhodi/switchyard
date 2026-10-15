@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { Command } from "./schema/Command";
 import type { PermissionMode } from "./schema/PermissionMode";
 import { sessionOn, type State } from "./state";
+import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { MODE_LABEL, STATUS_LABEL } from "./status";
 
 // Only Ask first is available until permission modes land; Explore (the only mode allowed
@@ -20,8 +21,16 @@ interface Choice {
   disabled: boolean;
 }
 
-export function NewSession(props: { state: State; onStart: (command: Command) => void; onClose: () => void }) {
-  const { state, onStart, onClose } = props;
+export function NewSession(props: {
+  state: State;
+  onStart: (command: Command) => void;
+  onClose: () => void;
+  openLink: OpenLink;
+}) {
+  const { state, onStart, onClose, openLink } = props;
+  // An agent whose CLI is missing or outside this build's range cannot start (the core
+  // refuses too); say why here, before the first session, not mid-session.
+  const blocked = agentProblem(state.agents, "claudeCode");
   const choices: Choice[] = state.repositories.flatMap((r) =>
     r.worktrees.map((w) => {
       const name = `${r.name} / ${w.branch ?? "(detached)"}`;
@@ -34,7 +43,7 @@ export function NewSession(props: { state: State; onStart: (command: Command) =>
   const [worktree, setWorktree] = useState(() => choices.find((c) => !c.disabled)?.path ?? "");
   const [mode, setMode] = useState<PermissionMode>("askFirst");
   const [prompt, setPrompt] = useState("");
-  const canStart = !!worktree && !!prompt.trim();
+  const canStart = !blocked && !!worktree && !!prompt.trim();
 
   const start = () => {
     if (!canStart) return;
@@ -67,6 +76,11 @@ export function NewSession(props: { state: State; onStart: (command: Command) =>
               <option value="claudeCode">Claude Code</option>
             </select>
           </label>
+          {blocked && (
+            <div className="setup-alert" role="alert">
+              <AgentProblem setup={blocked} openLink={openLink} />
+            </div>
+          )}
           <label className="field">
             <span>Worktree</span>
             <select aria-label="Worktree" value={worktree} onChange={(e) => setWorktree(e.target.value)}>

@@ -6,4 +6,4 @@ import type { Verdict } from "./Verdict";
 /**
  * A request from the renderer to the core.
  */
-export type Command = { "type": "attach" } | { "type": "addRepository", path: string, } | { "type": "startSession", worktreePath: string, agent: AgentKind, permissionMode: PermissionMode, prompt: string, } | { "type": "stopSession", sessionId: string, } | { "type": "sendPrompt", sessionId: string, text: string, } | { "type": "answerRequest", sessionId: string, requestId: string, verdict: Verdict, };
+export type Command = { "type": "attach" } | { "type": "addRepository", path: string, } | { "type": "startSession", worktreePath: string, agent: AgentKind, permissionMode: PermissionMode, prompt: string, } | { "type": "stopSession", sessionId: string, } | { "type": "sendPrompt", sessionId: string, text: string, } | { "type": "checkAgents" } | { "type": "answerRequest", sessionId: string, requestId: string, verdict: Verdict, };

@@ -1,5 +1,6 @@
 // The Dashboard: KPIs, the sessions that need the user, and every session as a card.
 // Everything is derived from the core's events; nothing polls.
+import type { ReactNode } from "react";
 import { at } from "./chunked";
 import { wants } from "./requests";
 import type { SessionStatus } from "./schema/SessionStatus";
@@ -8,8 +9,16 @@ import { AGENT_LABEL, Status } from "./status";
 
 const ATTENTION: Record<SessionStatus, number> = { waiting: 0, failed: 1, running: 2, idle: 3, done: 4 };
 
-export function Dashboard(props: { state: State; onOpenSession: (id: string) => void; onOpenInbox: () => void }) {
-  const { state, onOpenSession, onOpenInbox } = props;
+export function Dashboard(props: {
+  state: State;
+  onOpenSession: (id: string) => void;
+  onOpenInbox: () => void;
+  /** The agent setup state, above the KPIs. */
+  setup?: ReactNode;
+  /** The Spend today KPI. */
+  spend?: ReactNode;
+}) {
+  const { state, onOpenSession, onOpenInbox, setup, spend } = props;
   const sessions = Object.values(state.sessions);
   const count = (s: SessionStatus) => sessions.filter((x) => x.status === s).length;
   const sorted = [...sessions].sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status]);
@@ -29,6 +38,7 @@ export function Dashboard(props: { state: State; onOpenSession: (id: string) => 
           {state.repositories.length} repositories · {sessions.length} sessions
         </span>
       </div>
+      {setup}
       <div className="kpis">
         {kpis.map(([label, status, onClick]) => (
           <button key={label} className={`kpi ${status}`} aria-label={`${label}: ${count(status)}`} onClick={onClick}>
@@ -36,6 +46,7 @@ export function Dashboard(props: { state: State; onOpenSession: (id: string) => 
             <div className="v">{count(status)}</div>
           </button>
         ))}
+        {spend}
       </div>
       {attention.length > 0 && (
         <section aria-label="Needs you">

@@ -10,7 +10,9 @@ import {
 import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from "./keymap";
 import { Palette, ShortcutsHelp } from "./Overlays";
 import { NewSession } from "./NewSession";
+import { SetupPanel, type OpenLink } from "./Setup";
 import { SessionView } from "./SessionView";
+import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { Dashboard } from "./Dashboard";
 import { Inbox } from "./Inbox";
@@ -82,11 +84,13 @@ export interface AppProps {
   pickFolder: () => Promise<string | null>;
   /** Where shortcut and palette handlers are registered; tests pass one to observe actions. */
   actions?: ActionRegistry;
+  /** Opens an install or update link in the user's browser. */
+  openLink?: OpenLink;
 }
 
 type Overlay = "palette" | "help" | "newSession" | "inbox" | null;
 
-export function App({ core, pickFolder, actions }: AppProps) {
+export function App({ core, pickFolder, actions, openLink = (url) => window.open(url, "_blank") }: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -366,7 +370,13 @@ export function App({ core, pickFolder, actions }: AppProps) {
               revealRequest={reveal}
             />
           ) : prefs.view === "dashboard" ? (
-            <Dashboard state={state} onOpenSession={(id) => openSession(id, true)} onOpenInbox={() => setOverlay("inbox")} />
+            <Dashboard
+              state={state}
+              onOpenSession={(id) => openSession(id, true)}
+              onOpenInbox={() => setOverlay("inbox")}
+              setup={<SetupPanel agents={state.agents} onCheck={() => core.send({ type: "checkAgents" })} openLink={openLink} />}
+              spend={<SpendToday sessions={sessions} variant="kpi" />}
+            />
           ) : (
             <div className="page">
               <div className="pagehead">
@@ -411,7 +421,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
-            <span className="i">$0.00 today</span>
+            <SpendToday sessions={sessions} variant="status" />
           </div>
         </footer>
 
@@ -431,7 +441,7 @@ export function App({ core, pickFolder, actions }: AppProps) {
         </div>
         {overlay === "palette" && <Palette onClose={closeOverlay} />}
         {overlay === "help" && <ShortcutsHelp onClose={closeOverlay} />}
-        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} />}
+        {overlay === "newSession" && <NewSession state={state} onStart={startSession} onClose={closeOverlay} openLink={openLink} />}
         {overlay === "inbox" && (
           <Inbox
             state={state}
