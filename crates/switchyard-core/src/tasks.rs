@@ -400,14 +400,9 @@ fn advance(inner: &Inner, repo: &StoredRepository, found: &Task, to: TaskColumn,
         // that moves it there already shows when it is read: announce it all the same.
         return found.source == TaskSourceKind::Github && found.column == to && to != TaskColumn::Done;
     }
-    let mut moved = false;
-    for mut source in sources(inner, repo) {
-        if source.kind() == found.source {
-            // A source that cannot be written now keeps its column; the board says so.
-            moved = source.move_to(&found.key, to, pull_request).is_ok();
-        }
-    }
-    moved
+    // Only the task's own source is built; one that cannot be written now keeps its
+    // column, and the board says so.
+    source(inner, repo, found.source).is_some_and(|mut source| source.move_to(&found.key, to, pull_request).is_ok())
 }
 
 /// [`Command::StartTaskSession`](switchyard_schema::Command::StartTaskSession).
