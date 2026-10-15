@@ -5,6 +5,7 @@ import { detachedCore, insideTauri, tauriCore, type CoreConnection } from "./cor
 import "./tokens.css";
 import "./frame.css";
 import "./session.css";
+import "./relay.css";
 
 async function pickFolder(): Promise<string | null> {
   if (!insideTauri()) return window.prompt("Repository path") || null;

@@ -38,7 +38,8 @@ function launch(...events: Event[]) {
 }
 
 const status = (s: SessionStatus): Event => ({ type: "sessionStatusChanged", sessionId: "session-1", status: s });
-const openSession = () => fireEvent.click(screen.getByRole("button", { name: /fix\/readme/ }));
+const openSession = () =>
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByRole("button", { name: /fix\/readme/ }));
 
 test("New session starts Claude Code on a free worktree in Ask first with the prompt", () => {
   const { sent, emit } = launch();

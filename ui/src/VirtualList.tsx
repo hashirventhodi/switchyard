@@ -16,9 +16,11 @@ export interface VirtualListProps {
   renderRow: (index: number) => ReactNode;
   label: string;
   className?: string;
+  /** Scroll row `index` into view; a new `seq` asks again. */
+  reveal?: { index: number; seq: number };
 }
 
-export function VirtualList({ count, version, estimate, renderRow, label, className }: VirtualListProps) {
+export function VirtualList({ count, version, estimate, renderRow, label, className, reveal }: VirtualListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const measured = useRef(new Map<number, number>());
   const [measures, remeasured] = useReducer((n: number) => n + 1, 0);
@@ -40,6 +42,18 @@ export function VirtualList({ count, version, estimate, renderRow, label, classN
     const el = scroller.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [count, version, offsets]);
+
+  const revealIndex = reveal?.index;
+  const revealSeq = reveal?.seq;
+  useLayoutEffect(() => {
+    if (revealIndex === undefined || revealIndex >= count) return;
+    const top = Math.max(0, offsets[revealIndex] - viewport / 3);
+    pinned.current = false;
+    if (scroller.current) scroller.current.scrollTop = top;
+    setScrollTop(top);
+    // Only a new request to reveal scrolls; streaming rows afterwards do not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealIndex, revealSeq]);
 
   const observer = useMemo(
     () =>
