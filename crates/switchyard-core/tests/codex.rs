@@ -284,7 +284,10 @@ fn a_codex_session_is_given_the_repositorys_mcp_servers_and_reports_their_state(
     .unwrap();
     let worktree = repo.add_worktree("feat/docs");
     let mut core = Harness::launch();
-    core.add_repository(&repo.path);
+    let repository_id = added_repository(&core.add_repository(&repo.path)).id;
+    for name in ["docs", "search"] {
+        core.send(Command::EnableMcpServer { repository_id: repository_id.clone(), name: name.into() });
+    }
     start(&mut core, &worktree, AgentKind::Codex, PermissionMode::AskFirst, "Look up the billing docs.");
     let names: Vec<String> = core.agents.launches()[0].mcp_servers.iter().map(|s| s.name.clone()).collect();
     assert_eq!(names, vec!["docs".to_string(), "search".into()]);

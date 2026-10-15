@@ -18,6 +18,7 @@ portable-pty = "0.9"
 serde_yaml = "0.9"
 flate2 = "1"
 keyring = { version = "3", features = ["apple-native"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

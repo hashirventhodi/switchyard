@@ -7,6 +7,7 @@ import type { Settings } from "./schema/Settings";
 import type { ChangedFile } from "./schema/ChangedFile";
 import type { ConflictFile } from "./schema/ConflictFile";
 import type { ContextFile } from "./schema/ContextFile";
+import type { DeclaredMcpServer } from "./schema/DeclaredMcpServer";
 import type { Entry } from "./schema/Entry";
 import type { Policy } from "./schema/Policy";
 import type { Secret } from "./schema/Secret";
@@ -104,6 +105,8 @@ export interface State {
   houseRules: Record<string, string>;
   /** The Task each Session (live or archived) is linked to, by session id. */
   taskLinks: Record<string, string>;
+  /** Each Repository's declared MCP servers (its .mcp.json) and which are enabled, by id. */
+  mcpDeclared: Record<string, { servers: DeclaredMcpServer[]; error: string | null }>;
   /** Each worktree's context files (instructions and agent memory), by path, as last read. */
   contextFiles: Record<string, ContextFile[]>;
   /** What happened, newest first (at most ACTIVITY_KEEP): the Dashboard's activity feed. */
@@ -196,6 +199,7 @@ export const initialState: State = {
   conflicts: {},
   activity: [],
   contextFiles: {},
+  mcpDeclared: {},
 };
 
 const noFacts: SessionFacts = {
@@ -265,6 +269,8 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "mcpServersChanged":
+      return { ...state, mcpDeclared: { ...state.mcpDeclared, [event.repositoryId]: { servers: event.servers, error: event.error } } };
     case "contextRead":
       return { ...state, contextFiles: { ...state.contextFiles, [event.worktreePath]: event.files } };
     case "worktreeHistory":

@@ -92,3 +92,34 @@ test("with no servers Context says where they come from", () => {
   act(() => emit(facts([])));
   expect(section().textContent).toContain("No MCP servers. Add them to the repository's .mcp.json.");
 });
+
+const declared = () => screen.getByRole("region", { name: "Declared MCP servers" });
+
+test("declared servers from .mcp.json are not enabled until the user enables each one", () => {
+  const { sent, emit } = launch();
+  expect(sent).toContainEqual({ type: "readMcpServers", repositoryId: "repo-1" });
+  act(() =>
+    emit({
+      type: "mcpServersChanged",
+      repositoryId: "repo-1",
+      error: null,
+      servers: [
+        { name: "docs", transport: "http · docs.example.com", enabled: true, changed: false },
+        { name: "github", transport: "stdio · npx", enabled: false, changed: false },
+        { name: "search", transport: "http · search.example.com", enabled: false, changed: true },
+      ],
+    }),
+  );
+  const rows = within(declared()).getAllByRole("listitem");
+  expect(rows.map((r) => r.querySelector(".v")?.textContent)).toEqual([
+    "enabled",
+    "declared, not enabled",
+    "changed since you enabled it",
+  ]);
+  fireEvent.click(within(declared()).getByRole("button", { name: "Enable github" }));
+  expect(sent).toContainEqual({ type: "enableMcpServer", repositoryId: "repo-1", name: "github" });
+  expect(within(declared()).getByRole("button", { name: "Enable search" })).toBeTruthy();
+  fireEvent.click(within(declared()).getByRole("button", { name: "Disable docs" }));
+  expect(sent).toContainEqual({ type: "disableMcpServer", repositoryId: "repo-1", name: "docs" });
+  expect(declared().textContent).toContain("next session");
+});

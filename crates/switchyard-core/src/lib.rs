@@ -6,6 +6,7 @@
 //! [`agents::AgentLauncher`] in the [`Runtime`]; their output re-enters the core on the
 //! launcher's threads and leaves as events on the same channel.
 
+mod acknowledgements;
 pub mod agents;
 pub mod codex;
 pub mod compat;
@@ -250,6 +251,9 @@ impl Core {
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
             Command::ReadContext { worktree_path } => context::read_context(&inner, &worktree_path),
+            Command::ReadMcpServers { repository_id } => mcp::read(&inner, &repository_id),
+            Command::EnableMcpServer { repository_id, name } => mcp::set_enabled(&inner, &repository_id, &name, true),
+            Command::DisableMcpServer { repository_id, name } => mcp::set_enabled(&inner, &repository_id, &name, false),
             Command::ReadSecrets { repository_id } => secrets::read(&inner, &repository_id),
             Command::GrantSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, true),
             Command::RevokeSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, false),

@@ -192,7 +192,7 @@ fn begin(
     if let Err(reason) = policy::admit_mode(&repo, permission_mode) {
         return refuse(inner, reason);
     }
-    let mcp_servers = match mcp::load(std::path::Path::new(&repo.path)) {
+    let mcp_servers = match mcp::enabled(inner, &repo.id, std::path::Path::new(&repo.path)) {
         Ok(servers) => servers,
         Err(reason) => return refuse(inner, format!("Could not start the session: {reason}")),
     };
@@ -353,9 +353,9 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         Some(repo) => (policy::cli_grants(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
         None => Default::default(),
     };
-    // The repository's MCP servers as its `.mcp.json` lists them now.
+    // The repository's MCP servers the user has enabled, as `.mcp.json` lists them now.
     let mcp_servers = match &repository {
-        Some(repo) => mcp::load(std::path::Path::new(&repo.path))
+        Some(repo) => mcp::enabled(inner, &repo.id, std::path::Path::new(&repo.path))
             .map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))?,
         None => Vec::new(),
     };

@@ -96,7 +96,8 @@ fn the_sidecar_is_given_the_repositorys_mcp_servers_and_no_config_file_changes()
     let watched = [repo.path.join(".mcp.json"), repo.path.join(".claude/settings.local.json")];
     let before: Vec<Vec<u8>> = watched.iter().map(|p| std::fs::read(p).unwrap()).collect();
     let mut core = Harness::launch_with(fake_sidecar());
-    core.add_repository(&repo.path);
+    let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
+    core.dispatch(switchyard_schema::Command::EnableMcpServer { repository_id, name: "docs".into() });
 
     core.dispatch(start(&worktree));
     let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));

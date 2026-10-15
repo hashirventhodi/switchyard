@@ -57,6 +57,7 @@ impl Store {
         crate::session_store::init(&db)?;
         crate::tasks::init(&db)?;
         crate::secrets::init(&db)?;
+        crate::acknowledgements::init(&db)?;
         Ok(Store { db })
     }
 

@@ -223,6 +223,27 @@ pub enum Command {
         #[ts(rename = "worktreePath")]
         worktree_path: String,
     },
+    /// List the MCP servers the Repository's `.mcp.json` declares and which the user has
+    /// enabled. Answered with [`Event::McpServersChanged`].
+    ReadMcpServers {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Enable a declared MCP server for this Repository, for its definition as it stands
+    /// (ADR-0006): passed to agents from the next spawn until its definition changes.
+    EnableMcpServer {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    DisableMcpServer {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
     /// Read the files an agent takes as instructions in a worktree (CLAUDE.md, AGENTS.md…)
     /// and Claude Code's memory for it. Read-only; answered with [`Event::ContextRead`].
     ReadContext {
@@ -460,6 +481,9 @@ pub mod command_name {
     pub const RESOLVE_CONFLICT: &str = "resolveConflict";
     pub const ASK_AGENT_TO_REBASE: &str = "askAgentToRebase";
     pub const READ_HISTORY: &str = "readHistory";
+    pub const READ_MCP_SERVERS: &str = "readMcpServers";
+    pub const ENABLE_MCP_SERVER: &str = "enableMcpServer";
+    pub const DISABLE_MCP_SERVER: &str = "disableMcpServer";
     pub const READ_CONTEXT: &str = "readContext";
     pub const ANSWER_REQUEST: &str = "answerRequest";
     pub const RESUME_SESSION: &str = "resumeSession";
@@ -486,7 +510,7 @@ pub mod command_name {
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
 }
 
 impl Command {
@@ -519,6 +543,9 @@ impl Command {
             Command::ResolveConflict { .. } => command_name::RESOLVE_CONFLICT,
             Command::AskAgentToRebase { .. } => command_name::ASK_AGENT_TO_REBASE,
             Command::ReadHistory { .. } => command_name::READ_HISTORY,
+            Command::ReadMcpServers { .. } => command_name::READ_MCP_SERVERS,
+            Command::EnableMcpServer { .. } => command_name::ENABLE_MCP_SERVER,
+            Command::DisableMcpServer { .. } => command_name::DISABLE_MCP_SERVER,
             Command::ReadContext { .. } => command_name::READ_CONTEXT,
             Command::AnswerRequest { .. } => command_name::ANSWER_REQUEST,
             Command::ResumeSession { .. } => command_name::RESUME_SESSION,
@@ -799,6 +826,15 @@ pub enum Event {
         /// The base branch the commits sit above.
         base: String,
         commits: Vec<Commit>,
+    },
+    /// The Repository's declared MCP servers and whether each is enabled (replace-whole).
+    McpServersChanged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        servers: Vec<DeclaredMcpServer>,
+        /// Why `.mcp.json` could not be read, when it could not.
+        error: Option<String>,
     },
     /// The worktree's context files as they are on disk (replaces earlier ones for it).
     ContextRead {
@@ -1230,6 +1266,20 @@ pub enum LineKind {
     Context,
     Added,
     Removed,
+}
+
+/// An MCP server the Repository's `.mcp.json` declares (ADR-0006).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeclaredMcpServer {
+    pub name: String,
+    /// "stdio · npx", "http · host": never arguments, environment or headers.
+    pub transport: String,
+    /// Enabled for exactly this definition: passed to agents.
+    pub enabled: bool,
+    /// Enabled once, but its definition has changed since: asks again.
+    pub changed: bool,
 }
 
 /// A file an agent reads as context: instructions in the worktree, or memory the CLI
