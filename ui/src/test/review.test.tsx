@@ -47,6 +47,9 @@ const readme = changed("README.md", "modified", {
         { kind: "added", old: null, new: 1, text: "the readme" },
         { kind: "context", old: 2, new: 2, text: "end" },
       ],
+      decision: null,
+      comment: null,
+      sent: false,
     },
   ],
 });
@@ -105,7 +108,7 @@ test("selecting a file shows its hunks as old / new / sign / text lines under a 
   fireEvent.click(within(pane()).getByRole("button", { name: "File README.md, modified" }));
 
   const diff = within(pane()).getByLabelText("Diff of README.md");
-  expect(diff.querySelector(".hh")?.textContent).toBe("@@ -1,2 +1,2 @@ intro");
+  expect(diff.querySelector(".hh .h")?.textContent).toBe("@@ -1,2 +1,2 @@ intro");
   const lines = [...diff.querySelectorAll(".ln")].map((l) => [...l.children].map((c) => c.textContent));
   expect(lines).toEqual([
     ["1", "", "−", "teh readme"],

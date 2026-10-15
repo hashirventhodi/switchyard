@@ -1,6 +1,9 @@
 // The Changes tab of the review pane (BranchPane): the worktree's uncommitted files grouped
 // Conflicts / Modified / Added / Deleted, the selected file's hunks, file decisions (a / r,
-// j / k to move) and Commit accepted…, which commits accepted files whole.
+// j / k to move) and Commit accepted…, which commits accepted files whole. Each hunk has
+// Accept / Reject / Comment; rejected hunks and comments go to the agent as Hunk feedback
+// (Send feedback to agent), and a file with a rejected hunk stays out of commits until the
+// agent revises it or the user accepts the whole file. Switchyard never reverts anything.
 import { useEffect, useRef, useState } from "react";
 import { useAction, usePaletteSource } from "./actions";
 import { at } from "./chunked";
@@ -17,6 +20,23 @@ const LETTER: Record<FileStatus, string> = { modified: "M", added: "A", deleted:
 /** A listed file. `baseConflict`: a dry-run merge of base conflicts on it (#17's fact). */
 type Row = ChangedFile & { baseConflict?: boolean };
 const conflicted = (f: Row) => f.status === "conflicted" || !!f.baseConflict;
+
+/** A rejected hunk and no file decision: kept out of commits (the core decides the same). */
+const rejectedHunks = (f: ChangedFile) => (f.decision ? 0 : f.hunks.filter((h) => h.decision === "reject").length);
+/** Committed by Commit accepted…: accepted whole, or every hunk accepted. */
+const committable = (f: Row) =>
+  !conflicted(f) && (f.decision === "accept" || (!f.decision && f.hunks.length > 0 && f.hunks.every((h) => h.decision === "accept")));
+type FileState = "accepted" | "rejected" | "undecided" | "conflict";
+function fileState(f: Row): FileState {
+  if (conflicted(f)) return "conflict";
+  if (committable(f)) return "accepted";
+  if (f.decision === "reject" || rejectedHunks(f) > 0) return "rejected";
+  return "undecided";
+}
+/** Hunks whose rejection or comment the agent has not been sent yet. */
+const pendingFeedback = (files: ChangedFile[]) =>
+  files.flatMap((f) => f.hunks).filter((h) => !h.sent && (h.decision === "reject" || h.comment)).length;
+
 const GROUPS: [string, (f: Row) => boolean][] = [
   ["Conflicts", conflicted],
   ["Modified", (f) => !conflicted(f) && (f.status === "modified" || f.status === "renamed")],
@@ -76,10 +96,17 @@ export function ChangesTab({ session, files, facts, base, send, onAsk }: Changes
   const active = ordered.find((f) => f.path === activePath) ?? ordered[0];
   const [committing, setCommitting] = useState(false);
 
-  const accepted = ordered.filter((f) => f.decision === "accept");
-  const rejected = ordered.filter((f) => f.decision === "reject");
-  const conflicts = ordered.filter(conflicted);
+  const count = (state: FileState) => ordered.filter((f) => fileState(f) === state);
+  const accepted = count("accepted");
+  const rejected = count("rejected");
+  const conflicts = count("conflict");
+  const blocked = ordered.filter((f) => rejectedHunks(f) > 0).length;
   const canCommit = accepted.length > 0 && conflicts.length === 0;
+  const pending = pendingFeedback(files ?? []);
+  const acceptAll = () => {
+    for (const f of ordered)
+      if (!conflicted(f) && f.decision !== "accept") send({ type: "decideFile", worktreePath, path: f.path, decision: "accept" });
+  };
 
   const decide = (file: Row, decision: Decision, advance = false) => {
     if (conflicted(file)) return false;
@@ -139,6 +166,10 @@ export function ChangesTab({ session, files, facts, base, send, onAsk }: Changes
               file={active}
               base={base}
               onDecide={(d) => decide(active, d)}
+              onDecideHunk={(hunk, d) =>
+                send({ type: "decideHunk", worktreePath, path: active.path, hunkId: hunk.id, decision: hunk.decision === d ? null : d })
+              }
+              onComment={(hunk, comment) => send({ type: "commentHunk", worktreePath, path: active.path, hunkId: hunk.id, comment })}
               onAsk={() => onAsk(`Explain the change in ${active.path} and whether it needs a test.`)}
             />
           )}
@@ -147,6 +178,7 @@ export function ChangesTab({ session, files, facts, base, send, onAsk }: Changes
               <CommitBox
                 draft={draftCommitMessage(sessionTitle(session), accepted)}
                 count={accepted.length}
+                blocked={blocked}
                 branch={session.branch}
                 disabled={!canCommit}
                 onCommit={(message) => {
@@ -162,6 +194,17 @@ export function ChangesTab({ session, files, facts, base, send, onAsk }: Changes
                   {ordered.length - accepted.length - rejected.length - conflicts.length} undecided
                   {conflicts.length > 0 && <span className="bad"> · {conflicts.length} conflict</span>}
                 </span>
+                <button
+                  className="btn ghost sm"
+                  disabled={pending === 0}
+                  title={pending ? "Send rejected hunks and comments to the agent as one message" : "Reject or comment on a hunk first"}
+                  onClick={() => send({ type: "sendFeedback", worktreePath })}
+                >
+                  Send feedback to agent{pending > 0 && <span className="n"> {pending}</span>}
+                </button>
+                <button className="btn ghost sm" onClick={acceptAll}>
+                  Accept all
+                </button>
                 <button
                   className="btn primary sm"
                   disabled={!canCommit}
@@ -190,6 +233,7 @@ function commitsReady(ahead: number): string {
 
 function FileRow({ file, active, onSelect }: { file: Row; active: boolean; onSelect: () => void }) {
   const status = conflicted(file) ? "conflicted" : file.status;
+  const state = fileState(file);
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (active) ref.current?.scrollIntoView?.({ block: "nearest" });
@@ -207,9 +251,13 @@ function FileRow({ file, active, onSelect }: { file: Row; active: boolean; onSel
         <span>{file.path}</span>
       </span>
       <span className="stat">
-        {file.decision && (
-          <span className={`dec ${file.decision}`} data-testid="decision">
-            {file.decision === "accept" ? "accepted" : "rejected"}
+        {(state === "accepted" || state === "rejected") && (
+          <span
+            className={`dec ${state === "accepted" ? "accept" : "reject"}`}
+            data-testid="decision"
+            title={rejectedHunks(file) ? "A rejected hunk keeps this file out of commits" : undefined}
+          >
+            {state}
           </span>
         )}{" "}
         <span className="a">+{file.added}</span> <span className="d">−{file.removed}</span>
@@ -218,8 +266,16 @@ function FileRow({ file, active, onSelect }: { file: Row; active: boolean; onSel
   );
 }
 
-function FileDiff(props: { file: Row; base: string | undefined; onDecide: (d: Decision) => void; onAsk: () => void }) {
-  const { file, base, onDecide, onAsk } = props;
+function FileDiff(props: {
+  file: Row;
+  base: string | undefined;
+  onDecide: (d: Decision) => void;
+  onDecideHunk: (hunk: Hunk, d: Decision) => void;
+  onComment: (hunk: Hunk, comment: string | null) => void;
+  onAsk: () => void;
+}) {
+  const { file, base, onDecide, onDecideHunk, onComment, onAsk } = props;
+  const rejectedCount = rejectedHunks(file);
   const conflict = conflicted(file);
   const letter = LETTER[conflict ? "conflicted" : file.status];
   return (
@@ -254,6 +310,11 @@ function FileDiff(props: { file: Row; base: string | undefined; onDecide: (d: De
           </>
         )}
       </div>
+      {rejectedCount > 0 && (
+        <p className="blocked-note" role="note">
+          Not committable: {rejectedCount} rejected hunk{rejectedCount === 1 ? "" : "s"}. Send feedback to the agent, or Accept file.
+        </p>
+      )}
       {file.status === "conflicted" ? (
         <p className="diff-empty">This file has a merge conflict. Resolve it before deciding.</p>
       ) : file.baseConflict && !file.hunks.length ? (
@@ -265,16 +326,72 @@ function FileDiff(props: { file: Row; base: string | undefined; onDecide: (d: De
       ) : file.hunks.length === 0 ? (
         <p className="diff-empty">No line changes (mode or name only).</p>
       ) : (
-        file.hunks.map((h) => <HunkView key={h.id} hunk={h} decision={file.decision} />)
+        file.hunks.map((h) => (
+          <HunkView
+            key={h.id}
+            hunk={h}
+            fileDecision={file.decision}
+            decidable={!conflict}
+            onDecide={(d) => onDecideHunk(h, d)}
+            onComment={(c) => onComment(h, c)}
+          />
+        ))
       )}
     </div>
   );
 }
 
-function HunkView({ hunk, decision }: { hunk: Hunk; decision: Decision | null }) {
+function HunkView(props: {
+  hunk: Hunk;
+  fileDecision: Decision | null;
+  decidable: boolean;
+  onDecide: (d: Decision) => void;
+  onComment: (comment: string | null) => void;
+}) {
+  const { hunk, fileDecision, decidable, onDecide, onComment } = props;
+  // A file decision overrides its hunks'.
+  const decision = fileDecision ?? hunk.decision;
+  const [editing, setEditing] = useState(false);
   return (
-    <div className={`hunkbox ${decision ?? ""}`} data-hunk={hunk.id}>
-      <div className="hh">{hunk.header}</div>
+    <div className={`hunkbox ${decision ?? ""}`} data-hunk={hunk.id} role="group" aria-label={`Hunk ${hunk.header}`}>
+      <div className="hh">
+        <span className="h">{hunk.header}</span>
+        <span className="dec">{decision === "accept" ? "accepted" : decision === "reject" ? "rejected" : ""}</span>
+        {hunk.sent && (
+          <span className="sent" title="The agent has this feedback">
+            sent
+          </span>
+        )}
+        {decidable && (
+          <span className="r">
+            <button className="a" aria-label="Accept hunk" aria-pressed={hunk.decision === "accept"} onClick={() => onDecide("accept")}>
+              Accept
+            </button>
+            <button className="rj" aria-label="Reject hunk" aria-pressed={hunk.decision === "reject"} onClick={() => onDecide("reject")}>
+              Reject
+            </button>
+            <button aria-label="Comment on hunk" aria-pressed={editing} onClick={() => setEditing(true)}>
+              Comment
+            </button>
+          </span>
+        )}
+      </div>
+      {editing ? (
+        <CommentBox
+          initial={hunk.comment ?? ""}
+          onSave={(text) => {
+            onComment(text.trim() ? text.trim() : null);
+            setEditing(false);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        hunk.comment && (
+          <div className="hcomment">
+            <span className="who">Comment</span> {hunk.comment}
+          </div>
+        )
+      )}
       {hunk.lines.map((l, i) => (
         <div key={i} className={`ln ${l.kind}`}>
           <span className="g">{l.old ?? ""}</span>
@@ -287,15 +404,51 @@ function HunkView({ hunk, decision }: { hunk: Hunk; decision: Decision | null })
   );
 }
 
+function CommentBox(props: { initial: string; onSave: (text: string) => void; onCancel: () => void }) {
+  const { initial, onSave, onCancel } = props;
+  const [text, setText] = useState(initial);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => ref.current?.focus(), []);
+  useAction("confirm.cancel", onCancel);
+  return (
+    <div className="hcomment-edit">
+      <textarea
+        ref={ref}
+        aria-label="Comment for the agent"
+        rows={2}
+        value={text}
+        placeholder="What should the agent change here?"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (matches(e, "review.commit")) {
+            e.preventDefault();
+            onSave(text);
+          }
+        }}
+      />
+      <div className="row">
+        <button className="btn ghost sm" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="btn sm" aria-label="Save comment" onClick={() => onSave(text)}>
+          {initial ? "Save" : "Add comment"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CommitBox(props: {
   draft: string;
   count: number;
+  /** Files kept out by a rejected hunk. */
+  blocked: number;
   branch: string | null;
   disabled: boolean;
   onCommit: (message: string) => void;
   onCancel: () => void;
 }) {
-  const { draft, count, branch, disabled, onCommit, onCancel } = props;
+  const { draft, count, blocked, branch, disabled, onCommit, onCancel } = props;
   const [message, setMessage] = useState(draft);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => ref.current?.focus(), []);
@@ -322,6 +475,7 @@ function CommitBox(props: {
       <div className="row">
         <span className="hint">
           Commits {count} accepted file{count === 1 ? "" : "s"} on <code>{branch ?? "this worktree"}</code>
+          {blocked > 0 && `; ${blocked} file${blocked === 1 ? "" : "s"} with rejected hunks stay${blocked === 1 ? "s" : ""} out`}
         </span>
         <button className="btn ghost sm" onClick={onCancel}>
           Cancel

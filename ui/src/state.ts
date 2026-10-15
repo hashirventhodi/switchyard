@@ -197,6 +197,19 @@ export function reduce(state: State, event: Event): State {
       const next = list.map((f) => (f.path === event.path ? { ...f, decision: event.decision } : f));
       return { ...state, changes: { ...state.changes, [event.worktreePath]: next } };
     }
+    case "hunkReviewed": {
+      const list = state.changes[event.worktreePath];
+      if (!list) return state;
+      const { decision, comment, sent } = event;
+      const next = list.map((f) =>
+        f.path === event.path ? { ...f, hunks: f.hunks.map((h) => (h.id === event.hunkId ? { ...h, decision, comment, sent } : h)) } : f,
+      );
+      return { ...state, changes: { ...state.changes, [event.worktreePath]: next } };
+    }
+    case "feedbackSent": {
+      const n = event.hunks;
+      return resultToast(state, `Sent feedback on ${n} hunk${n === 1 ? "" : "s"} to the agent`, "ok");
+    }
     case "committed": {
       const n = event.files.length;
       const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})`;
