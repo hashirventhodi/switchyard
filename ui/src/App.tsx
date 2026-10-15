@@ -12,6 +12,7 @@ import { Palette, ShortcutsHelp } from "./Overlays";
 import { NewSession } from "./NewSession";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { SessionView } from "./SessionView";
+import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
 import { dismissToast, initialState, reduce, sessionOn, type RepositoryView, type State } from "./state";
 import { AGENT_SHORT, STATUS_LABEL, Status } from "./status";
@@ -329,11 +330,16 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
                 <h1>{VIEWS.find(([v]) => v === prefs.view)?.[1]}</h1>
               </div>
               {prefs.view === "dashboard" && (
-                <SetupPanel
-                  agents={state.agents}
-                  onCheck={() => core.send({ type: "checkAgents" })}
-                  openLink={openLink}
-                />
+                <>
+                  <SetupPanel
+                    agents={state.agents}
+                    onCheck={() => core.send({ type: "checkAgents" })}
+                    openLink={openLink}
+                  />
+                  <div className="kpis">
+                    <SpendToday sessions={sessions} variant="kpi" />
+                  </div>
+                </>
               )}
               <p className="empty">
                 {prefs.view === "session" ? "No session yet. Start one with New session." : "Nothing here yet."}
@@ -374,7 +380,7 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
-            <span className="i">$0.00 today</span>
+            <SpendToday sessions={sessions} variant="status" />
           </div>
         </footer>
 

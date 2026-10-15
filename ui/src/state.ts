@@ -6,6 +6,7 @@ import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
 import type { Session } from "./schema/Session";
 import type { SessionFacts } from "./schema/SessionFacts";
+import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 
 export interface RepositoryView extends Repository {
@@ -15,6 +16,8 @@ export interface RepositoryView extends Repository {
 export interface SessionView extends Session {
   facts: SessionFacts;
   transcript: Chunked<Entry>;
+  /** Running spend totals as recorded, oldest first. */
+  spend: SpendSample[];
 }
 
 export interface Toast {
@@ -34,7 +37,7 @@ export interface State {
 
 export const initialState: State = { repositories: [], sessions: {}, toasts: [], agents: [] };
 
-const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0, costUsd: null };
+const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
 let toastSeq = 0;
 
@@ -64,12 +67,17 @@ export function reduce(state: State, event: Event): State {
       return { ...state, toasts: [...state.toasts, { id: ++toastSeq, tone: "bad", text: event.reason }] };
     case "sessionStarted": {
       const s = event.session;
-      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked() } } };
+      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked(), spend: [] } } };
     }
     case "sessionStatusChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
+    case "spendRecorded":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        spend: [...s.spend, { atMs: event.atMs, spend: event.spend }],
+      }));
     case "transcriptEntry":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,

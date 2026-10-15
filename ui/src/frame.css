@@ -145,6 +145,12 @@ table.help td:last-child{text-align:right;white-space:nowrap;padding-left:12px}
   .statusbar .hide-sm{display:none}
   .page{padding:0 16px 32px}
 }
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
+.kpi{background:var(--bg-1);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;text-align:left}
+.kpi:hover{border-color:var(--line-2)}
+.kpi .l{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-2);font-weight:600}
+.kpi .v{font:600 22px/1.2 var(--font-mono);margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .v small{font:400 12px var(--font-ui);color:var(--fg-1);margin-left:6px}
 /* Agent setup state (Dashboard) and the New session block */
 .setup{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--warn-soft)}
 .setup-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}

@@ -83,6 +83,20 @@ pub enum Event {
         session_id: String,
         facts: SessionFacts,
     },
+    /// What a Session has spent so far, as of `atMs`. Each one supersedes the Session's
+    /// previous one (the totals are running totals); the renderer keeps them all so it can
+    /// tell what was spent since a given time (Spend today). Replayed in full on attach,
+    /// with estimates recomputed from the current price table.
+    SpendRecorded {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        /// Milliseconds since the Unix epoch.
+        #[serde(rename = "atMs")]
+        #[ts(rename = "atMs", type = "number")]
+        at_ms: u64,
+        spend: Spend,
+    },
     /// Transcript entry number `index` of a Session. An index equal to the transcript's
     /// length appends; a lower one replaces that entry (a tool call gaining its result).
     TranscriptEntry {
@@ -222,8 +236,29 @@ pub struct SessionFacts {
     pub cli_permission_mode: Option<String>,
     /// Completed turns.
     pub turns: u32,
-    /// Cost reported by the CLI so far, when it reports one.
-    pub cost_usd: Option<f64>,
+}
+
+/// A Session's running spend. Cost is either reported by the CLI or, for a CLI that
+/// reports tokens only, estimated from the price table when read (shown with a tilde);
+/// the two are never mixed into one figure.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Spend {
+    /// Input tokens, not counting cache reads.
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    #[ts(type = "number")]
+    pub cache_read_tokens: u64,
+    /// Cost the CLI reported, in USD.
+    pub reported_usd: Option<f64>,
+    /// Cost estimated from the price table, in USD: only when the CLI reported none and the
+    /// table prices the Session's model.
+    pub estimated_usd: Option<f64>,
+    /// The price table version `estimatedUsd` was computed with.
+    pub price_table_version: Option<String>,
 }
 
 /// One transcript entry.

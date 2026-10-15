@@ -5,9 +5,14 @@ import type { Repository } from "./Repository";
 import type { Session } from "./Session";
 import type { SessionFacts } from "./SessionFacts";
 import type { SessionStatus } from "./SessionStatus";
+import type { Spend } from "./Spend";
 import type { Worktree } from "./Worktree";
 
 /**
  * Something the core reports. The renderer derives all of its state from these.
  */
-export type Event = { "type": "attached" } | { "type": "repositoryAdded", repository: Repository, } | { "type": "worktreeAdded", repositoryId: string, worktree: Worktree, } | { "type": "commandRefused", command: string, reason: string, } | { "type": "sessionStarted", session: Session, } | { "type": "sessionStatusChanged", sessionId: string, status: SessionStatus, } | { "type": "sessionFactsChanged", sessionId: string, facts: SessionFacts, } | { "type": "transcriptEntry", sessionId: string, index: number, entry: Entry, } | { "type": "agentsChecked", agents: Array<AgentSetup>, };
+export type Event = { "type": "attached" } | { "type": "repositoryAdded", repository: Repository, } | { "type": "worktreeAdded", repositoryId: string, worktree: Worktree, } | { "type": "commandRefused", command: string, reason: string, } | { "type": "sessionStarted", session: Session, } | { "type": "sessionStatusChanged", sessionId: string, status: SessionStatus, } | { "type": "sessionFactsChanged", sessionId: string, facts: SessionFacts, } | { "type": "spendRecorded", sessionId: string, 
+/**
+ * Milliseconds since the Unix epoch.
+ */
+atMs: number, spend: Spend, } | { "type": "transcriptEntry", sessionId: string, index: number, entry: Entry, } | { "type": "agentsChecked", agents: Array<AgentSetup>, };
