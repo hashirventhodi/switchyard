@@ -301,6 +301,41 @@ pub fn commit_paths(dir: &Path, paths: &[String], message: &str) -> Result<Strin
     Ok(git(dir, &["rev-parse", "--short", "HEAD"])?.trim().to_string())
 }
 
+/// The remote branches are pushed to: `origin` when there is one, otherwise the first
+/// remote git lists, or `None` when the repository has no remote.
+pub fn remote(dir: &Path) -> Option<String> {
+    let out = git(dir, &["remote"]).ok()?;
+    let remotes: Vec<&str> = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    remotes.iter().find(|r| **r == "origin").or(remotes.first()).map(|r| r.to_string())
+}
+
+/// `git push --set-upstream <remote> <branch>` from the worktree at `dir`. Never forced.
+pub fn push(dir: &Path, remote: &str, branch: &str) -> Result<(), GitError> {
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    git(dir, &["push", "--quiet", "--set-upstream", remote, &refspec]).map(|_| ())
+}
+
+/// True when `ancestor` is `descendant` or one of its ancestors (both must be known here).
+pub fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> bool {
+    git(dir, &["merge-base", "--is-ancestor", ancestor, descendant]).is_ok()
+}
+
+/// Merge `branch` into whatever the worktree at `dir` has checked out, always with a merge
+/// commit. A merge that stops is aborted at once, leaving the tree as it was.
+pub fn merge_branch(dir: &Path, branch: &str, message: &str) -> Result<(), GitError> {
+    let out = Command::new("git")
+        .args(["merge", "--no-ff", "--no-edit", "-m", message, branch])
+        .env("GIT_EDITOR", "true")
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let _ = git(dir, &["merge", "--abort"]);
+    Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+}
+
 /// A private temporary directory, removed when dropped.
 struct Scratch(PathBuf);
 

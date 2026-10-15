@@ -105,34 +105,43 @@ pub(crate) fn start_session_on_new(
 /// A Paused, Finished or Error session on it is archived (its transcript outlives the
 /// worktree). The branch stays. Shells on the worktree close with it, once git has removed it.
 pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
-    const COMMAND: &str = "removeWorktree";
+    if let Err(reason) = try_remove(inner, worktree_path) {
+        inner.refuse("removeWorktree", reason);
+    }
+}
+
+/// [`remove`], returning the reason instead of refusing a command: the Merged cleanup and
+/// Prune merged go through here too.
+pub(crate) fn try_remove(inner: &mut Inner, worktree_path: &str) -> Result<(), String> {
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
-        return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
+        return Err(format!("{worktree_path} is not a worktree of an added repository"));
     };
     let name = worktree.branch.clone().unwrap_or_else(|| worktree_path.to_string());
     if worktree.primary {
-        return inner.refuse(COMMAND, format!("{name} is the primary worktree; it is never removed"));
+        return Err(format!("{name} is the primary worktree; it is never removed"));
     }
     if let Some(status) = sessions::occupant(inner, worktree_path) {
         if matches!(status, SessionStatus::Running | SessionStatus::Waiting) {
             let label = sessions::status_label(status);
-            return inner.refuse(COMMAND, format!("{name} has a {label} session; stop it before removing the worktree"));
+            return Err(format!("{name} has a {label} session; stop it before removing the worktree"));
         }
     }
     match git::dirty_count(&worktree.path) {
         Ok(0) => {}
-        Ok(1) => return inner.refuse(COMMAND, format!("{name} has 1 uncommitted file; commit or discard it before removing the worktree")),
-        Ok(n) => return inner.refuse(COMMAND, format!("{name} has {n} uncommitted files; commit or discard them before removing the worktree")),
-        Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {name}: {e}")),
+        Ok(1) => return Err(format!("{name} has 1 uncommitted file; commit or discard it before removing the worktree")),
+        Ok(n) => return Err(format!("{name} has {n} uncommitted files; commit or discard them before removing the worktree")),
+        Err(git::GitError(e)) => return Err(format!("git could not read {name}: {e}")),
     }
     if let Err(git::GitError(e)) = git::remove_worktree(Path::new(&repo.path), &worktree.path) {
-        return inner.refuse(COMMAND, format!("Could not remove {name}: {e}"));
+        return Err(format!("Could not remove {name}: {e}"));
     }
     // Checked above: whatever session is left there is not at work.
     let _ = sessions::archive_occupant(inner, worktree_path);
     review::forget(inner, worktree_path);
     shells::close_worktree(inner, worktree_path);
+    crate::forge::forget(inner, worktree_path);
     inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
+    Ok(())
 }
 
 /// Re-read every known worktree's facts from git and emit them.
@@ -171,7 +180,7 @@ pub(crate) fn emit_facts(inner: &Inner, path: &Path, base: &str) {
     });
 }
 
-fn repository(inner: &Inner, id: &str) -> Option<StoredRepository> {
+pub(crate) fn repository(inner: &Inner, id: &str) -> Option<StoredRepository> {
     inner.store.repositories().ok()?.into_iter().find(|r| r.id == id)
 }
 
