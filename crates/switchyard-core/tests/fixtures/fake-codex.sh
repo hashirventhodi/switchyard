@@ -1,10 +1,11 @@
 #!/bin/sh
 # A stand-in for `codex app-server` (no model, no network): logs its arguments, working
-# directory and every line it is sent to $FAKE_CODEX_LOG, and answers the handshake and one
-# turn with canned JSON-RPC. A turn whose prompt says "ask" first asks to run a command.
+# directory, its SY26_* environment variables and every line it is sent to $FAKE_CODEX_LOG,
+# and answers the handshake and one turn with canned JSON-RPC. A turn whose prompt says "ask" first asks to run a command.
 log="${FAKE_CODEX_LOG:?}"
 echo "args=$*" >> "$log"
 echo "cwd=$(pwd -P)" >> "$log"
+env | grep '^SY26_' | sed 's/^/env=/' >> "$log"
 while IFS= read -r line; do
   echo "in=$line" >> "$log"
   case "$line" in

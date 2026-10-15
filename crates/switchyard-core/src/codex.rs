@@ -38,10 +38,12 @@ pub struct CodexLauncher {
 
 /// Per-spawn config overrides for Codex: config.toml dotted keys to JSON values, sent as
 /// `thread/start`'s (and `thread/resume`'s) `config`. Today: the repository's MCP servers
-/// ([`mcp::codex_config`]). Every other server Codex would load from its own config is
-/// switched off by the adapter, and the MCP Grants apply to these servers.
+/// with the granted secrets they inherit by name ([`mcp::codex_config_for_spawn`]). Every
+/// other server Codex would load from its own config is switched off by the adapter, and
+/// the MCP Grants apply to these servers. Names only: secret values reach Codex through
+/// its process environment ([`LaunchSpec::env`]), never through this config.
 pub fn spawn_config(spec: &LaunchSpec) -> Map<String, Value> {
-    mcp::codex_config(&spec.mcp_servers).into_iter().collect()
+    mcp::codex_config_for_spawn(&spec.mcp_servers, &spec.env).into_iter().collect()
 }
 
 /// What the adapter is started with for `spec`.
@@ -66,7 +68,11 @@ pub fn launch_for(spec: &LaunchSpec) -> Launch {
 impl AgentLauncher for CodexLauncher {
     fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String> {
         let adapter = Arc::new(Mutex::new(CodexAdapter::new(launch_for(&spec))));
-        let mut child = Command::new(&self.codex)
+        let mut command = Command::new(&self.codex);
+        // Granted secrets in, every other known secret name out: Codex and the commands and
+        // MCP servers it starts inherit this environment.
+        spec.env.apply(&mut command);
+        let mut child = command
             .arg("app-server")
             .current_dir(&spec.cwd)
             // Its own process group: after a crash, killing the recorded process takes the

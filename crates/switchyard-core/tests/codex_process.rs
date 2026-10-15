@@ -94,6 +94,39 @@ fn codex_app_server_runs_in_the_worktree_and_its_turn_reaches_the_transcript() {
 }
 
 #[test]
+fn codex_and_the_mcp_servers_it_starts_get_granted_secrets_and_none_of_the_others() {
+    // Switchyard itself was started with an ungranted secret in its environment.
+    std::env::set_var("SY26_CX_STRIPE_KEY", "sk-must-not-leak");
+    let fake = fake_codex();
+    let repo = TempRepo::new("acme");
+    std::fs::create_dir_all(repo.path.join(".switchyard")).unwrap();
+    std::fs::write(repo.path.join(".switchyard/policy.yml"), "secrets: [SY26_CX_STRIPE_KEY]\n").unwrap();
+    std::fs::write(
+        repo.path.join(".mcp.json"),
+        r#"{"mcpServers":{"npm":{"command":"npx","args":["-y","npm-mcp"],"env":{"SY26_CX_NPM_TOKEN":"${SY26_CX_NPM_TOKEN}"}}}}"#,
+    )
+    .unwrap();
+    let worktree = repo.add_worktree("feat/x");
+    let mut core = Harness::launch_with(fake.launcher.clone());
+    let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
+    core.secrets.in_keychain("SY26_CX_NPM_TOKEN", "npm-123");
+    core.dispatch(Command::GrantSecret { repository_id, name: "SY26_CX_NPM_TOKEN".into() });
+
+    core.dispatch(start(&worktree, "hello"));
+    core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+
+    let log = std::fs::read_to_string(&fake.log).unwrap();
+    assert!(log.contains("env=SY26_CX_NPM_TOKEN=npm-123\n"), "{log}");
+    assert!(!log.contains("SY26_CX_STRIPE_KEY"), "{log}");
+    assert!(!log.contains("sk-must-not-leak"), "{log}");
+    // The MCP server inherits the granted secret from Codex by name; no value is in the config.
+    let thread = &sent(&fake.log)[3]["params"];
+    assert_eq!(thread["config"]["mcp_servers.npm.env_vars"], serde_json::json!(["SY26_CX_NPM_TOKEN"]));
+    assert!(thread["config"].get("mcp_servers.npm.env.SY26_CX_NPM_TOKEN").is_none(), "{thread:#}");
+    assert!(!thread.to_string().contains("npm-123"), "{thread:#}");
+}
+
+#[test]
 fn a_codex_approval_is_answered_with_the_same_json_rpc_id() {
     let fake = fake_codex();
     let repo = TempRepo::new("acme");
