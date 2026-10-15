@@ -62,7 +62,52 @@ const openSession = () =>
   fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByText("feat/login"));
 const openContext = () => fireEvent.click(screen.getByRole("tab", { name: "Context" }));
 
-test("the Tasks view reads every repository's tasks into four columns; Sync is inert", () => {
+test("Sync pulls GitHub Issues for repositories with a remote; issue cards carry the GitHub badge beside local ones", () => {
+  const offline: Repository = { id: "repo-2", name: "notes", path: "/src/notes", baseBranch: "main", remote: null };
+  const { sent, emit } = launch([{ type: "repositoryAdded", repository: offline }]);
+  openTasks();
+  fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+  expect(sent).toContainEqual({ type: "syncTasks", repositoryId: "repo-1" });
+  expect(sent).not.toContainEqual({ type: "syncTasks", repositoryId: "repo-2" });
+  act(() =>
+    emit(
+      board([
+        task(),
+        task({
+          id: "repo-1/github/#412",
+          source: "github",
+          key: "#412",
+          title: "Login times out",
+          kind: "fix",
+          column: "inProgress",
+          url: "https://github.com/acme/acme/issues/412",
+        }),
+      ]),
+    ),
+  );
+  expect(within(card("#412")).getByText("GitHub")).toBeTruthy();
+  expect(within(column("In progress")).getByText("Login times out")).toBeTruthy();
+  expect(within(card("L-1")).getByText("local")).toBeTruthy();
+});
+
+test("Sync shows the gh setup state when GitHub cannot be reached, and is off without any remote", () => {
+  const { emit } = launch([
+    { type: "forgeChecked", forge: { name: "GitHub", state: { type: "signedOut", loginHint: "gh auth login" } } },
+  ]);
+  openTasks();
+  expect(screen.getByRole("status", { name: "GitHub Issues" }).textContent).toContain("gh auth login");
+  act(() => emit({ type: "forgeChecked", forge: { name: "GitHub", state: { type: "ready", version: "2.81.0" } } }));
+  expect(screen.queryByRole("status", { name: "GitHub Issues" })).toBeNull();
+  cleanup();
+
+  const fake = fakeCore();
+  render(<App core={fake.core} pickFolder={async () => null} />);
+  act(() => fake.emit({ type: "attached" }, { type: "repositoryAdded", repository: { ...acme, remote: null } }));
+  openTasks();
+  expect((screen.getByRole("button", { name: "Sync" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("the Tasks view reads every repository's tasks into four columns", () => {
   const { sent, emit } = launch([]);
   openTasks();
   expect(sent).toContainEqual({ type: "readTasks", repositoryId: "repo-1" });
@@ -81,8 +126,6 @@ test("the Tasks view reads every repository's tasks into four columns; Sync is i
   expect(within(column("In review")).getByText("Moment")).toBeTruthy();
   expect(within(column("Done")).getByText("Token bucket")).toBeTruthy();
   expect(column("To do").textContent).toContain("1");
-  const sync = screen.getByRole("button", { name: "Sync" }) as HTMLButtonElement;
-  expect(sync.disabled).toBe(true);
 });
 
 test("New local task sends the title, kind, description and checklist lines", () => {

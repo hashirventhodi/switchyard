@@ -35,14 +35,30 @@ export function TasksView(props: {
   const tasks = state.repositories.flatMap((r) => state.tasks[r.id] ?? []);
   const linkingSession = linking ? state.sessions[linking.sessionId] : undefined;
   const repoName = (id: string) => state.repositories.find((r) => r.id === id)?.name ?? "";
+  // GitHub Issues come only from repositories with a remote, through gh.
+  const tracked = state.repositories.filter((r) => r.remote);
+  const forge = state.forge?.state;
+  const ghProblem =
+    tracked.length === 0 || !forge || forge.type === "ready"
+      ? null
+      : forge.type === "missing"
+        ? `GitHub CLI (gh) is not installed; install it (${forge.installHint}) to sync GitHub Issues.`
+        : `GitHub CLI (gh) is not signed in; run ${forge.loginHint} to sync GitHub Issues.`;
 
   return (
     <div className="page">
       <div className="pagehead">
         <h1>Tasks</h1>
-        <span className="sub">Local tasks per repository. Assign a task to an agent and a worktree is created for it.</span>
+        <span className="sub">
+          Local tasks and GitHub Issues per repository. Assign a task to an agent and a worktree is created for it.
+        </span>
         <div className="right">
-          <button className="btn" disabled title="Syncing with GitHub Issues arrives with the GitHub task source">
+          <button
+            className="btn"
+            disabled={tracked.length === 0}
+            title={tracked.length === 0 ? "No repository has a remote to read GitHub Issues from" : "Read GitHub Issues again"}
+            onClick={() => tracked.forEach((r) => send({ type: "syncTasks", repositoryId: r.id }))}
+          >
             Sync
           </button>
           <button className="btn" onClick={onNewTask} disabled={state.repositories.length === 0}>
@@ -50,6 +66,11 @@ export function TasksView(props: {
           </button>
         </div>
       </div>
+      {ghProblem && (
+        <div className="linking" role="status" aria-label="GitHub Issues">
+          <span>{ghProblem}</span>
+        </div>
+      )}
       {linkingSession && (
         <div className="linking" role="status" aria-label="Linking">
           <span>
