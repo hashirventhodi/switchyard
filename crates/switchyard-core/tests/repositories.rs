@@ -52,10 +52,10 @@ fn on_relaunch_repositories_are_replayed_with_worktrees_re_read_from_git() {
     let mut core = core.relaunch();
 
     let events = core.send(Command::Attach);
-    // Agent detection (see compat.rs) and settings (persistence.rs) are not part of this story.
+    // Agent and gh detection (compat.rs, forge.rs) and settings (persistence.rs) are not part of this story.
     let events: Vec<_> = events
         .into_iter()
-        .filter(|e| !matches!(e, Event::AgentsChecked { .. } | Event::SettingsChanged { .. }))
+        .filter(|e| !matches!(e, Event::AgentsChecked { .. } | Event::SettingsChanged { .. } | Event::ForgeChecked { .. }))
         .collect();
 
     let worktree = |path: &std::path::Path, branch: &str, primary| Event::WorktreeAdded {

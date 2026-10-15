@@ -1,0 +1,182 @@
+//! GitHub through its CLI, `gh`: the only Forge implementation through M4 (ADR-0003).
+
+use std::path::{Path, PathBuf};
+use std::process::Command as Process;
+
+use serde::Deserialize;
+use switchyard_schema::{ChecksState, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState};
+
+use super::{Forge, ForgePullRequest};
+
+/// Runs `program` as `gh`. The app finds it with [`GhForge::find`]; tests point it at a fake.
+pub struct GhForge {
+    pub program: PathBuf,
+}
+
+impl GhForge {
+    /// `gh` on PATH or in the usual install places (apps launched from Finder get a short
+    /// PATH); plain `gh` when it is nowhere, which detection then reports as missing.
+    pub fn find() -> GhForge {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let program = std::env::split_paths(&path)
+            .chain(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from))
+            .map(|dir| dir.join("gh"))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| PathBuf::from("gh"));
+        GhForge { program }
+    }
+
+    fn run(&self, dir: Option<&Path>, args: &[&str]) -> std::io::Result<std::process::Output> {
+        let mut cmd = Process::new(&self.program);
+        cmd.args(args)
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("GH_NO_UPDATE_NOTIFIER", "1")
+            .env("NO_COLOR", "1");
+        if let Some(dir) = dir {
+            cmd.current_dir(dir);
+        }
+        cmd.output()
+    }
+
+    fn run_ok(&self, dir: &Path, args: &[&str]) -> Result<String, String> {
+        let out = self.run(Some(dir), args).map_err(|e| format!("could not run gh: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+}
+
+const NAME: &str = "GitHub";
+
+impl Forge for GhForge {
+    fn detect(&self) -> ForgeSetup {
+        let state = match self.run(None, &["--version"]) {
+            Ok(out) if out.status.success() => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                let version = text
+                    .split_whitespace()
+                    .skip_while(|w| *w != "version")
+                    .nth(1)
+                    .unwrap_or("unknown")
+                    .to_string();
+                match self.run(None, &["auth", "status"]) {
+                    Ok(out) if out.status.success() => ForgeSetupState::Ready { version },
+                    _ => ForgeSetupState::SignedOut { login_hint: "gh auth login".into() },
+                }
+            }
+            _ => missing(),
+        };
+        ForgeSetup { name: NAME.into(), state }
+    }
+
+    fn create_pull_request(&self, dir: &Path, base: &str, branch: &str) -> Result<String, String> {
+        let out = self.run_ok(dir, &["pr", "create", "--base", base, "--head", branch, "--fill"])?;
+        out.lines()
+            .map(str::trim)
+            .rfind(|l| l.starts_with("https://"))
+            .map(str::to_owned)
+            .ok_or_else(|| format!("gh did not print the pull request's address: {}", out.trim()))
+    }
+
+    fn pull_request(&self, dir: &Path, branch: &str) -> Result<Option<ForgePullRequest>, String> {
+        let out = self.run_ok(
+            dir,
+            &[
+                "pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json",
+                "number,url,state,isDraft,reviewDecision,statusCheckRollup,headRefOid",
+            ],
+        )?;
+        let list: Vec<GhPullRequest> =
+            serde_json::from_str(&out).map_err(|e| format!("gh printed something unexpected: {e}"))?;
+        // Newest first; an open one wins over older closed or merged ones.
+        let pick = list.iter().position(|p| p.state == "OPEN").unwrap_or(0);
+        Ok(list.into_iter().nth(pick).map(GhPullRequest::into_forge))
+    }
+}
+
+fn missing() -> ForgeSetupState {
+    ForgeSetupState::Missing {
+        install_hint: "brew install gh".into(),
+        link: Link { label: "Install GitHub CLI".into(), url: "https://cli.github.com".into() },
+    }
+}
+
+/// One pull request as `gh pr list --json` prints it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhPullRequest {
+    number: u32,
+    url: String,
+    state: String,
+    #[serde(default)]
+    is_draft: bool,
+    #[serde(default)]
+    review_decision: Option<String>,
+    #[serde(default)]
+    status_check_rollup: Option<Vec<GhCheck>>,
+    #[serde(default)]
+    head_ref_oid: String,
+}
+
+/// A check run (`status` + `conclusion`) or a commit status context (`state`).
+#[derive(Deserialize)]
+struct GhCheck {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+}
+
+impl GhPullRequest {
+    fn into_forge(self) -> ForgePullRequest {
+        let state = match self.state.as_str() {
+            "MERGED" => PullRequestState::Merged,
+            "CLOSED" => PullRequestState::Closed,
+            _ => PullRequestState::Open,
+        };
+        let review = match self.review_decision.as_deref() {
+            Some("APPROVED") => ReviewState::Approved,
+            Some("CHANGES_REQUESTED") => ReviewState::ChangesRequested,
+            Some("REVIEW_REQUIRED") => ReviewState::Required,
+            _ => ReviewState::None,
+        };
+        ForgePullRequest {
+            pull_request: PullRequest {
+                number: self.number,
+                url: self.url,
+                state,
+                draft: self.is_draft,
+                checks: checks(&self.status_check_rollup.unwrap_or_default()),
+                review,
+            },
+            head_oid: self.head_ref_oid,
+        }
+    }
+}
+
+/// Failing if any check failed; else Running if any has not finished; else Passing.
+fn checks(rollup: &[GhCheck]) -> ChecksState {
+    if rollup.is_empty() {
+        return ChecksState::None;
+    }
+    const FAILED: &[&str] = &["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
+    let failed = |c: &GhCheck| {
+        [c.conclusion.as_deref(), c.state.as_deref()].into_iter().flatten().any(|v| FAILED.contains(&v))
+    };
+    let running = |c: &GhCheck| match (&c.status, &c.state) {
+        (Some(status), _) => status != "COMPLETED",
+        (None, Some(state)) => state == "PENDING" || state == "EXPECTED",
+        (None, None) => false,
+    };
+    if rollup.iter().any(failed) {
+        ChecksState::Failing
+    } else if rollup.iter().any(running) {
+        ChecksState::Running
+    } else {
+        ChecksState::Passing
+    }
+}
