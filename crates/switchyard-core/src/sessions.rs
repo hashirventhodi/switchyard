@@ -26,6 +26,8 @@ struct SessionState {
     transcript: Vec<Entry>,
     /// Transcript index of each tool call, by call id.
     tool_calls: HashMap<String, usize>,
+    /// Every protocol event the agent sent, as JSON, for the Agent log's debug view.
+    raw_events: Vec<String>,
     agent: Box<dyn AgentHandle>,
 }
 
@@ -127,6 +129,7 @@ pub(crate) fn start(
         facts: SessionFacts::default(),
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
+        raw_events: Vec::new(),
         agent: handle,
     });
     let state = inner.sessions.list.last_mut().expect("just pushed");
@@ -177,6 +180,9 @@ pub(crate) fn replay(inner: &Inner) {
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
         }
+        for (index, json) in state.raw_events.iter().enumerate() {
+            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index: index as u32, json: json.clone() });
+        }
     }
 }
 
@@ -193,6 +199,9 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else { return };
     let mut out = Vec::new();
     let mut cause = None;
+    if let AgentOutput::Event(event) = &output {
+        out.push(record_raw(state, event));
+    }
     match output {
         AgentOutput::Event(event) => match event {
             AgentEvent::SessionInit { cli_permission_mode, cli, model, .. } => {
@@ -260,6 +269,13 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     for event in out {
         inner.emit(event);
     }
+}
+
+fn record_raw(state: &mut SessionState, event: &AgentEvent) -> Event {
+    let json = serde_json::to_string(event).unwrap_or_else(|e| format!("{{\"unserialisable\":\"{e}\"}}"));
+    let index = state.raw_events.len() as u32;
+    state.raw_events.push(json.clone());
+    Event::AgentEventReceived { session_id: state.session.id.clone(), index, json }
 }
 
 fn change_status(state: &mut SessionState, cause: &Cause) -> Option<Event> {
