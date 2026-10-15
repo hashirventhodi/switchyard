@@ -385,6 +385,29 @@ fn sync_now_reads_at_once_and_resets_the_back_off() {
 }
 
 #[test]
+fn a_hidden_window_polls_issues_at_the_slowest_cadence_and_showing_it_polls_at_once() {
+    let mut t = tracker();
+    t.sync();
+    t.core.send(Command::WindowVisibility { visible: false });
+    assert_eq!(issues_polled_on(&mut t.core, 24), vec![1, 9, 17]);
+    let before = t.core.gh.calls_of(["issue", "list"]);
+    t.core.send(Command::WindowVisibility { visible: true });
+    assert_eq!(t.core.gh.calls_of(["issue", "list"]), before + 1, "polled at once");
+    assert_eq!(issues_polled_on(&mut t.core, 8), vec![2, 6]);
+}
+
+#[test]
+fn poll_forge_now_reads_issues_at_once_and_resets_their_back_off() {
+    let mut t = tracker();
+    t.sync();
+    assert_eq!(issues_polled_on(&mut t.core, 16), vec![1, 3, 7, 15]);
+    let before = t.core.gh.calls_of(["issue", "list"]);
+    t.core.send(Command::PollForgeNow);
+    assert_eq!(t.core.gh.calls_of(["issue", "list"]), before + 1, "read at once");
+    assert_eq!(issues_polled_on(&mut t.core, 8), vec![2, 6]);
+}
+
+#[test]
 fn a_repository_never_synced_is_left_alone_by_the_poller() {
     let mut t = tracker();
     assert_eq!(issues_polled_on(&mut t.core, 16), Vec::<u32>::new());

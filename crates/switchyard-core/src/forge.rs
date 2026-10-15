@@ -12,6 +12,10 @@
 //! appears or opens a pull request; each poll that sees no change doubles the ticks until
 //! the next one, up to [`MAX_TICKS`], and any change polls again on the next tick. Nothing
 //! is stored: after a relaunch every branch is looked up again.
+//!
+//! While the window is hidden every due item (pull requests and GitHub issues) is polled at
+//! [`MAX_TICKS`], to spare the rate limit. [`poll_now`] (window focused, or shown again)
+//! resets every back-off and ticks at once.
 
 mod gh;
 
@@ -110,6 +114,19 @@ pub(crate) struct Tracker {
     opening: HashSet<String>,
     /// GitHub issues, by repository id: of repositories with a remote that were synced.
     issues: HashMap<String, Schedule>,
+    /// The window is hidden: poll at the slowest cadence.
+    hidden: bool,
+}
+
+/// Ticks until the next poll of an item polled every `every` ticks that `changed` (or not).
+fn next_every(every: u32, changed: bool, hidden: bool) -> u32 {
+    if hidden {
+        MAX_TICKS
+    } else if changed {
+        1
+    } else {
+        (every * 2).min(MAX_TICKS)
+    }
 }
 
 /// When a GitHub issues source is next read: the same back-off as a pull request's.
@@ -126,8 +143,8 @@ impl Default for Schedule {
 }
 
 impl Schedule {
-    fn polled(&mut self, changed: bool) {
-        self.every = if changed { 1 } else { (self.every * 2).min(MAX_TICKS) };
+    fn polled(&mut self, changed: bool, hidden: bool) {
+        self.every = next_every(self.every, changed, hidden);
         self.wait = self.every - 1;
     }
 }
@@ -159,15 +176,9 @@ impl Default for Track {
 }
 
 impl Track {
-    fn polled(&mut self, changed: bool) {
+    fn polled(&mut self, changed: bool, hidden: bool) {
         let closed = self.pull_request.as_ref().is_some_and(|p| p.pull_request.state == PullRequestState::Closed);
-        self.every = if closed {
-            CLOSED_TICKS
-        } else if changed {
-            1
-        } else {
-            (self.every * 2).min(MAX_TICKS)
-        };
+        self.every = if closed { CLOSED_TICKS } else { next_every(self.every, changed, hidden) };
         self.wait = self.every - 1;
     }
 }
@@ -267,7 +278,31 @@ pub(crate) fn issues_synced(inner: &mut Inner, repository_id: &str) {
 /// The repository's GitHub issues were read again (`changed`: they differ from last time),
 /// or could not be (`false`).
 pub(crate) fn issues_polled(inner: &mut Inner, repository_id: &str, changed: bool) {
-    inner.forge.issues.entry(repository_id.to_string()).or_default().polled(changed);
+    let hidden = inner.forge.hidden;
+    inner.forge.issues.entry(repository_id.to_string()).or_default().polled(changed, hidden);
+}
+
+/// The window is shown or hidden. Shown, it polls at once ([`poll_now`]).
+pub(crate) fn set_visible(core: &Arc<Mutex<Inner>>, visible: bool) {
+    core.lock().expect("core lock").forge.hidden = !visible;
+    if visible {
+        poll_now(core);
+    }
+}
+
+/// Every pull request and GitHub issues source is due again, backing off afresh; then one
+/// tick, at once.
+pub(crate) fn poll_now(core: &Arc<Mutex<Inner>>) {
+    {
+        let mut inner = core.lock().expect("core lock");
+        for track in inner.forge.tracks.values_mut() {
+            (track.every, track.wait) = (1, 0);
+        }
+        for schedule in inner.forge.issues.values_mut() {
+            *schedule = Schedule::default();
+        }
+    }
+    poll(core);
 }
 
 /// The worktree at `path` is gone: stop polling it.
@@ -570,10 +605,11 @@ fn belongs(path: &Path, found: &ForgePullRequest) -> bool {
 /// Take in one poll's answer. True when it found the branch Merged.
 fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, String>) -> bool {
     let key = due.path.to_string_lossy().into_owned();
+    let hidden = inner.forge.hidden;
     let Some(track) = inner.forge.tracks.get_mut(&key) else { return false };
     let Ok(found) = found else {
         // The Forge could not answer (offline, say): try again later.
-        track.polled(false);
+        track.polled(false, hidden);
         return false;
     };
     let before = track.pull_request.as_ref().map(|p| &p.pull_request);
@@ -581,7 +617,7 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
     let checked_at_ms = (inner.runtime.now_ms)();
     track.pull_request = found.clone();
     track.checked_at_ms = checked_at_ms;
-    track.polled(changed);
+    track.polled(changed, hidden);
     let pull_request = found.as_ref().map(|f| f.pull_request.clone());
     if !changed {
         // The same as before, but checked again just now: the card says so.

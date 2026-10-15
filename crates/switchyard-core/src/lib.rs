@@ -203,6 +203,8 @@ impl Core {
             Command::OpenPullRequest { worktree_path } => return forge::open_pull_request(&self.inner, &worktree_path),
             Command::PruneMerged { repository_id } => return forge::prune(&self.inner, &repository_id),
             Command::CheckForge => return forge::check(&self.inner),
+            Command::PollForgeNow => return forge::poll_now(&self.inner),
+            Command::WindowVisibility { visible } => return forge::set_visible(&self.inner, visible),
             Command::SyncTasks { repository_id } => return tasks::sync(&self.inner, &repository_id),
             Command::Attach => forge::detect_if_unknown(&self.inner),
             _ => {}
@@ -278,7 +280,12 @@ impl Core {
             Command::SetSecretValue { repository_id, name, value } => {
                 secrets::set_value(&mut inner, &repository_id, &name, &value)
             }
-            Command::CheckForge | Command::OpenPullRequest { .. } | Command::PruneMerged { .. } | Command::SyncTasks { .. } => {
+            Command::CheckForge
+            | Command::PollForgeNow
+            | Command::WindowVisibility { .. }
+            | Command::OpenPullRequest { .. }
+            | Command::PruneMerged { .. }
+            | Command::SyncTasks { .. } => {
                 unreachable!("handled above without holding the core")
             }
             Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),

@@ -50,7 +50,12 @@ impl Dispatcher {
     fn send(&self, command: Command) {
         let slow = matches!(
             command,
-            Command::OpenPullRequest { .. } | Command::PruneMerged { .. } | Command::SyncTasks { .. } | Command::CheckForge
+            Command::OpenPullRequest { .. }
+                | Command::PruneMerged { .. }
+                | Command::SyncTasks { .. }
+                | Command::CheckForge
+                | Command::PollForgeNow
+                | Command::WindowVisibility { .. }
         );
         if slow {
             let core = self.core.clone();

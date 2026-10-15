@@ -326,6 +326,13 @@ pub enum Command {
     /// Detect the Forge's CLI (`gh`) and its sign-in again. Answered with
     /// [`Event::ForgeChecked`].
     CheckForge,
+    /// Run a Forge poller tick now (pull requests and GitHub issues) and reset its back-off:
+    /// the window was focused. Answered as any tick is, with the Forge events that changed.
+    PollForgeNow,
+    /// The window was shown or hidden. Hidden, the Forge poller polls every due item at its
+    /// slowest cadence; shown, it polls at once and resets its back-off (as
+    /// [`Command::PollForgeNow`]). Watching and agent events carry on either way.
+    WindowVisibility { visible: bool },
     /// Push a worktree's branch and open a pull request against its Repository's base on
     /// the Forge. Refused when the worktree has uncommitted files, is behind its base, or
     /// the Forge's CLI is missing or signed out. Answered with [`Event::PullRequestOpened`]
@@ -504,6 +511,8 @@ pub mod command_name {
     pub const READ_POLICY: &str = "readPolicy";
     pub const REVOKE_GRANT: &str = "revokeGrant";
     pub const CHECK_FORGE: &str = "checkForge";
+    pub const POLL_FORGE_NOW: &str = "pollForgeNow";
+    pub const WINDOW_VISIBILITY: &str = "windowVisibility";
     pub const OPEN_PULL_REQUEST: &str = "openPullRequest";
     pub const PRUNE_MERGED: &str = "pruneMerged";
     pub const LOCAL_MERGE: &str = "localMerge";
@@ -520,7 +529,10 @@ pub mod command_name {
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE,
+        POLL_FORGE_NOW,
+        WINDOW_VISIBILITY,
+    ];
 }
 
 impl Command {
@@ -567,6 +579,8 @@ impl Command {
             Command::ReadPolicy { .. } => command_name::READ_POLICY,
             Command::RevokeGrant { .. } => command_name::REVOKE_GRANT,
             Command::CheckForge { .. } => command_name::CHECK_FORGE,
+            Command::PollForgeNow { .. } => command_name::POLL_FORGE_NOW,
+            Command::WindowVisibility { .. } => command_name::WINDOW_VISIBILITY,
             Command::OpenPullRequest { .. } => command_name::OPEN_PULL_REQUEST,
             Command::PruneMerged { .. } => command_name::PRUNE_MERGED,
             Command::LocalMerge { .. } => command_name::LOCAL_MERGE,
