@@ -10,6 +10,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use switchyard_core::compat::SystemProbe;
 use switchyard_core::sidecar::SidecarLauncher;
 use switchyard_core::processes::SystemProcesses;
+use switchyard_core::secrets::SystemSecrets;
 use switchyard_core::{default_export_dir, default_worktree_root, system_now_ms, Core, Runtime};
 use switchyard_schema::Command;
 use tauri::path::BaseDirectory;
@@ -73,6 +74,7 @@ fn main() {
                 worktree_root: default_worktree_root(),
                 processes: Arc::new(SystemProcesses),
                 export_dir: default_export_dir(),
+                secrets: Arc::new(SystemSecrets),
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Mutex::new(core));

@@ -8,6 +8,7 @@ import type { Entry } from "./Entry";
 import type { PermissionMode } from "./PermissionMode";
 import type { Policy } from "./Policy";
 import type { Repository } from "./Repository";
+import type { Secret } from "./Secret";
 import type { Session } from "./Session";
 import type { SessionFacts } from "./SessionFacts";
 import type { SessionStatus } from "./SessionStatus";
@@ -40,4 +41,4 @@ hunks: number, } | { "type": "worktreeRebased", worktreePath: string, base: stri
 /**
  * The base branch the commits sit above.
  */
-base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, };
+base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, };

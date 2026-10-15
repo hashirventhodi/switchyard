@@ -267,6 +267,53 @@ pub enum Command {
         #[ts(rename = "grantId")]
         grant_id: String,
     },
+    /// List a Repository's secrets by name, with grant flags and where each value would
+    /// come from. Answered with [`Event::SecretsChanged`].
+    ReadSecrets {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Grant a secret to a Repository: from its next spawn on, every Session of the
+    /// Repository (and the MCP server processes its CLI starts) has it in its environment.
+    GrantSecret {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    /// Revoke a secret's grant. Takes effect at each Session's next spawn; Sessions whose
+    /// agent is running note it in their transcripts.
+    RevokeSecret {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    /// Name a secret for a Repository that neither its policy file nor its `.mcp.json`
+    /// declares (kept as a local name, not granted).
+    AddSecret {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    /// Forget a locally added secret name (and its grant). Declared names stay.
+    RemoveSecret {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+    },
+    /// Keep a secret's value in the OS keychain (never in the store or on disk). The value
+    /// is never echoed back; answered with [`Event::SecretsChanged`] for the Repository.
+    SetSecretValue {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        name: String,
+        value: String,
+    },
 }
 
 /// The user's answer to a Permission request.
@@ -509,6 +556,52 @@ pub enum Event {
         repository_id: String,
         policy: Policy,
     },
+    /// A Repository's secrets as they stand: sent after [`Command::ReadSecrets`] and after
+    /// every change to them. Names and flags only, never values.
+    SecretsChanged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        secrets: Vec<Secret>,
+    },
+}
+
+/// A secret a Repository's Sessions may be given, by name. Its value lives in the OS
+/// keychain or Switchyard's environment, never in the store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Secret {
+    /// The environment variable it is injected as.
+    pub name: String,
+    pub granted: bool,
+    pub origin: SecretOrigin,
+    /// Where its value would come from at the next spawn.
+    pub source: SecretSource,
+}
+
+/// Why a Repository lists a secret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SecretOrigin {
+    /// Named in `.switchyard/policy.yml` `secrets:`.
+    Policy,
+    /// Referenced as `${NAME}` by a server in the Repository's `.mcp.json`.
+    Mcp,
+    /// Added by the user in Switchyard.
+    Local,
+}
+
+/// Where a secret's value comes from: the OS keychain wins over the environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SecretSource {
+    Keychain,
+    Environment,
+    /// Neither has it: a granted secret is then simply absent from the environment.
+    Missing,
 }
 
 /// What may run without asking in a Repository, resolved across layers (organisation,

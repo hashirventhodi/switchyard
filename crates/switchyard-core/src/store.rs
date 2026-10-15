@@ -54,6 +54,7 @@ impl Store {
             db.pragma_update(None, "user_version", i + 1)?;
         }
         crate::session_store::init(&db)?;
+        crate::secrets::init(&db)?;
         Ok(Store { db })
     }
 

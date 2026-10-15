@@ -15,6 +15,8 @@
 //!   deny:                     # wins over any allow, in any layer
 //!     - command: git push *
 //!   sandbox: true             # sessions run sandboxed: Full auto bypasses the CLI's checks
+//! secrets:                    # environment variable names a Session may be granted
+//!   - NPM_TOKEN               # (values live in the keychain or environment, never here)
 //! ```
 //!
 //! Unknown top-level keys are ignored; a rule must name exactly one of `command`,
@@ -33,6 +35,10 @@ pub struct RepoPolicy {
     pub worktrees: WorktreesPolicy,
     #[serde(default)]
     pub permissions: PermissionsPolicy,
+    /// Secret names (environment variables) the repository's Sessions may be granted.
+    /// Values never go in this file.
+    #[serde(default)]
+    pub secrets: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -16,6 +16,7 @@ mod policy;
 mod repo_policy;
 mod session_store;
 mod review;
+pub mod secrets;
 mod sessions;
 mod shells;
 pub mod sidecar;
@@ -51,6 +52,8 @@ pub struct Runtime {
     pub processes: Arc<dyn ProcessTable>,
     /// Where "Export transcript" writes its JSONL files.
     pub export_dir: PathBuf,
+    /// Where secret values live: the OS keychain and the environment.
+    pub secrets: Arc<dyn secrets::SecretValues>,
 }
 
 impl Default for Runtime {
@@ -62,6 +65,7 @@ impl Default for Runtime {
             worktree_root: default_worktree_root(),
             processes: Arc::new(SystemProcesses),
             export_dir: default_export_dir(),
+            secrets: Arc::new(secrets::NoSecrets),
         }
     }
 }
@@ -194,6 +198,12 @@ impl Core {
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
+            Command::ReadSecrets { repository_id } => secrets::read(&inner, &repository_id),
+            Command::GrantSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, true),
+            Command::RevokeSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, false),
+            Command::AddSecret { .. }
+            | Command::RemoveSecret { .. }
+            | Command::SetSecretValue { .. } => inner.refuse("secrets", "not yet".into()),
         }
         sessions::flush(&mut inner);
     }

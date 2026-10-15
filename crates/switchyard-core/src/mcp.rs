@@ -117,6 +117,38 @@ pub fn load(primary: &Path) -> Result<Vec<McpServer>, String> {
         .collect()
 }
 
+/// The environment variables the servers reference as `${NAME}` (or `${NAME:-default}`)
+/// in their command, arguments, environment, URL or headers: secrets they expect.
+pub fn secret_refs(servers: &[McpServer]) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut scan = |text: &str| {
+        let mut rest = text;
+        while let Some(start) = rest.find("${") {
+            rest = &rest[start + 2..];
+            let Some(end) = rest.find('}') else { break };
+            let name = rest[..end].split(":-").next().unwrap_or_default();
+            if crate::secrets::valid_name(name) {
+                names.insert(name.to_string());
+            }
+            rest = &rest[end + 1..];
+        }
+    };
+    for server in servers {
+        match &server.transport {
+            McpTransport::Stdio { command, args, env } => {
+                scan(command);
+                args.iter().for_each(|a| scan(a));
+                env.values().for_each(|v| scan(v));
+            }
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
+                scan(url);
+                headers.values().for_each(|v| scan(v));
+            }
+        }
+    }
+    names
+}
+
 /// The servers as the Claude Agent SDK's `mcpServers` option (the CLI's `--mcp-config`
 /// JSON), by name.
 pub fn claude_servers(servers: &[McpServer]) -> Value {
