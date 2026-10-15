@@ -19,6 +19,7 @@ use crate::agents::{self, AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::processes::{self, Recorded};
 use crate::session_store::{self, Row, CHUNK};
+use crate::mcp;
 use crate::policy;
 use crate::Inner;
 
@@ -188,6 +189,10 @@ fn begin(
     if let Err(reason) = policy::admit_mode(&repo, permission_mode) {
         return refuse(inner, reason);
     }
+    let mcp_servers = match mcp::load(std::path::Path::new(&repo.path)) {
+        Ok(servers) => servers,
+        Err(reason) => return refuse(inner, format!("Could not start the session: {reason}")),
+    };
     // Before the first session, not mid-session: an unsupported CLI never starts (#13).
     if let Err(reason) = compat::admit(inner, agent) {
         return refuse(inner, reason);
@@ -197,8 +202,15 @@ fn begin(
     let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
     let sandboxed = policy::sandboxed(&repo);
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
-    let spec =
-        LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
+    let spec = LaunchSpec {
+        agent,
+        cwd: worktree.path.clone(),
+        permission_mode,
+        sandboxed,
+        allowed_tools,
+        disallowed_tools,
+        mcp_servers: mcp_servers.clone(),
+    };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -333,12 +345,26 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     let repository = policy::repository(inner, &repository_id);
     // The session's own mode (as last switched); the sandbox as the policy declares it now,
     // so a sandbox withdrawn since never relaunches into bypass.
-    let ((allowed_tools, disallowed_tools), sandboxed) = match repository {
-        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, &repo)), policy::sandboxed(&repo)),
+    let ((allowed_tools, disallowed_tools), sandboxed) = match &repository {
+        Some(repo) => (policy::cli_rules(agent, &policy::resolve(inner, repo)), policy::sandboxed(repo)),
         None => Default::default(),
     };
+    // The repository's MCP servers as its `.mcp.json` lists them now.
+    let mcp_servers = match &repository {
+        Some(repo) => mcp::load(std::path::Path::new(&repo.path))
+            .map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))?,
+        None => Vec::new(),
+    };
     let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
-    let spec = LaunchSpec { agent, cwd: cwd.into(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
+    let spec = LaunchSpec {
+        agent,
+        cwd: cwd.into(),
+        permission_mode,
+        sandboxed,
+        allowed_tools,
+        disallowed_tools,
+        mcp_servers: mcp_servers.clone(),
+    };
     let mut handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.to_string())) {
         Ok(handle) => handle,
         Err(reason) => {
