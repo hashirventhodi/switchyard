@@ -2,8 +2,25 @@
 
 use std::path::PathBuf;
 
-use adapter_protocol::conformance::{self, Fixture};
+use adapter_protocol::conformance::{self, ConformanceFailure, Fixture};
 use adapter_protocol::echo::EchoAdapter;
+use adapter_protocol::{Adapter, AdapterError, AdapterManifest, Command, Event};
+use semver::{Version, VersionReq};
+
+/// The echo adapter, claiming whatever protocol range it is told to.
+struct Claiming(&'static str);
+
+impl Adapter for Claiming {
+    fn manifest(&self) -> AdapterManifest {
+        AdapterManifest { name: "claiming".into(), implements: VersionReq::parse(self.0).unwrap() }
+    }
+    fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError> {
+        EchoAdapter::new().ingest(raw)
+    }
+    fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError> {
+        EchoAdapter::new().command(command)
+    }
+}
 
 fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
@@ -103,4 +120,41 @@ fn verdict_translated_to_the_wrong_cli_response_fails_naming_the_command() {
     assert!(failure.contains(r#"-{"allow":false,"reply_to":"r2"}"#), "{failure}");
     assert!(failure.contains("+{\"echo\":"), "{failure}");
     assert!(!failure.contains("events differ"), "{failure}");
+}
+
+#[test]
+fn adapter_declaring_a_range_that_includes_the_protocol_is_accepted() {
+    for range in ["^0.1", ">=0.1.0, <0.2.0", "=0.1.0"] {
+        conformance::run(&mut Claiming(range), &basic_session())
+            .unwrap_or_else(|f| panic!("{range} should be accepted: {f}"));
+    }
+}
+
+#[test]
+fn adapter_declaring_a_range_that_excludes_the_protocol_is_rejected() {
+    for range in ["^0.2", "^1", "=0.0.9"] {
+        let failure = conformance::run(&mut Claiming(range), &basic_session())
+            .expect_err("mismatched range must be rejected");
+        assert!(
+            matches!(failure, ConformanceFailure::ProtocolMismatch { .. }),
+            "{range}: {failure:?}"
+        );
+        let message = failure.to_string();
+        assert!(message.contains("claiming"), "{message}");
+        assert!(message.contains(range.trim_start_matches(['^', '='])), "{message}");
+        assert!(message.contains("0.1.0"), "{message}");
+    }
+}
+
+#[test]
+fn fixture_recorded_against_an_incompatible_protocol_is_rejected() {
+    let mut fixture = basic_session();
+    fixture.meta.protocol = Version::new(0, 2, 0);
+    let failure = conformance::run(&mut EchoAdapter::new(), &fixture)
+        .expect_err("incompatible fixture must be rejected");
+    assert!(
+        matches!(failure, ConformanceFailure::FixtureProtocolMismatch { .. }),
+        "{failure:?}"
+    );
+    assert!(failure.to_string().contains("0.2.0"), "{failure}");
 }

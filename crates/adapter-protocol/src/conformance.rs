@@ -7,13 +7,13 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::adapter::{Adapter, AdapterError};
-use crate::protocol::{CliInfo, Command, Event};
+use crate::protocol::{CliInfo, Command, Event, PROTOCOL_VERSION};
 
 /// `meta.json` of a fixture.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +132,11 @@ fn parse_jsonl<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>, FixtureError>
 /// Why a conformance run did not pass.
 #[derive(Debug)]
 pub enum ConformanceFailure {
+    /// The adapter's declared range does not include [`PROTOCOL_VERSION`].
+    ProtocolMismatch { adapter: String, implements: VersionReq, protocol: Version },
+    /// The fixture's expected events are written in a protocol version this
+    /// runner cannot read (semver-incompatible with, or newer than, its own).
+    FixtureProtocolMismatch { fixture: Version, protocol: Version },
     /// The adapter returned an error for a raw input line or a command.
     Adapter { during: String, error: AdapterError },
     /// The adapter's output differed from the recording.
@@ -165,6 +170,14 @@ fn lines_with_newlines(lines: &[String]) -> String {
 impl fmt::Display for ConformanceFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ConformanceFailure::ProtocolMismatch { adapter, implements, protocol } => write!(
+                f,
+                "adapter {adapter} implements protocol {implements}, which does not include protocol {protocol}"
+            ),
+            ConformanceFailure::FixtureProtocolMismatch { fixture, protocol } => write!(
+                f,
+                "fixture is recorded for protocol {fixture}, which is incompatible with protocol {protocol}"
+            ),
             ConformanceFailure::Adapter { during, error } => {
                 write!(f, "adapter error during {during}: {error}")
             }
@@ -183,6 +196,21 @@ impl std::error::Error for ConformanceFailure {}
 
 /// Runs one fixture against an adapter.
 pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), ConformanceFailure> {
+    let manifest = adapter.manifest();
+    if !manifest.implements.matches(&PROTOCOL_VERSION) {
+        return Err(ConformanceFailure::ProtocolMismatch {
+            adapter: manifest.name,
+            implements: manifest.implements,
+            protocol: PROTOCOL_VERSION,
+        });
+    }
+    if !compatible(&fixture.meta.protocol) {
+        return Err(ConformanceFailure::FixtureProtocolMismatch {
+            fixture: fixture.meta.protocol.clone(),
+            protocol: PROTOCOL_VERSION,
+        });
+    }
+
     let mut events = Vec::new();
     let mut mismatches = Vec::new();
     let mut pending = fixture.commands.iter().enumerate().peekable();
@@ -227,6 +255,11 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
     } else {
         Err(ConformanceFailure::Mismatch(mismatches))
     }
+}
+
+/// A fixture written in `version` is readable when `^version` includes ours.
+fn compatible(version: &Version) -> bool {
+    VersionReq::parse(&format!("^{version}")).is_ok_and(|req| req.matches(&PROTOCOL_VERSION))
 }
 
 fn raw_to_value(raw: &str) -> Value {
