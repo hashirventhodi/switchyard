@@ -122,6 +122,7 @@ impl Core {
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
+        shells::kill_orphans(&inner);
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
     }
 

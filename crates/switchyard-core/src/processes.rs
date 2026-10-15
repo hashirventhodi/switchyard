@@ -9,7 +9,7 @@ pub trait ProcessTable: Send + Sync {
     /// When the process `pid` started, in whatever form the platform reports it (compared
     /// for equality only); `None` when no such process runs.
     fn start_time(&self, pid: u32) -> Option<String>;
-    /// Kill the process `pid` outright.
+    /// Kill the process `pid` outright, with its process group when it leads one.
     fn kill(&self, pid: u32);
 }
 
@@ -23,7 +23,10 @@ impl ProcessTable for SystemProcesses {
         (out.status.success() && !text.is_empty()).then_some(text)
     }
 
+    /// Kills the process and, when it leads a process group (agents are started as one, so
+    /// the CLI a sidecar runs goes with it; a shell leads its PTY's group), the whole group.
     fn kill(&self, pid: u32) {
+        let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).output();
         let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).output();
     }
 }

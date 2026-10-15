@@ -282,6 +282,9 @@ pub struct FakeProcesses {
 #[derive(Default)]
 struct FakeProcessesInner {
     running: std::collections::BTreeMap<u32, String>,
+    /// Pids that ended (or were killed); any other pid this table never heard of is a real
+    /// process the core started (a shell PTY), reported as running since `started-<pid>`.
+    ended: std::collections::BTreeSet<u32>,
     spawned: u32,
     killed: Vec<u32>,
 }
@@ -303,11 +306,13 @@ impl FakeProcesses {
 
     /// The process `pid` ended.
     pub fn end(&self, pid: u32) {
-        self.inner.lock().unwrap().running.remove(&pid);
+        let mut inner = self.inner.lock().unwrap();
+        inner.running.remove(&pid);
+        inner.ended.insert(pid);
     }
 
     pub fn is_running(&self, pid: u32) -> bool {
-        self.inner.lock().unwrap().running.contains_key(&pid)
+        self.start_time(pid).is_some()
     }
 
     /// Every pid the core killed, in order.
@@ -318,12 +323,17 @@ impl FakeProcesses {
 
 impl ProcessTable for FakeProcesses {
     fn start_time(&self, pid: u32) -> Option<String> {
-        self.inner.lock().unwrap().running.get(&pid).cloned()
+        let inner = self.inner.lock().unwrap();
+        if inner.ended.contains(&pid) {
+            return None;
+        }
+        Some(inner.running.get(&pid).cloned().unwrap_or_else(|| format!("started-{pid}")))
     }
 
     fn kill(&self, pid: u32) {
         let mut inner = self.inner.lock().unwrap();
         inner.running.remove(&pid);
+        inner.ended.insert(pid);
         inner.killed.push(pid);
     }
 }

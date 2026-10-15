@@ -1,6 +1,7 @@
 //! Sessions in the SQLite store: one row per Session (live or archived), its transcript
 //! as deflate-compressed chunks of [`CHUNK`] entries (a replaced entry rewrites its chunk),
-//! its raw token usage (never estimates), and the user settings.
+//! its raw token usage (never estimates), the user settings, and the processes other than
+//! agents (shell PTYs) the core started, by pid and start time.
 
 use std::io::Read;
 
@@ -46,6 +47,11 @@ CREATE TABLE IF NOT EXISTS session_usage (
     cache_read_tokens INTEGER NOT NULL,
     reported_usd      REAL,
     PRIMARY KEY (session_id, seq)
+);
+CREATE TABLE IF NOT EXISTS processes (
+    pid     INTEGER PRIMARY KEY,
+    started TEXT NOT NULL,
+    what    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -224,3 +230,28 @@ pub(crate) fn batch(db: &Connection, f: impl FnOnce(&Connection) -> rusqlite::Re
     }
 }
 
+
+/// Remember a process the core started (`what` says which, for diagnosis).
+pub(crate) fn record_process(db: &Connection, process: &Recorded, what: &str) -> rusqlite::Result<()> {
+    db.execute(
+        "INSERT OR REPLACE INTO processes (pid, started, what) VALUES (?1, ?2, ?3)",
+        params![process.pid, process.started, what],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn forget_process(db: &Connection, pid: u32) -> rusqlite::Result<()> {
+    db.execute("DELETE FROM processes WHERE pid = ?1", params![pid])?;
+    Ok(())
+}
+
+/// Every recorded process, forgetting them all (the caller deals with them now).
+pub(crate) fn take_processes(db: &Connection) -> rusqlite::Result<Vec<Recorded>> {
+    let list = {
+        let mut stmt = db.prepare("SELECT pid, started FROM processes")?;
+        let rows = stmt.query_map([], |r| Ok(Recorded { pid: r.get::<_, i64>(0)? as u32, started: r.get(1)? }))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    db.execute("DELETE FROM processes", [])?;
+    Ok(list)
+}

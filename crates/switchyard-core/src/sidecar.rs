@@ -9,6 +9,7 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -44,6 +45,9 @@ impl AgentLauncher for SidecarLauncher {
             .arg("--config")
             .arg(config.to_string())
             .current_dir(&spec.cwd)
+            // Its own process group: after a crash, killing the recorded sidecar takes the CLI
+            // it started with it.
+            .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
