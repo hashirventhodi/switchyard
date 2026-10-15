@@ -80,6 +80,11 @@ impl Harness {
         self.drain()
     }
 
+    /// Dispatch without collecting events: for real agent processes, collect with `wait_for`.
+    pub fn dispatch(&mut self, command: Command) {
+        self.core.dispatch(command);
+    }
+
     pub fn drain(&mut self) -> Vec<Event> {
         self.events.try_iter().collect()
     }
