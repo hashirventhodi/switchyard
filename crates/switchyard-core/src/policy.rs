@@ -8,6 +8,7 @@
 //! own flags at spawn ([`cli_rules`]) so it stops asking; nothing is ever written into a
 //! CLI's settings files.
 
+mod dangerous;
 mod pattern;
 
 use std::path::Path;
@@ -63,15 +64,27 @@ pub(crate) fn resolve(inner: &Inner, repo: &StoredRepository) -> Policy {
 }
 
 /// Deny wins across layers; then any allow; otherwise ask. File writes and questions are
-/// never answered by policy.
-pub(crate) fn decide(policy: &Policy, request: &RequestDetail) -> Decision {
+/// never answered by policy. Below Full auto, a dangerous command (network, delete,
+/// migration, push) is allowed only by a grant that names it explicitly.
+pub(crate) fn decide(policy: &Policy, request: &RequestDetail, mode: PermissionMode) -> Decision {
     let matching = |effect: GrantEffect| {
         policy.grants.iter().find(|g| g.effect == effect && rule_matches(&g.rule, request)).cloned()
     };
     if let Some(deny) = matching(GrantEffect::Deny) {
         return Decision::Deny(deny);
     }
-    match matching(GrantEffect::Allow) {
+    let explicit = |grant: &Grant| match (&grant.rule, request) {
+        (GrantRule::Command { pattern }, RequestDetail::Command { command, .. }) if guards_dangerous(mode) => {
+            dangerous::explicitly_covers(pattern, command)
+        }
+        _ => true,
+    };
+    let allow = policy
+        .grants
+        .iter()
+        .find(|g| g.effect == GrantEffect::Allow && rule_matches(&g.rule, request) && explicit(g))
+        .cloned();
+    match allow {
         Some(allow) => Decision::Allow(allow),
         None => Decision::Ask,
     }
@@ -178,6 +191,11 @@ fn claude_rule(rule: &GrantRule, deny: bool) -> Option<String> {
     }
 }
 
+/// Whether dangerous commands always prompt in `mode` (every mode below Full auto).
+pub(crate) fn guards_dangerous(mode: PermissionMode) -> bool {
+    rank(mode) < rank(PermissionMode::FullAuto)
+}
+
 /// Modes from least to most autonomous.
 fn rank(mode: PermissionMode) -> u8 {
     match mode {
@@ -202,7 +220,12 @@ pub(crate) fn admit_mode(repo: &StoredRepository, mode: PermissionMode) -> Resul
     }
 }
 
-fn mode_label(mode: PermissionMode) -> &'static str {
+/// Whether the repository's policy declares a sandbox (a broken file declares nothing).
+pub(crate) fn sandboxed(repo: &StoredRepository) -> bool {
+    repo_policy::load(Path::new(&repo.path)).is_ok_and(|file| file.permissions.sandbox)
+}
+
+pub(crate) fn mode_label(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Explore => "Explore",
         PermissionMode::AskFirst => "Ask first",

@@ -48,6 +48,7 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `send_text` | `text` |
 | `answer_request` | `request_id`, `verdict` (below) |
 | `interrupt` | (none) |
+| `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
 | `resume` | `external_session_id` |
 
 `resume` is only ever the first command a freshly started adapter receives: the host relaunched it for a Session whose process is gone (after a crash or quit) and the CLI must reload that conversation by its own session id (from `session_init`) so the agent keeps its context. A `send_text` follows it.

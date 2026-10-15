@@ -1,0 +1,1 @@
+{"type": "session_init", "external_session_id": "mode-bypass", "permission_mode": "bypass", "cli_permission_mode": "bypassPermissions", "cli": {"name": "claude-code", "version": "2.1.300"}, "model": "claude-opus-5-5"}

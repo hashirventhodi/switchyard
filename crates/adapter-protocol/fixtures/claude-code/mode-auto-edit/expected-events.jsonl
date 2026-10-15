@@ -1,0 +1,1 @@
+{"type": "session_init", "external_session_id": "mode-auto-edit", "permission_mode": "auto_edit", "cli_permission_mode": "acceptEdits", "cli": {"name": "claude-code", "version": "2.1.300"}, "model": "claude-opus-5-5"}

@@ -37,6 +37,16 @@ pub enum Command {
         #[ts(rename = "sessionId")]
         session_id: String,
     },
+    /// Switch a Session to another Permission mode (Ask first, Auto edit, Full auto),
+    /// capped by the Repository's ceiling. Explore is only chosen at start.
+    SetPermissionMode {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "permissionMode")]
+        #[ts(rename = "permissionMode")]
+        permission_mode: PermissionMode,
+    },
     /// Send the next prompt to a Session that is waiting for one.
     SendPrompt {
         #[serde(rename = "sessionId")]
@@ -333,6 +343,15 @@ pub enum Event {
         #[ts(rename = "sessionId")]
         session_id: String,
         status: SessionStatus,
+    },
+    /// The Session now runs in another Permission mode (the user switched it).
+    SessionModeChanged {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "permissionMode")]
+        #[ts(rename = "permissionMode")]
+        permission_mode: PermissionMode,
     },
     /// What the agent reported about itself, plus running counters. Replaces earlier facts.
     SessionFactsChanged {
@@ -960,6 +979,14 @@ pub struct SessionFacts {
     pub cli_permission_mode: Option<String>,
     /// Completed turns.
     pub turns: u32,
+    /// Set when the CLI started in another Permission mode than the one asked for (for
+    /// example Full auto unavailable, so the CLI fell back to Ask first): shown on the
+    /// summary strip and the session card.
+    #[serde(default)]
+    pub mode_warning: Option<String>,
+    /// Actions the CLI's own classifier refused in Full auto ("3 denied by classifier").
+    #[serde(default)]
+    pub classifier_denials: u32,
 }
 
 /// A Session's running spend. Cost is either reported by the CLI or, for a CLI that

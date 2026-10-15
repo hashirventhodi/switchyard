@@ -49,7 +49,7 @@ fn starting_a_session_launches_claude_code_in_the_worktree_and_sends_the_prompt(
     );
     assert_eq!(
         core.agents.launches(),
-        vec![LaunchSpec { agent: AgentKind::ClaudeCode, cwd: worktree, permission_mode: PermissionMode::AskFirst, allowed_tools: vec![], disallowed_tools: vec![] }]
+        vec![LaunchSpec { agent: AgentKind::ClaudeCode, cwd: worktree, permission_mode: PermissionMode::AskFirst, sandboxed: false, allowed_tools: vec![], disallowed_tools: vec![] }]
     );
     assert_eq!(
         core.agents.commands(0),
@@ -132,6 +132,7 @@ fn a_recorded_session_streams_into_the_transcript_and_walks_needs_you_then_finis
             cli_version: Some("2.1.300".into()),
             cli_permission_mode: Some("default".into()),
             turns: 1,
+            ..SessionFacts::default()
         }
     );
 

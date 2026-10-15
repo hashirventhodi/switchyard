@@ -113,7 +113,14 @@ export const initialState: State = {
   pullRequests: {},
 };
 
-const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
+const noFacts: SessionFacts = {
+  model: null,
+  cliVersion: null,
+  cliPermissionMode: null,
+  turns: 0,
+  modeWarning: null,
+  classifierDenials: 0,
+};
 
 let toastSeq = 0;
 
@@ -185,6 +192,8 @@ export function reduce(state: State, event: Event): State {
     }
     case "sessionStatusChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
+    case "sessionModeChanged":
+      return updateSession(state, event.sessionId, (s) => ({ ...s, permissionMode: event.permissionMode }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
     case "spendRecorded":

@@ -1,0 +1,2 @@
+{"type": "session_init", "external_session_id": "classifier-denial", "permission_mode": "full_auto", "cli_permission_mode": "auto", "cli": {"name": "claude-code", "version": "2.1.300"}, "model": "claude-opus-5-5"}
+{"type": "classifier_denial", "tool": "Bash", "detail": "rm -rf ../shared", "reason": "Deletes files outside the working directory"}

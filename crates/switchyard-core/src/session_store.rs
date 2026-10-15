@@ -9,6 +9,7 @@ use std::io::Read;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
+use adapter_protocol::PermissionMode as ProtocolMode;
 use rusqlite::{params, Connection, OptionalExtension};
 use switchyard_schema::{Entry, Session, SessionFacts, Settings};
 
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     branch         TEXT,
     session        TEXT NOT NULL,
     facts          TEXT NOT NULL,
+    expected_mode  TEXT,
     external_id    TEXT,
     pid            INTEGER,
     pid_started    TEXT,
@@ -76,13 +78,23 @@ CREATE TABLE IF NOT EXISTS settings (
 ";
 
 pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
-    db.execute_batch(SCHEMA)
+    db.execute_batch(SCHEMA)?;
+    // Stores made before sessions kept the mode asked of the CLI.
+    let has_expected_mode = db
+        .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'expected_mode'")?
+        .exists([])?;
+    if !has_expected_mode {
+        db.execute_batch("ALTER TABLE sessions ADD COLUMN expected_mode TEXT")?;
+    }
+    Ok(())
 }
 
 /// What is stored about a Session besides its transcript and usage.
 pub(crate) struct Row {
     pub session: Session,
     pub facts: SessionFacts,
+    /// The mode asked of the CLI, in protocol terms; `None` in rows stored before it was kept.
+    pub expected_mode: Option<ProtocolMode>,
     pub external_id: Option<String>,
     pub process: Option<Recorded>,
     pub entries: usize,
@@ -103,10 +115,10 @@ fn bad(e: impl std::fmt::Display) -> rusqlite::Error {
 
 pub(crate) fn save_row(db: &Connection, row: &Row) -> rusqlite::Result<()> {
     db.execute(
-        "INSERT INTO sessions (id, seq, repository_id, branch, session, facts, external_id, pid, pid_started, entries, archived_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        "INSERT INTO sessions (id, seq, repository_id, branch, session, facts, external_id, pid, pid_started, entries, archived_at_ms, expected_mode)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT (id) DO UPDATE SET session = ?5, facts = ?6, external_id = ?7, pid = ?8, pid_started = ?9,
-             entries = ?10, archived_at_ms = ?11",
+             entries = ?10, archived_at_ms = ?11, expected_mode = ?12",
         params![
             row.session.id,
             seq(&row.session.id),
@@ -119,6 +131,7 @@ pub(crate) fn save_row(db: &Connection, row: &Row) -> rusqlite::Result<()> {
             row.process.as_ref().map(|p| p.started.clone()),
             row.entries as i64,
             row.archived_at_ms.map(|t| t as i64),
+            row.expected_mode.as_ref().map(json),
         ],
     )?;
     Ok(())
@@ -158,7 +171,7 @@ pub(crate) fn save_usage(db: &Connection, session_id: &str, seq: usize, usage: &
 /// Every stored Session, oldest first (live and archived alike).
 pub(crate) fn rows(db: &Connection) -> rusqlite::Result<Vec<Row>> {
     let mut stmt = db.prepare(
-        "SELECT session, facts, external_id, pid, pid_started, entries, archived_at_ms FROM sessions ORDER BY seq",
+        "SELECT session, facts, external_id, pid, pid_started, entries, archived_at_ms, expected_mode FROM sessions ORDER BY seq",
     )?;
     let rows = stmt.query_map([], |r| {
         let session: String = r.get(0)?;
@@ -166,9 +179,11 @@ pub(crate) fn rows(db: &Connection) -> rusqlite::Result<Vec<Row>> {
         let pid: Option<i64> = r.get(3)?;
         let started: Option<String> = r.get(4)?;
         let archived: Option<i64> = r.get(6)?;
+        let expected_mode: Option<String> = r.get(7)?;
         Ok(Row {
             session: serde_json::from_str(&session).map_err(bad)?,
             facts: serde_json::from_str(&facts).map_err(bad)?,
+            expected_mode: expected_mode.map(|m| serde_json::from_str(&m)).transpose().map_err(bad)?,
             external_id: r.get(2)?,
             process: pid.zip(started).map(|(pid, started)| Recorded { pid: pid as u32, started }),
             entries: r.get::<_, i64>(5)? as usize,
