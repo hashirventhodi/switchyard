@@ -44,6 +44,36 @@ pub enum Command {
         session_id: String,
         text: String,
     },
+    /// Create a worktree of a Repository on a new `branch` from its base branch, in the
+    /// Switchyard worktree root (or the root the repository's policy names).
+    CreateWorktree {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        branch: String,
+    },
+    /// "Create new from base": create a worktree as [`Command::CreateWorktree`] does, then
+    /// start a Session on it as [`Command::StartSession`] does.
+    StartSessionOnNewWorktree {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        branch: String,
+        agent: AgentKind,
+        #[serde(rename = "permissionMode")]
+        #[ts(rename = "permissionMode")]
+        permission_mode: PermissionMode,
+        prompt: String,
+    },
+    /// Remove a clean, unoccupied, non-primary worktree (`git worktree remove`). The
+    /// branch is kept.
+    RemoveWorktree {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
+    /// Re-read every worktree's facts (ahead/behind, dirty count) from git.
+    RefreshWorktrees,
 }
 
 /// Something the core reports. The renderer derives all of its state from these.
@@ -89,6 +119,35 @@ pub enum Event {
         index: u32,
         entry: Entry,
     },
+    /// A worktree is gone (removed through Switchyard).
+    WorktreeRemoved {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
+    /// What git says about a worktree right now. Replaces earlier facts for that path.
+    WorktreeFactsChanged {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        facts: WorktreeFacts,
+    },
+}
+
+/// A worktree's state relative to its Repository's base branch, read from git.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorktreeFacts {
+    /// Commits on the worktree's HEAD that the base branch lacks.
+    pub ahead: u32,
+    /// Commits on the base branch that the worktree's HEAD lacks.
+    pub behind: u32,
+    /// Uncommitted files: modified, staged, deleted or untracked.
+    pub dirty: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

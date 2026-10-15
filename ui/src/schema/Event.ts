@@ -5,8 +5,9 @@ import type { Session } from "./Session";
 import type { SessionFacts } from "./SessionFacts";
 import type { SessionStatus } from "./SessionStatus";
 import type { Worktree } from "./Worktree";
+import type { WorktreeFacts } from "./WorktreeFacts";
 
 /**
  * Something the core reports. The renderer derives all of its state from these.
  */
-export type Event = { "type": "attached" } | { "type": "repositoryAdded", repository: Repository, } | { "type": "worktreeAdded", repositoryId: string, worktree: Worktree, } | { "type": "commandRefused", command: string, reason: string, } | { "type": "sessionStarted", session: Session, } | { "type": "sessionStatusChanged", sessionId: string, status: SessionStatus, } | { "type": "sessionFactsChanged", sessionId: string, facts: SessionFacts, } | { "type": "transcriptEntry", sessionId: string, index: number, entry: Entry, };
+export type Event = { "type": "attached" } | { "type": "repositoryAdded", repository: Repository, } | { "type": "worktreeAdded", repositoryId: string, worktree: Worktree, } | { "type": "commandRefused", command: string, reason: string, } | { "type": "sessionStarted", session: Session, } | { "type": "sessionStatusChanged", sessionId: string, status: SessionStatus, } | { "type": "sessionFactsChanged", sessionId: string, facts: SessionFacts, } | { "type": "transcriptEntry", sessionId: string, index: number, entry: Entry, } | { "type": "worktreeRemoved", repositoryId: string, worktreePath: string, } | { "type": "worktreeFactsChanged", worktreePath: string, facts: WorktreeFacts, };

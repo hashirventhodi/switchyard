@@ -47,7 +47,7 @@ fn main() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let (tx, rx) = mpsc::channel();
-            let runtime = Runtime { agents: Arc::new(sidecar(app)), now_ms: system_now_ms };
+            let runtime = Runtime { agents: Arc::new(sidecar(app)), now_ms: system_now_ms, ..Runtime::default() };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Mutex::new(core));
             let handle = app.handle().clone();
