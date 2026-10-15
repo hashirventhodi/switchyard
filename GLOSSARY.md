@@ -105,7 +105,11 @@ The Forge reports the branch is in base. Triggers worktree cleanup and moves the
 ### Review
 
 **Decision**:
-Accept or Reject on a changed file or one of its hunks. File decisions override hunk decisions. Discarded on commit.
+Accept or Reject on a changed file or one of its hunks, pinned to the content it was made on. File decisions override hunk decisions. Discarded on commit.
+
+**Stale decision**:
+A Decision whose file or hunk has changed since it was made. It stays visible, flagged as changed since you decided, and stops counting: a stale Accept is not committable until re-confirmed; a stale hunk Reject reads as feedback sent and revised, awaiting re-review. Re-confirming makes a new Decision on the current content.
+_Avoid_: Outdated decision, invalidated decision, dropped decision
 
 **Hunk feedback**:
 Rejected hunks and comments sent to the agent as structured review. Switchyard never reverts a hunk itself; a file with any rejected hunk is not committable until the agent revises it or the user accepts the whole file.
@@ -133,6 +137,10 @@ _Avoid_: Ready to merge, complete, success
 **Failed** (shown as "Error"):
 The agent process exited or its last command failed.
 _Avoid_: Crashed, broken
+
+**Worktree facts**:
+The cheap summary of a Worktree's git state that every badge and counter shows: ahead, behind, dirty, changed-file count, commit count, conflicts. Derived from git, never stored, and pushed to the UI whenever the Worktree changes, whether or not any view of it is open.
+_Avoid_: Stats, summary, status (that is a Session's)
 
 **Ready to merge**:
 A property of a Worktree, not a Session status: clean tree, ahead of its base, not behind it. Derived from git, never stored.
