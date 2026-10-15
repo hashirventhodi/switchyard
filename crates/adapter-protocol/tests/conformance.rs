@@ -189,3 +189,66 @@ fn fixture_recorded_against_an_incompatible_protocol_is_rejected() {
     );
     assert!(failure.to_string().contains("0.2.0"), "{failure}");
 }
+
+/// An adapter for a JSON-RPC-like CLI: it answers each `{"ping": n}` the CLI sends with
+/// `{"pong": n}` on its own (no host command involved), and reports nothing.
+struct Ponging {
+    pending: Vec<String>,
+}
+
+impl Adapter for Ponging {
+    fn manifest(&self) -> AdapterManifest {
+        AdapterManifest { name: "ponging".into(), implements: VersionReq::parse("^0.1").unwrap() }
+    }
+    fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError> {
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        if let Some(n) = value.get("ping") {
+            self.pending.push(serde_json::json!({ "pong": n }).to_string());
+        }
+        Ok(vec![])
+    }
+    fn command(&mut self, _: &Command) -> Result<Vec<String>, AdapterError> {
+        Ok(vec![])
+    }
+    fn replies(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending)
+    }
+}
+
+fn ponging() -> Fixture {
+    Fixture::load(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ponging")).expect("fixture loads")
+}
+
+#[test]
+fn replies_an_adapter_writes_on_its_own_are_checked_against_writes_jsonl() {
+    let fixture = ponging();
+    assert_eq!(fixture.writes.len(), 2);
+
+    conformance::run(&mut Ponging { pending: vec![] }, &fixture).unwrap_or_else(|f| panic!("{f}"));
+}
+
+#[test]
+fn a_reply_written_after_the_wrong_input_line_fails_naming_the_writes() {
+    let mut fixture = ponging();
+    fixture.writes[1].after_input = 2;
+
+    let failure = conformance::run(&mut Ponging { pending: vec![] }, &fixture)
+        .expect_err("misplaced reply must fail")
+        .to_string();
+
+    assert!(failure.contains("writes differ"), "{failure}");
+    assert!(failure.contains(r#"-{"after_input":2,"message":{"pong":2}}"#), "{failure}");
+    assert!(failure.contains(r#"+{"after_input":3,"message":{"pong":2}}"#), "{failure}");
+}
+
+#[test]
+fn a_fixture_without_writes_requires_the_adapter_to_write_nothing_on_its_own() {
+    let mut fixture = ponging();
+    fixture.writes.clear();
+
+    let failure = conformance::run(&mut Ponging { pending: vec![] }, &fixture)
+        .expect_err("unexpected replies must fail")
+        .to_string();
+
+    assert!(failure.contains("writes differ"), "{failure}");
+}

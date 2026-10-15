@@ -39,6 +39,15 @@ pub struct ScriptedCommand {
     pub expect_responses: Vec<Value>,
 }
 
+/// One line of `writes.jsonl`: a raw message the adapter wrote to the CLI on its own
+/// ([`Adapter::replies`]) right after ingesting input line `after_input` (1-based).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScriptedWrite {
+    pub after_input: usize,
+    /// Compared as JSON when the raw message parses as JSON; otherwise as a string.
+    pub message: Value,
+}
+
 /// A recorded session, loaded from a fixture directory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fixture {
@@ -49,6 +58,8 @@ pub struct Fixture {
     pub input: Vec<String>,
     pub expected_events: Vec<Event>,
     pub commands: Vec<ScriptedCommand>,
+    /// What the adapter writes on its own, in order (`writes.jsonl`; none when absent).
+    pub writes: Vec<ScriptedWrite>,
 }
 
 #[derive(Debug)]
@@ -96,6 +107,12 @@ impl Fixture {
                 "commands must be ordered by after_input",
             ));
         }
+        let writes_path = dir.join("writes.jsonl");
+        let writes: Vec<ScriptedWrite> = if writes_path.exists() {
+            parse_jsonl(&writes_path)?
+        } else {
+            vec![]
+        };
         Ok(Fixture {
             name: dir
                 .file_name()
@@ -105,6 +122,7 @@ impl Fixture {
             input,
             expected_events,
             commands,
+            writes,
         })
     }
 
@@ -252,6 +270,7 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
     }
 
     let mut events = Vec::new();
+    let mut writes = Vec::new();
     let mut mismatches = Vec::new();
     let mut pending = fixture.commands.iter().enumerate().peekable();
 
@@ -281,6 +300,10 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
                     error,
                 })?;
             events.extend(emitted);
+            writes.extend(adapter.replies().iter().map(|raw| ScriptedWrite {
+                after_input: position + 1,
+                message: raw_to_value(raw),
+            }));
         }
     }
 
@@ -293,6 +316,14 @@ pub fn run(adapter: &mut dyn Adapter, fixture: &Fixture) -> Result<(), Conforman
                 actual: events.iter().map(compact).collect(),
             },
         );
+    }
+
+    if writes != fixture.writes {
+        mismatches.push(Mismatch {
+            what: "writes".into(),
+            expected: fixture.writes.iter().map(compact).collect(),
+            actual: writes.iter().map(compact).collect(),
+        });
     }
 
     if mismatches.is_empty() {
