@@ -49,8 +49,9 @@ struct SessionState {
     transcript: Vec<Entry>,
     /// Transcript index of each tool call, by call id.
     tool_calls: HashMap<String, usize>,
-    /// Every protocol event the agent sent, as JSON, for the Agent log's debug view.
-    raw_events: Vec<String>,
+    /// The newest protocol events the agent sent, as JSON, for the Agent log's debug view
+    /// (at most [`RAW_EVENT_BYTES`]; older ones are dropped, the rest keep their numbers).
+    raw_events: RawEvents,
     /// Transcript index of each Permission request, by request id.
     requests: HashMap<String, usize>,
     /// Every token_usage report, oldest first. Each holds running totals.
@@ -241,7 +242,7 @@ fn begin(
         facts: SessionFacts { mcp_servers: mcp::facts(&mcp_servers), ..SessionFacts::default() },
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
-        raw_events: Vec::new(),
+        raw_events: RawEvents::default(),
         requests: HashMap::new(),
         usage: Vec::new(),
         expected_mode,
@@ -570,8 +571,8 @@ pub(crate) fn replay(inner: &Inner) {
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
         }
-        for (index, json) in state.raw_events.iter().enumerate() {
-            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index: index as u32, json: json.clone() });
+        for (index, json) in state.raw_events.numbered() {
+            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index, json: json.clone() });
         }
     }
     inner.emit(Event::SettingsChanged { settings: inner.sessions.settings.clone() });
@@ -727,10 +728,41 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     }
 }
 
+/// How much raw protocol JSON a session keeps for the debug view (as a shell keeps its
+/// scrollback).
+pub(crate) const RAW_EVENT_BYTES: usize = 256 * 1024;
+
+/// The newest raw events, numbered from the session's first.
+#[derive(Default)]
+struct RawEvents {
+    /// The number of `kept[0]`.
+    first: u32,
+    kept: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+impl RawEvents {
+    /// Keep `json`, dropping the oldest beyond the budget; returns its number.
+    fn push(&mut self, json: String) -> u32 {
+        let index = self.first + self.kept.len() as u32;
+        self.bytes += json.len();
+        self.kept.push_back(json);
+        while self.bytes > RAW_EVENT_BYTES && self.kept.len() > 1 {
+            let dropped = self.kept.pop_front().expect("not empty");
+            self.bytes -= dropped.len();
+            self.first += 1;
+        }
+        index
+    }
+
+    fn numbered(&self) -> impl Iterator<Item = (u32, &String)> {
+        self.kept.iter().enumerate().map(|(i, json)| (self.first + i as u32, json))
+    }
+}
+
 fn record_raw(state: &mut SessionState, event: &AgentEvent) -> Event {
     let json = serde_json::to_string(event).unwrap_or_else(|e| format!("{{\"unserialisable\":\"{e}\"}}"));
-    let index = state.raw_events.len() as u32;
-    state.raw_events.push(json.clone());
+    let index = state.raw_events.push(json.clone());
     Event::AgentEventReceived { session_id: state.session.id.clone(), index, json }
 }
 

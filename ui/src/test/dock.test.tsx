@@ -208,6 +208,20 @@ test("the Agent log shows the session's tool calls and output live, and cannot b
 
 const raw = (index: number, json: string): Event => ({ type: "agentEventReceived", sessionId: "session-1", index, json });
 
+test("raw events replayed from past the start keep the core's numbers", () => {
+  localStorage.setItem("switchyard.ui", JSON.stringify({ rawEvents: true }));
+  launch(
+    { type: "sessionStarted", session },
+    raw(500, '{"type":"agent_text","text":"older ones were dropped"}'),
+    raw(501, '{"type":"turn_complete"}'),
+  );
+  fireEvent.click(within(dock()).getByRole("tab", { name: /fix\/readme/ }));
+  const log = within(dock()).getByRole("log", { name: "Raw events fix/readme" });
+  expect(log.textContent).toContain("500 {\"type\":\"agent_text\"");
+  expect(log.textContent).toContain("501 {\"type\":\"turn_complete\"}");
+  localStorage.removeItem("switchyard.ui");
+});
+
 test("the debug toggle shows raw adapter events, is off by default and survives view switches and reloads", () => {
   const events: Event[] = [
     { type: "sessionStarted", session },

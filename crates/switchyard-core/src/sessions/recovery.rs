@@ -61,7 +61,7 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             facts: row.facts,
             transcript,
             tool_calls,
-            raw_events: Vec::new(),
+            raw_events: Default::default(),
             requests,
             usage,
             expected_mode,

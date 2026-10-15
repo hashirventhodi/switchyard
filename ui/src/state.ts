@@ -1,5 +1,6 @@
 // Renderer state is derived only from core events.
 import { emptyChunked, put, type Chunked } from "./chunked";
+import { emptyRawLog, pushRaw, type RawLog } from "./rawLog";
 import type { AgentSetup } from "./schema/AgentSetup";
 import type { ArchivedSession } from "./schema/ArchivedSession";
 import type { Settings } from "./schema/Settings";
@@ -32,7 +33,7 @@ export interface SessionView extends Session {
   facts: SessionFacts;
   transcript: Chunked<Entry>;
   /** Raw adapter-protocol events (JSON), for the Agent log's debug view. */
-  rawEvents: Chunked<string>;
+  rawEvents: RawLog;
   /** Running spend totals as recorded, oldest first. */
   spend: SpendSample[];
 }
@@ -213,7 +214,7 @@ export function reduce(state: State, event: Event): State {
       return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {
       const s = event.session;
-      const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyChunked<string>(), spend: [] };
+      const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyRawLog(), spend: [] };
       return { ...state, sessions: { ...state.sessions, [s.id]: view } };
     }
     case "sessionStatusChanged":
@@ -237,7 +238,7 @@ export function reduce(state: State, event: Event): State {
     case "agentEventReceived":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
-        rawEvents: put(s.rawEvents, event.index, event.json),
+        rawEvents: pushRaw(s.rawEvents, event.index, event.json),
       }));
     case "shellOpened":
       return { ...state, shells: [...state.shells.filter((s) => s.id !== event.shell.id), event.shell] };
