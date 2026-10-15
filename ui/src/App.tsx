@@ -493,6 +493,7 @@ export function App({
                   state={state}
                   session={shownSession}
                   send={core.send}
+                  openLink={openLink}
                   expanded={bench.expanded}
                   onToggleExpand={() => setBench((b) => ({ ...b, expanded: !b.expanded }))}
                   onAsk={(text) =>

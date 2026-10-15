@@ -235,6 +235,7 @@ pub(crate) fn open_pull_request(inner: &mut Inner, worktree_path: &str) {
             state: PullRequestState::Open,
             draft: false,
             checks: ChecksState::None,
+            check_runs: Vec::new(),
             review: ReviewState::None,
         },
         head_oid: String::new(),

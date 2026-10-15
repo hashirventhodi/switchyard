@@ -629,7 +629,34 @@ pub struct PullRequest {
     pub state: PullRequestState,
     pub draft: bool,
     pub checks: ChecksState,
+    /// Every check the Forge reports on the pull request's head, in the Forge's order.
+    #[serde(default)]
+    pub check_runs: Vec<Check>,
     pub review: ReviewState,
+}
+
+/// One check on a pull request: a CI job or a commit status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Check {
+    pub name: String,
+    pub status: CheckStatus,
+    /// Where the Forge shows the check's details, when it says.
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CheckStatus {
+    /// Queued or expected, not started.
+    Pending,
+    Running,
+    Passing,
+    Failing,
+    /// Skipped, neutral or stale: finished without a verdict.
+    Skipped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

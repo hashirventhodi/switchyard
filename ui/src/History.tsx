@@ -9,6 +9,8 @@ import type { SessionView, State } from "./state";
 import { ContextArchive } from "./ContextArchive";
 import { ContextGrants } from "./ContextGrants";
 import { ContextMcp } from "./ContextMcp";
+import { HistoryPullRequest } from "./HistoryPullRequest";
+import type { OpenLink } from "./Setup";
 
 /** "↓3" (warn colour) when the worktree is behind its base; nothing otherwise. */
 export function BehindBadge({ facts, base }: { facts?: WorktreeFacts; base?: string }) {
@@ -43,6 +45,8 @@ export function BranchPane(props: {
   onToggleExpand?: () => void;
   /** Put text in the composer for the user to finish and send (Ask agent). */
   onAsk?: (text: string) => void;
+  /** Open an https link in the browser (pull request, checks). */
+  openLink?: OpenLink;
 }) {
   const { state, session, send, expanded = false, onToggleExpand, onAsk = () => {} } = props;
   const [tab, setTab] = useState<"changes" | "history" | "context">("changes");
@@ -87,7 +91,10 @@ export function BranchPane(props: {
       ) : (
         <div className="pane-body" role="tabpanel">
           {tab === "history" ? (
-            <HistoryTab {...props} />
+            <>
+              <HistoryTab {...props} />
+              <HistoryPullRequest state={state} worktreePath={path} openLink={props.openLink ?? (() => {})} />
+            </>
           ) : (
             <>
               <BranchContext {...props} />

@@ -46,3 +46,20 @@
   .workbench{grid-template-columns:1fr}
   .changes-pane{display:none;border-left:0}
 }
+
+/* History: the pull request and its checks, beneath the commits (#21). */
+.history-pr{border-top:1px solid var(--line)}
+.history-pr .pr-state{font-size:11px;color:var(--fg-2)}
+.history-pr .pr-state.merged{color:var(--ok)}
+.history-pr .pr-summary{margin:0 12px 4px;font-size:11px;color:var(--fg-2)}
+.history-pr .empty{padding:4px 12px;margin:0;color:var(--fg-2)}
+.checks{list-style:none;margin:0;padding:0}
+.check-run{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:8px;align-items:center;padding:3px 12px;font-size:11.5px}
+.check-run:hover{background:var(--bg-2)}
+.check-run .name{font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;min-width:0}
+.check-run button.name{color:var(--accent)}
+.check-run .st{font-size:11px;color:var(--fg-2)}
+.check-run .mark{color:var(--fg-2);text-align:center}
+.check-run.passing .mark,.check-run.passing .st{color:var(--ok)}
+.check-run.failing .mark,.check-run.failing .st{color:var(--bad)}
+.check-run.running .mark,.check-run.running .st{color:var(--warn)}

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 
 use serde::Deserialize;
-use switchyard_schema::{ChecksState, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState};
+use switchyard_schema::{Check, CheckStatus, ChecksState, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState};
 
 use super::{Forge, ForgePullRequest};
 
@@ -122,7 +122,18 @@ struct GhPullRequest {
 
 /// A check run (`status` + `conclusion`) or a commit status context (`state`).
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GhCheck {
+    /// A check run's name.
+    #[serde(default)]
+    name: Option<String>,
+    /// A status context's name.
+    #[serde(default)]
+    context: Option<String>,
+    #[serde(default)]
+    details_url: Option<String>,
+    #[serde(default)]
+    target_url: Option<String>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -144,13 +155,15 @@ impl GhPullRequest {
             Some("REVIEW_REQUIRED") => ReviewState::Required,
             _ => ReviewState::None,
         };
+        let rollup = self.status_check_rollup.unwrap_or_default();
         ForgePullRequest {
             pull_request: PullRequest {
                 number: self.number,
                 url: self.url,
                 state,
                 draft: self.is_draft,
-                checks: checks(&self.status_check_rollup.unwrap_or_default()),
+                checks: checks(&rollup),
+                check_runs: rollup.iter().map(check).collect(),
                 review,
             },
             head_oid: self.head_ref_oid,
@@ -158,12 +171,31 @@ impl GhPullRequest {
     }
 }
 
+const FAILED: &[&str] = &["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
+
+/// One check as History lists it.
+fn check(c: &GhCheck) -> Check {
+    let conclusion = c.conclusion.as_deref().filter(|v| !v.is_empty());
+    let status = match (c.status.as_deref(), conclusion, c.state.as_deref()) {
+        (Some("COMPLETED"), Some("SUCCESS"), _) => CheckStatus::Passing,
+        (Some("COMPLETED"), Some(v), _) if FAILED.contains(&v) => CheckStatus::Failing,
+        (Some("COMPLETED"), _, _) => CheckStatus::Skipped,
+        (Some("IN_PROGRESS"), _, _) => CheckStatus::Running,
+        (Some(_), _, _) => CheckStatus::Pending,
+        (None, _, Some("SUCCESS")) => CheckStatus::Passing,
+        (None, _, Some(v)) if FAILED.contains(&v) => CheckStatus::Failing,
+        (None, _, _) => CheckStatus::Pending,
+    };
+    let name = c.name.clone().or_else(|| c.context.clone()).unwrap_or_else(|| "check".into());
+    let url = c.details_url.clone().or_else(|| c.target_url.clone()).filter(|u| !u.is_empty());
+    Check { name, status, url }
+}
+
 /// Failing if any check failed; else Running if any has not finished; else Passing.
 fn checks(rollup: &[GhCheck]) -> ChecksState {
     if rollup.is_empty() {
         return ChecksState::None;
     }
-    const FAILED: &[&str] = &["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
     let failed = |c: &GhCheck| {
         [c.conclusion.as_deref(), c.state.as_deref()].into_iter().flatten().any(|v| FAILED.contains(&v))
     };
