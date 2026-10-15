@@ -9,9 +9,11 @@
 pub mod agents;
 pub mod compat;
 mod git;
+mod rebase;
 mod policy;
 mod repo_policy;
 mod sessions;
+mod shells;
 pub mod sidecar;
 mod spend;
 mod store;
@@ -26,6 +28,7 @@ use switchyard_schema::{Command, Event, Repository, Worktree};
 use agents::{AgentLauncher, NoAgents};
 use compat::{AgentProbe, Compat, NoProbe};
 use sessions::Sessions;
+use shells::{ShellProgram, Shells};
 use store::{Store, StoredRepository};
 
 /// What the core runs on besides its data directory.
@@ -70,6 +73,7 @@ pub(crate) struct Inner {
     store: Store,
     runtime: Runtime,
     sessions: Sessions,
+    shells: Shells,
     compat: Compat,
 }
 
@@ -88,9 +92,22 @@ impl Core {
             .map_err(|e| CoreError(format!("cannot create {}: {e}", data_dir.display())))?;
         let store = Store::open(data_dir).map_err(|e| CoreError(format!("cannot open store: {e}")))?;
         let compat = Compat::open(data_dir);
-        let inner =
-            Inner { data_dir: data_dir.to_path_buf(), events, store, runtime, sessions: Sessions::default(), compat };
+        let inner = Inner {
+            data_dir: data_dir.to_path_buf(),
+            events,
+            store,
+            runtime,
+            sessions: Sessions::default(),
+            shells: Shells::default(),
+            compat,
+        };
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
+    }
+
+    /// Run `program` with `args` in shell terminals instead of the user's login shell
+    /// (`$SHELL -l`). Tests use a shell with no rc files.
+    pub fn set_shell(&mut self, program: PathBuf, args: Vec<String>) {
+        self.inner.lock().expect("core lock").shells.set_program(ShellProgram { program, args });
     }
 
     pub fn dispatch(&mut self, command: Command) {
@@ -103,6 +120,13 @@ impl Core {
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
             Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &session_id, &text),
+            Command::OpenShell { worktree_path, cols, rows } => {
+                shells::open(&mut inner, &self.inner, &worktree_path, cols, rows)
+            }
+            Command::WriteShell { shell_id, data } => shells::write(&mut inner, &shell_id, &data),
+            Command::ResizeShell { shell_id, cols, rows } => shells::resize(&mut inner, &shell_id, cols, rows),
+            Command::CloseShell { shell_id } => shells::close(&mut inner, &shell_id),
+            Command::CloseWorktreeShells { worktree_path } => shells::close_worktree(&mut inner, &worktree_path),
             Command::CreateWorktree { repository_id, branch } => {
                 worktrees::create(&mut inner, "createWorktree", &repository_id, &branch);
             }
@@ -117,6 +141,9 @@ impl Core {
             Command::CheckAgents => compat::check(&mut inner),
             Command::ReadPolicy { repository_id } => policy::read(&inner, &repository_id),
             Command::RevokeGrant { repository_id, grant_id } => policy::revoke(&inner, &repository_id, &grant_id),
+            Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
+            Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &session_id),
+            Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
         }
     }
 }
@@ -144,6 +171,7 @@ impl Inner {
             }
         }
         sessions::replay(self);
+        shells::replay(self);
     }
 
     fn add_repository(&mut self, path: &str) {

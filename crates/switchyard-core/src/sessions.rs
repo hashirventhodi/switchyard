@@ -32,6 +32,8 @@ struct SessionState {
     transcript: Vec<Entry>,
     /// Transcript index of each tool call, by call id.
     tool_calls: HashMap<String, usize>,
+    /// Every protocol event the agent sent, as JSON, for the Agent log's debug view.
+    raw_events: Vec<String>,
     /// Transcript index of each Permission request, by request id.
     requests: HashMap<String, usize>,
     /// Every token_usage report, oldest first. Each holds running totals.
@@ -152,6 +154,7 @@ pub(crate) fn start(
         facts: SessionFacts::default(),
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
+        raw_events: Vec::new(),
         requests: HashMap::new(),
         usage: Vec::new(),
         agent: handle,
@@ -206,6 +209,18 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
+/// The worktree path and status of session `id`, if it exists.
+pub(crate) fn worktree_and_status(inner: &Inner, id: &str) -> Option<(String, SessionStatus)> {
+    let state = inner.sessions.list.iter().find(|s| s.session.id == id)?;
+    Some((state.session.worktree_path.clone(), state.session.status))
+}
+
+/// True when the session on the worktree at `path` is waiting on a Permission request or
+/// question: mid-turn, so its tree must not move under it.
+pub(crate) fn awaits_request(inner: &Inner, path: &str) -> bool {
+    inner.sessions.list.iter().any(|s| s.session.worktree_path == path && requests::has_pending(s))
+}
+
 /// The status of the session occupying the worktree at `path`, if any.
 pub(crate) fn occupant(inner: &Inner, path: &str) -> Option<SessionStatus> {
     inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.status)
@@ -223,6 +238,9 @@ pub(crate) fn replay(inner: &Inner) {
         }
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
+        }
+        for (index, json) in state.raw_events.iter().enumerate() {
+            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index: index as u32, json: json.clone() });
         }
     }
 }
@@ -247,7 +265,11 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else { return };
     let mut out = Vec::new();
     let mut cause = None;
+    if let AgentOutput::Event(event) = &output {
+        out.push(record_raw(state, event));
+    }
     let mut failure = None;
+    let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
             AgentEvent::SessionInit { cli_permission_mode, cli, model, .. } => {
@@ -327,12 +349,24 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
         out.push(event);
     }
     let (agent, cli_version) = (state.session.agent, state.facts.cli_version.clone());
+    let worktree_path = state.session.worktree_path.clone();
     for event in out {
         inner.emit(event);
+    }
+    // A turn is when the agent commits and edits: re-read where its branch stands.
+    if turn_ended {
+        crate::worktrees::refresh_one(inner, &worktree_path);
     }
     if let Some((class, detail)) = failure {
         compat::record(inner, agent, class, cli_version.as_deref(), &detail);
     }
+}
+
+fn record_raw(state: &mut SessionState, event: &AgentEvent) -> Event {
+    let json = serde_json::to_string(event).unwrap_or_else(|e| format!("{{\"unserialisable\":\"{e}\"}}"));
+    let index = state.raw_events.len() as u32;
+    state.raw_events.push(json.clone());
+    Event::AgentEventReceived { session_id: state.session.id.clone(), index, json }
 }
 
 fn change_status(state: &mut SessionState, cause: &Cause) -> Option<Event> {

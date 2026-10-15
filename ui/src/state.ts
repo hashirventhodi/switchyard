@@ -10,9 +10,11 @@ import { detail, verb } from "./requests";
 import { AGENT_LABEL } from "./status";
 import type { Session } from "./schema/Session";
 import type { SessionFacts } from "./schema/SessionFacts";
+import type { Shell } from "./schema/Shell";
 import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
+import type { Commit } from "./schema/Commit";
 
 export interface RepositoryView extends Repository {
   worktrees: Worktree[];
@@ -21,6 +23,8 @@ export interface RepositoryView extends Repository {
 export interface SessionView extends Session {
   facts: SessionFacts;
   transcript: Chunked<Entry>;
+  /** Raw adapter-protocol events (JSON), for the Agent log's debug view. */
+  rawEvents: Chunked<string>;
   /** Running spend totals as recorded, oldest first. */
   spend: SpendSample[];
 }
@@ -53,6 +57,8 @@ export interface State {
   repositories: RepositoryView[];
   /** By id, in start order. */
   sessions: Record<string, SessionView>;
+  /** Open shell terminals, in open order. */
+  shells: Shell[];
   /** Pending Permission requests by session, in transcript order. */
   requests: Record<string, PendingRequest[]>;
   toasts: Toast[];
@@ -60,11 +66,29 @@ export interface State {
   agents: AgentSetup[];
   /** What the core last read from the VCS about each worktree, by path. */
   worktreeFacts: Record<string, WorktreeFacts>;
+  /** The commits each worktree's branch has above its base, by path, as last read. */
+  history: Record<string, WorktreeHistory>;
   /** Each Repository's resolved Policy, by repository id, once the core has sent it. */
   policies: Record<string, Policy>;
 }
 
-export const initialState: State = { repositories: [], sessions: {}, requests: {}, toasts: [], agents: [], worktreeFacts: {}, policies: {} };
+export interface WorktreeHistory {
+  base: string;
+  /** Newest first. */
+  commits: Commit[];
+}
+
+export const initialState: State = {
+  repositories: [],
+  sessions: {},
+  shells: [],
+  requests: {},
+  toasts: [],
+  agents: [],
+  worktreeFacts: {},
+  history: {},
+  policies: {},
+};
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
@@ -78,7 +102,14 @@ function updateSession(state: State, id: string, change: (s: SessionView) => Ses
 export function reduce(state: State, event: Event): State {
   switch (event.type) {
     case "attached":
-      return { ...state, repositories: [], sessions: {}, requests: {}, toasts: state.toasts.filter((t) => !t.request) };
+      return {
+        ...state,
+        repositories: [],
+        sessions: {},
+        shells: [],
+        requests: {},
+        toasts: state.toasts.filter((t) => !t.request),
+      };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
       return { ...state, repositories: [...others, { ...event.repository, worktrees: [] }] };
@@ -111,11 +142,18 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "worktreeHistory":
+      return { ...state, history: { ...state.history, [event.worktreePath]: { base: event.base, commits: event.commits } } };
+    case "worktreeRebased": {
+      const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
+      return resultToast(state, `Rebased ${worktree?.branch ?? event.worktreePath} on ${event.base}`, "ok");
+    }
     case "commandRefused":
       return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {
       const s = event.session;
-      return { ...state, sessions: { ...state.sessions, [s.id]: { ...s, facts: noFacts, transcript: emptyChunked(), spend: [] } } };
+      const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyChunked<string>(), spend: [] };
+      return { ...state, sessions: { ...state.sessions, [s.id]: view } };
     }
     case "sessionStatusChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, status: event.status }));
@@ -133,6 +171,18 @@ export function reduce(state: State, event: Event): State {
       }));
       return event.entry.type === "request" ? trackRequest(next, event.sessionId, event.index, event.entry) : next;
     }
+    case "agentEventReceived":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        rawEvents: put(s.rawEvents, event.index, event.json),
+      }));
+    case "shellOpened":
+      return { ...state, shells: [...state.shells.filter((s) => s.id !== event.shell.id), event.shell] };
+    case "shellClosed":
+      return { ...state, shells: state.shells.filter((s) => s.id !== event.shellId) };
+    case "shellOutput":
+      // A byte stream for the terminal emulator (see shellStreams.ts), not renderer state.
+      return state;
     case "agentsChecked":
       return { ...state, agents: event.agents };
     case "policyChanged":

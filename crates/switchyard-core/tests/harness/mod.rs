@@ -99,6 +99,11 @@ impl Harness {
         self.drain()
     }
 
+    /// Shell terminals run `program` with no arguments (e.g. `/bin/sh`: no rc files).
+    pub fn use_shell(&mut self, program: &str) {
+        self.core.set_shell(PathBuf::from(program), Vec::new());
+    }
+
     /// Dispatch without collecting events: for real agent processes, collect with `wait_for`.
     pub fn dispatch(&mut self, command: Command) {
         self.core.dispatch(command);

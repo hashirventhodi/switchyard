@@ -1,6 +1,6 @@
 // The Session view: header with status and Stop, the summary strip, the virtualised
 // transcript and the composer.
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { matches } from "./keymap";
@@ -20,6 +20,8 @@ export function SessionView(props: {
   pending: PendingRequest[];
   /** Changes when the view should scroll to the first pending request (⌘J, inbox). */
   revealRequest?: number;
+  /** Where the worktree's branch stands against base (↓N behind), beside the title. */
+  branchState?: ReactNode;
 }) {
   const { session, send, pending, revealRequest } = props;
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -38,6 +40,7 @@ export function SessionView(props: {
         <div className="title">
           <h1>{name}</h1>
         </div>
+        {props.branchState}
         <Status status={session.status} />
         {active && (
           <button className="btn sm" title="Stop the agent (Esc)" onClick={stop}>

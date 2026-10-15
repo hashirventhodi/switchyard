@@ -9,9 +9,13 @@ import {
 } from "./actions";
 import { BINDINGS, inTextField, keysLabel, matchesChord, type ActionId } from "./keymap";
 import { Palette, ShortcutsHelp } from "./Overlays";
+import { Dock } from "./Dock";
+import { shellStreams, type ShellStreams } from "./shellStreams";
+import { xtermTerminal, type CreateTerminal } from "./terminal";
 import { NewSession, type NewSessionPreset } from "./NewSession";
 import { SessionView } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
+import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
@@ -62,8 +66,16 @@ interface Prefs {
   dockCollapsed: boolean;
   sidebarCollapsed: boolean;
   theme: "dark" | "light" | null;
+  /** The Agent log shows raw adapter events (debug). */
+  rawEvents: boolean;
 }
-const defaultPrefs: Prefs = { view: "dashboard", dockCollapsed: false, sidebarCollapsed: false, theme: null };
+const defaultPrefs: Prefs = {
+  view: "dashboard",
+  dockCollapsed: false,
+  sidebarCollapsed: false,
+  theme: null,
+  rawEvents: false,
+};
 function loadPrefs(): Prefs {
   try {
     return { ...defaultPrefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
@@ -85,6 +97,8 @@ export interface AppProps {
   pickFolder: () => Promise<string | null>;
   /** Where shortcut and palette handlers are registered; tests pass one to observe actions. */
   actions?: ActionRegistry;
+  /** The terminal emulator for shell tabs; tests pass a fake. */
+  createTerminal?: CreateTerminal;
   /** Opens an install or update link in the user's browser. */
   openLink?: OpenLink;
 }
@@ -94,7 +108,13 @@ type Overlay = "palette" | "help" | "newSession" | "newWorktree" | "inbox" | nul
 /** A session the user just asked for, by where it will run; it opens once the core confirms it. */
 type PendingStart = { worktreePath: string } | { repositoryId: string; branch: string };
 
-export function App({ core, pickFolder, actions, openLink = (url) => window.open(url, "_blank") }: AppProps) {
+export function App({
+  core,
+  pickFolder,
+  actions,
+  createTerminal = xtermTerminal,
+  openLink = (url) => window.open(url, "_blank"),
+}: AppProps) {
   const registry = useMemo(() => actions ?? createActionRegistry(), [actions]);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -116,10 +136,24 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
     });
   }, []);
 
+  const [streams, setStreams] = useState<ShellStreams | null>(null);
   useEffect(() => {
+    // Shell output is buffered from the first event so a tab drawn later misses nothing.
+    const shells = shellStreams(core);
+    setStreams(shells);
     const unsubscribe = core.subscribe((event) => dispatch({ kind: "event", event }));
     core.send({ type: "attach" });
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      shells.dispose();
+    };
+  }, [core]);
+
+  // Git is the source of truth and moves outside Switchyard: re-read on returning to the app.
+  useEffect(() => {
+    const onFocus = () => core.send({ type: "refreshWorktrees" });
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [core]);
 
   // Bumped to make the session view scroll to its pending request (⌘J, inbox, toast).
@@ -177,6 +211,15 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
     updatePrefs({ theme: dark ? "light" : "dark" });
   }, [prefs.theme, updatePrefs]);
 
+  // Shells open at a nominal size; the terminal fits itself to the dock and resizes the PTY.
+  const openShell = useCallback(
+    (worktreePath: string) => {
+      core.send({ type: "openShell", worktreePath, cols: 80, rows: 24 });
+      updatePrefs({ dockCollapsed: false });
+    },
+    [core, updatePrefs],
+  );
+
   const toggleDock = useCallback(
     () => updatePrefs({ dockCollapsed: !prefs.dockCollapsed }),
     [prefs.dockCollapsed, updatePrefs],
@@ -226,6 +269,13 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
           detail: w.primary ? "primary" : "free",
           run: () => updatePrefs({ view: "worktrees" }),
         });
+        items.push({
+          id: `shell:${w.path}`,
+          group: "Actions",
+          title: `Shell in ${r.name}/${branch}`,
+          keywords: [branch],
+          run: () => openShell(w.path),
+        });
       }
     for (const [view, label, action] of VIEWS)
       items.push({ id: view, group: "Views", title: label, keys: keysLabel(action), run: () => updatePrefs({ view }) });
@@ -249,6 +299,8 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
     const onKey = (e: KeyboardEvent) => {
       const binding = BINDINGS.find((b) => matchesChord(e, b.chord));
       if (!binding || binding.scope === "composer" || binding.scope === "terminal") return;
+      // Inside a shell tab every key belongs to the shell, Esc included; ⌘ chords still work.
+      if (binding.action === "escape" && (e.target as HTMLElement | null)?.closest?.("[data-terminal]")) return;
       // Single keys never fire while typing or under an overlay.
       if (binding.scope === "outsideText" && (inTextField(e.target) || overlay)) return;
       if (binding.scope === "global" && binding.action !== "escape") e.preventDefault();
@@ -380,13 +432,22 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
 
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
-            <SessionView
-              key={shownSession.id}
-              session={shownSession}
-              send={core.send}
-              pending={state.requests[shownSession.id] ?? NONE}
-              revealRequest={reveal}
-            />
+            <div className="workbench">
+              <SessionView
+                key={shownSession.id}
+                session={shownSession}
+                send={core.send}
+                pending={state.requests[shownSession.id] ?? NONE}
+                revealRequest={reveal}
+                branchState={
+                  <BehindBadge
+                    facts={branchOf(state, shownSession.worktreePath).facts}
+                    base={branchOf(state, shownSession.worktreePath).repository?.baseBranch}
+                  />
+                }
+              />
+              <BranchPane key={`pane-${shownSession.id}`} state={state} session={shownSession} send={core.send} />
+            </div>
           ) : prefs.view === "worktrees" ? (
             <WorktreesView
               state={state}
@@ -394,6 +455,7 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
               onOpenSession={(id) => openSession(id)}
               onNewSession={openNewSession}
               onNewWorktree={() => setOverlay("newWorktree")}
+              onOpenShell={openShell}
             />
           ) : prefs.view === "dashboard" ? (
             <Dashboard
@@ -415,26 +477,18 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
           )}
         </main>
 
-        <section className={`dock ${prefs.dockCollapsed ? "collapsed" : ""}`} aria-label="Terminals">
-          <div className="dock-head">
-            <div className="tabs">
-              {/* One Agent log tab per session; the log itself arrives with the terminal dock. */}
-              {sessions.map((s) => (
-                <div key={s.id} className="dtab" title={`Agent log: ${s.branch ?? s.worktreePath}`}>
-                  <span className="av">{AGENT_SHORT[s.agent]}</span>
-                  <span className="nm">{s.branch ?? s.worktreePath}</span>
-                  <Status status={s.status} variant="dot" />
-                </div>
-              ))}
-            </div>
-            <button className="btn ghost sm" onClick={toggleDock}>
-              {prefs.dockCollapsed ? "Show" : "Hide"} <kbd>`</kbd>
-            </button>
-          </div>
-          <div className="term">
-            <p className="empty">No terminals open.</p>
-          </div>
-        </section>
+        <Dock
+          state={state}
+          send={core.send}
+          streams={streams}
+          createTerminal={createTerminal}
+          collapsed={prefs.dockCollapsed}
+          onToggle={toggleDock}
+          currentWorktree={prefs.view === "session" ? (shownSession?.worktreePath ?? null) : null}
+          rawEvents={prefs.rawEvents}
+          onRawEvents={(rawEvents) => updatePrefs({ rawEvents })}
+          onOpenShell={openShell}
+        />
 
         <footer className="statusbar">
           <span className="i">
@@ -561,13 +615,17 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                   {branch}
                   <span className="meta">
                     {AGENT_SHORT[occupant.agent]} · <Status status={occupant.status} variant="dot" />
+                    <BehindBadge facts={state.worktreeFacts[w.path]} />
                   </span>
                 </button>
               ) : (
                 <>
                   <span className="dot" />
                   {branch}
-                  <span className="meta">free</span>
+                  <span className="meta">
+                    free
+                    <BehindBadge facts={state.worktreeFacts[w.path]} />
+                  </span>
                 </>
               )}
             </li>

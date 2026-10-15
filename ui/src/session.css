@@ -44,7 +44,7 @@
 .composer textarea{flex:1;resize:none;background:var(--bg-1);border:1px solid var(--line-2);border-radius:var(--radius);padding:8px 10px;min-height:38px}
 .composer textarea:disabled{opacity:.6}
 
-/* ---------- dock placeholder tabs ---------- */
+/* ---------- dock tabs (see dock.css) ---------- */
 .dtab{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:var(--radius);color:var(--fg-1);font-size:12px;white-space:nowrap}
 .dtab .av{width:18px;height:18px;border-radius:5px;font-size:9px;background:var(--ag-claude)}
 .dtab .nm{font-family:var(--font-mono)}

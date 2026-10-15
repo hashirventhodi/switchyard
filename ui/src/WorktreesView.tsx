@@ -14,6 +14,8 @@ export function WorktreesView(props: {
   onOpenSession: (id: string) => void;
   onNewSession: (preset: NewSessionPreset) => void;
   onNewWorktree: () => void;
+  /** Opens a shell tab in the dock on a worktree. */
+  onOpenShell: (worktreePath: string) => void;
 }) {
   const { state, send, onNewWorktree } = props;
   // Git is the source of truth: re-read facts whenever the view opens.
@@ -57,8 +59,9 @@ function WorktreeCard(props: {
   send: (command: Command) => void;
   onOpenSession: (id: string) => void;
   onNewSession: (preset: NewSessionPreset) => void;
+  onOpenShell: (worktreePath: string) => void;
 }) {
-  const { repository, worktree: w, state, send, onOpenSession, onNewSession } = props;
+  const { repository, worktree: w, state, send, onOpenSession, onNewSession, onOpenShell } = props;
   const [confirming, setConfirming] = useState(false);
   useAction("confirm.cancel", () => setConfirming(false), confirming);
   const occupant = sessionOn(state, w.path);
@@ -87,6 +90,11 @@ function WorktreeCard(props: {
             </span>
             <span>dirty {facts.dirty}</span>
             {facts.behind > 0 && <span className="behind">behind base</span>}
+            {facts.conflicts.length > 0 && (
+              <span className="conflict" title={facts.conflicts.join("\n")}>
+                conflicts with {repository.baseBranch}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -131,7 +139,12 @@ function WorktreeCard(props: {
               Start agent here
             </button>
           )}
-          <button className="btn sm ghost" disabled title="Shells arrive with the terminal dock">
+          {!w.primary && !!facts?.behind && (
+            <button className="btn sm" onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}>
+              Rebase on {repository.baseBranch}
+            </button>
+          )}
+          <button className="btn sm ghost" title="Open a shell here in the dock" onClick={() => onOpenShell(w.path)}>
             Terminal
           </button>
           {!w.primary && (
