@@ -1,6 +1,8 @@
 // The Session view: header with status and Stop, the summary strip, the virtualised
 // transcript and the composer.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { PermissionMode } from "./schema/PermissionMode";
+import type { Policy } from "./schema/Policy";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { matches } from "./keymap";
@@ -10,7 +12,7 @@ import type { Entry } from "./schema/Entry";
 import type { Verdict } from "./schema/Verdict";
 import type { PendingRequest, SessionView as Session } from "./state";
 import { sessionCost } from "./spend";
-import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, Status } from "./status";
+import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, ModeWarning, Status, withinCeiling } from "./status";
 import { VirtualList } from "./VirtualList";
 
 export function SessionView(props: {
@@ -22,8 +24,11 @@ export function SessionView(props: {
   revealRequest?: number;
   /** Where the worktree's branch stands against base (↓N behind), beside the title. */
   branchState?: ReactNode;
+  /** The repository's policy: its ceiling caps the composer's mode segment. */
+  policy?: Policy;
 }) {
-  const { session, send, pending, revealRequest } = props;
+  const { session, send, pending, revealRequest, policy } = props;
+  useEffect(() => send({ type: "readPolicy", repositoryId: session.repositoryId }), [session.repositoryId, send]);
   const composer = useRef<HTMLTextAreaElement>(null);
   const active = session.status === "running" || session.status === "waiting";
   const stop = () => send({ type: "stopSession", sessionId: session.id });
@@ -55,7 +60,7 @@ export function SessionView(props: {
         answerInChat={() => composer.current?.focus()}
         reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
       />
-      <Composer session={session} send={send} pending={pending} input={composer} />
+      <Composer session={session} send={send} pending={pending} input={composer} ceiling={policy?.ceiling ?? null} />
     </section>
   );
 }
@@ -75,6 +80,13 @@ function SummaryStrip({ session }: { session: Session }) {
   ];
   return (
     <div className="summary" aria-label="Summary">
+      {facts.modeWarning && <ModeWarning text={facts.modeWarning} />}
+      {facts.classifierDenials > 0 && (
+        <div className="c denials" title="Actions the CLI's classifier refused; noted in the transcript">
+          <div className="l">Classifier</div>
+          <div className="v">{facts.classifierDenials} denied by classifier</div>
+        </div>
+      )}
       {cells.map(([label, value, detail]) => (
         <div className="c" key={label} title={detail ?? value}>
           <div className="l">{label}</div>
@@ -87,6 +99,31 @@ function SummaryStrip({ session }: { session: Session }) {
           <Elapsed since={session.startedAtMs} />
         </div>
       </div>
+    </div>
+  );
+}
+
+const SEGMENT_MODES: PermissionMode[] = ["askFirst", "autoEdit", "fullAuto"];
+
+/** The composer's Permission-mode segment. Explore is chosen only at start, so an Explore
+ * session has none; modes above the repository's ceiling are not offered. */
+function ModeSegment(props: { session: Session; send: (command: Command) => void; ceiling: PermissionMode | null }) {
+  const { session, send, ceiling } = props;
+  if (session.permissionMode === "explore") return null;
+  return (
+    <div className="seg mode-seg" role="radiogroup" aria-label="Session permission mode">
+      {SEGMENT_MODES.filter((m) => withinCeiling(m, ceiling)).map((m) => (
+        <label key={m} className={session.permissionMode === m ? "on" : ""}>
+          <input
+            type="radio"
+            name={`mode-${session.id}`}
+            value={m}
+            checked={session.permissionMode === m}
+            onChange={() => send({ type: "setPermissionMode", sessionId: session.id, permissionMode: m })}
+          />
+          {MODE_LABEL[m]}
+        </label>
+      ))}
     </div>
   );
 }
@@ -207,8 +244,9 @@ function Composer(props: {
   send: (command: Command) => void;
   pending: PendingRequest[];
   input: RefObject<HTMLTextAreaElement>;
+  ceiling: PermissionMode | null;
 }) {
-  const { session, send, pending, input } = props;
+  const { session, send, pending, input, ceiling } = props;
   const [text, setText] = useState("");
   // A pending question is answered from here; any other pending request is answered on its card.
   const question = pending.some((r) => r.request.type === "question");
@@ -230,6 +268,7 @@ function Composer(props: {
       : "Paused. Resume arrives later.";
   return (
     <div className="composer">
+      <ModeSegment session={session} send={send} ceiling={ceiling} />
       <textarea
         ref={input}
         aria-label="Message the agent"
