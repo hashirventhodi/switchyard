@@ -217,3 +217,106 @@ pub fn ahead_behind(dir: &Path, base: &str) -> Result<(u32, u32), GitError> {
     let ahead = counts.next().unwrap_or(0);
     Ok((ahead, behind))
 }
+
+/// Run git in `dir` with extra environment and no optional index writes.
+fn git_with(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Result<String, GitError> {
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(dir).env("GIT_OPTIONAL_LOCKS", "0");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    }
+}
+
+fn nul_list(out: &str) -> Vec<String> {
+    out.split('\0').filter(|p| !p.is_empty()).map(str::to_owned).collect()
+}
+
+/// The worktree's patch against its index, untracked files shown as added (and paired
+/// with deleted files as renames). The real index is never written: untracked files are
+/// marked intent-to-add in a throwaway copy of it.
+pub fn diff_against_index(dir: &Path) -> Result<String, GitError> {
+    const DIFF: &[&str] = &[
+        "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+        "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--full-index", "-M",
+        "--src-prefix=a/", "--dst-prefix=b/",
+    ];
+    let untracked = nul_list(&git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?);
+    if untracked.is_empty() {
+        return git_with(dir, DIFF, &[]);
+    }
+    let scratch = Scratch::new()?;
+    let index = scratch.0.join("index");
+    let real = PathBuf::from(git(dir, &["rev-parse", "--path-format=absolute", "--git-path", "index"])?.trim());
+    if real.exists() {
+        std::fs::copy(&real, &index).map_err(|e| GitError(format!("cannot copy the index: {e}")))?;
+    }
+    let list = scratch.0.join("paths");
+    std::fs::write(&list, untracked.join("\0")).map_err(|e| GitError(e.to_string()))?;
+    let list_arg = format!("--pathspec-from-file={}", list.display());
+    git_with(dir, &["add", "-N", "--pathspec-file-nul", &list_arg], &[("GIT_INDEX_FILE", &index)])?;
+    git_with(dir, DIFF, &[("GIT_INDEX_FILE", &index)])
+}
+
+/// Paths git holds unmerged (a conflict stopped a merge or rebase here).
+pub fn unmerged_paths(dir: &Path) -> Result<Vec<String>, GitError> {
+    let out = git(dir, &["-c", "core.quotePath=false", "diff", "--name-only", "-z", "--diff-filter=U"])?;
+    let mut list = nul_list(&out);
+    list.dedup();
+    Ok(list)
+}
+
+/// Paths whose index entry differs from HEAD (staged changes).
+pub fn staged_paths(dir: &Path) -> Result<Vec<String>, GitError> {
+    // A repository without commits has nothing to compare against: everything staged.
+    if git(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err() {
+        return Ok(nul_list(&git(dir, &["ls-files", "-z"])?));
+    }
+    Ok(nul_list(&git(dir, &["-c", "core.quotePath=false", "diff", "--cached", "--name-only", "-z", "--no-renames"])?))
+}
+
+/// Stage `paths` whole (additions, edits and deletions) and commit exactly them. Other
+/// staged paths stay staged and are not committed. Returns the abbreviated commit id. On
+/// failure the paths are unstaged again; the working tree is never touched.
+pub fn commit_paths(dir: &Path, paths: &[String], message: &str) -> Result<String, GitError> {
+    let scratch = Scratch::new()?;
+    let list = scratch.0.join("paths");
+    std::fs::write(&list, paths.join("\0")).map_err(|e| GitError(e.to_string()))?;
+    let list_arg = format!("--pathspec-from-file={}", list.display());
+    let msg = scratch.0.join("message");
+    std::fs::write(&msg, message).map_err(|e| GitError(e.to_string()))?;
+    let msg_arg = format!("--file={}", msg.display());
+    git(dir, &["add", "-A", "--pathspec-file-nul", &list_arg])?;
+    let committed =
+        git(dir, &["commit", "-q", "--only", "--cleanup=strip", &msg_arg, "--pathspec-file-nul", &list_arg]);
+    if let Err(e) = committed {
+        let _ = git(dir, &["reset", "-q", "--pathspec-file-nul", &list_arg]);
+        return Err(e);
+    }
+    Ok(git(dir, &["rev-parse", "--short", "HEAD"])?.trim().to_string())
+}
+
+/// A private temporary directory, removed when dropped.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Result<Scratch, GitError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let name = format!("switchyard-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+        let dir = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&dir).map_err(|e| GitError(format!("cannot create {}: {e}", dir.display())))?;
+        Ok(Scratch(dir))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}

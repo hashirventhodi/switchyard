@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useAction } from "./actions";
 import { at } from "./chunked";
-import { matches } from "./keymap";
+import { keysLabel, matches } from "./keymap";
 import { RequestCard } from "./RequestCard";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
@@ -13,7 +13,7 @@ import { sessionCost } from "./spend";
 import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, Status } from "./status";
 import { VirtualList } from "./VirtualList";
 
-export function SessionView(props: {
+export interface SessionViewProps {
   session: Session;
   send: (command: Command) => void;
   /** Its pending Permission requests, in transcript order. */
@@ -22,8 +22,24 @@ export function SessionView(props: {
   revealRequest?: number;
   /** Where the worktree's branch stands against base (↓N behind), beside the title. */
   branchState?: ReactNode;
-}) {
-  const { session, send, pending, revealRequest } = props;
+  /** Text drafted elsewhere (Ask agent in review) for the composer; a new seq replaces it. */
+  draft?: Draft;
+  /** The review pane beside this one is hidden (⌘⇧D). */
+  reviewHidden?: boolean;
+  onToggleReview?: () => void;
+  /** Below 860 px the review pane replaces this one while shown. */
+  showChanges?: boolean;
+  onToggleChanges?: () => void;
+}
+
+export interface Draft {
+  text: string;
+  seq: number;
+}
+const NO_DRAFT: Draft = { text: "", seq: 0 };
+
+export function SessionView(props: SessionViewProps) {
+  const { session, send, pending, revealRequest, draft = NO_DRAFT, reviewHidden = false, onToggleReview } = props;
   const composer = useRef<HTMLTextAreaElement>(null);
   const active = session.status === "running" || session.status === "waiting";
   const stop = () => send({ type: "stopSession", sessionId: session.id });
@@ -42,9 +58,23 @@ export function SessionView(props: {
         </div>
         {props.branchState}
         <Status status={session.status} />
+        {!reviewHidden && props.onToggleChanges && (
+          <button className="btn sm mobile-only" onClick={props.onToggleChanges}>
+            {props.showChanges ? "Agent" : "Changes"}
+          </button>
+        )}
         {active && (
           <button className="btn sm" title="Stop the agent (Esc)" onClick={stop}>
             Stop <kbd>Esc</kbd>
+          </button>
+        )}
+        {onToggleReview && (
+          <button
+            className="btn ghost sm hide-sm"
+            title={`Toggle review pane (${keysLabel("review.togglePane")})`}
+            onClick={onToggleReview}
+          >
+            {reviewHidden ? "Show changes" : "Hide changes"}
           </button>
         )}
       </div>
@@ -55,7 +85,7 @@ export function SessionView(props: {
         answerInChat={() => composer.current?.focus()}
         reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
       />
-      <Composer session={session} send={send} pending={pending} input={composer} />
+      <Composer session={session} send={send} pending={pending} input={composer} draft={draft} />
     </section>
   );
 }
@@ -207,9 +237,16 @@ function Composer(props: {
   send: (command: Command) => void;
   pending: PendingRequest[];
   input: RefObject<HTMLTextAreaElement>;
+  /** Text something else (Ask agent in review) drafted for the user to finish and send. */
+  draft: Draft;
 }) {
-  const { session, send, pending, input } = props;
+  const { session, send, pending, input, draft } = props;
   const [text, setText] = useState("");
+  useEffect(() => {
+    if (draft.seq === 0) return;
+    setText(draft.text);
+    input.current?.focus();
+  }, [draft, input]);
   // A pending question is answered from here; any other pending request is answered on its card.
   const question = pending.some((r) => r.request.type === "question");
   const blocked = pending.length > 0 && !question;

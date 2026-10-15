@@ -12,6 +12,7 @@ mod git;
 mod rebase;
 mod policy;
 mod repo_policy;
+mod review;
 mod sessions;
 mod shells;
 pub mod sidecar;
@@ -75,6 +76,7 @@ pub(crate) struct Inner {
     sessions: Sessions,
     shells: Shells,
     compat: Compat,
+    review: review::Decisions,
 }
 
 #[derive(Debug)]
@@ -100,6 +102,7 @@ impl Core {
             sessions: Sessions::default(),
             shells: Shells::default(),
             compat,
+            review: Default::default(),
         };
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
     }
@@ -139,6 +142,11 @@ impl Core {
                 sessions::answer_request(&mut inner, &session_id, &request_id, verdict)
             }
             Command::CheckAgents => compat::check(&mut inner),
+            Command::ReadChanges { worktree_path } => review::read(&mut inner, &worktree_path),
+            Command::DecideFile { worktree_path, path, decision } => {
+                review::decide(&mut inner, &worktree_path, &path, decision)
+            }
+            Command::CommitAccepted { worktree_path, message } => review::commit(&mut inner, &worktree_path, &message),
             Command::ReadPolicy { repository_id } => policy::read(&inner, &repository_id),
             Command::RevokeGrant { repository_id, grant_id } => policy::revoke(&inner, &repository_id, &grant_id),
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),

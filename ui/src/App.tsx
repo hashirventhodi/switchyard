@@ -13,7 +13,7 @@ import { Dock } from "./Dock";
 import { shellStreams, type ShellStreams } from "./shellStreams";
 import { xtermTerminal, type CreateTerminal } from "./terminal";
 import { NewSession, type NewSessionPreset } from "./NewSession";
-import { SessionView } from "./SessionView";
+import { SessionView, type Draft } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
 import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
@@ -68,6 +68,8 @@ interface Prefs {
   theme: "dark" | "light" | null;
   /** The Agent log shows raw adapter events (debug). */
   rawEvents: boolean;
+  /** The session's review pane is hidden (⌘⇧D). */
+  reviewHidden: boolean;
 }
 const defaultPrefs: Prefs = {
   view: "dashboard",
@@ -75,6 +77,7 @@ const defaultPrefs: Prefs = {
   sidebarCollapsed: false,
   theme: null,
   rawEvents: false,
+  reviewHidden: false,
 };
 function loadPrefs(): Prefs {
   try {
@@ -230,6 +233,18 @@ export function App({
   useHandler(registry, "session.new", () => openNewSession({}));
   useHandler(registry, "sidebar.toggle", toggleSidebar);
   useHandler(registry, "dock.toggle", toggleDock);
+  const toggleReview = useCallback(
+    () => updatePrefs({ reviewHidden: !prefs.reviewHidden }),
+    [prefs.reviewHidden, updatePrefs],
+  );
+  useHandler(registry, "review.togglePane", toggleReview);
+  // The session workbench: review pane expanded to full width, or (below 860 px) shown in
+  // place of the agent pane; text Ask agent drafted for the composer.
+  const [bench, setBench] = useState<{ expanded: boolean; showChanges: boolean; draft: Draft }>({
+    expanded: false,
+    showChanges: false,
+    draft: { text: "", seq: 0 },
+  });
   useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
   useHandler(registry, "view.session", () => updatePrefs({ view: "session" }));
   useHandler(registry, "view.worktrees", () => updatePrefs({ view: "worktrees" }));
@@ -432,7 +447,14 @@ export function App({
 
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
-            <div className="workbench">
+            <div
+              className={[
+                "workbench",
+                prefs.reviewHidden ? "changes-hidden" : "",
+                bench.expanded && !prefs.reviewHidden ? "focus-changes" : "",
+                bench.showChanges ? "show-changes" : "",
+              ].join(" ")}
+            >
               <SessionView
                 key={shownSession.id}
                 session={shownSession}
@@ -445,8 +467,25 @@ export function App({
                     base={branchOf(state, shownSession.worktreePath).repository?.baseBranch}
                   />
                 }
+                draft={bench.draft}
+                reviewHidden={prefs.reviewHidden}
+                onToggleReview={toggleReview}
+                showChanges={bench.showChanges}
+                onToggleChanges={() => setBench((b) => ({ ...b, showChanges: !b.showChanges }))}
               />
-              <BranchPane key={`pane-${shownSession.id}`} state={state} session={shownSession} send={core.send} />
+              {!prefs.reviewHidden && (
+                <BranchPane
+                  key={`pane-${shownSession.id}`}
+                  state={state}
+                  session={shownSession}
+                  send={core.send}
+                  expanded={bench.expanded}
+                  onToggleExpand={() => setBench((b) => ({ ...b, expanded: !b.expanded }))}
+                  onAsk={(text) =>
+                    setBench((b) => ({ expanded: false, showChanges: false, draft: { text, seq: b.draft.seq + 1 } }))
+                  }
+                />
+              )}
             </div>
           ) : prefs.view === "worktrees" ? (
             <WorktreesView

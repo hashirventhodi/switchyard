@@ -112,6 +112,31 @@ pub enum Command {
     /// Detect the installed agent CLIs again (after installing or updating one). The core
     /// answers with [`Event::AgentsChecked`].
     CheckAgents,
+    /// Read the worktree's uncommitted changes (working tree against the index, untracked
+    /// files as added) with the review decisions that still apply. The core answers with
+    /// [`Event::ChangesRead`] and the worktree's facts.
+    ReadChanges {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
+    /// Accept or Reject a changed file as a whole (`null` clears the decision). The decision
+    /// holds only while the file's diff stays as it was when decided.
+    DecideFile {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        decision: Option<Decision>,
+    },
+    /// Stage and commit every accepted file whole, with `message`. Undecided and rejected
+    /// files stay in the worktree untouched; every decision on the worktree is discarded.
+    CommitAccepted {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        message: String,
+    },
     /// Rebase a clean, non-primary worktree's branch on its Repository's base. Refused while
     /// its Session is Running. A rebase that stops on conflicts is aborted, leaving the
     /// branch as it was, and refused with the conflicting files named.
@@ -291,6 +316,32 @@ pub enum Event {
         worktree_path: String,
         facts: WorktreeFacts,
     },
+    /// A worktree's uncommitted changes as git reports them now. Replaces earlier ones.
+    ChangesRead {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        files: Vec<ChangedFile>,
+    },
+    /// The decision on one changed file, after [`Command::DecideFile`].
+    FileDecided {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        decision: Option<Decision>,
+    },
+    /// Accepted files were committed on the worktree's branch.
+    Committed {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        branch: Option<String>,
+        /// Abbreviated commit id.
+        commit: String,
+        /// Paths committed (for a rename, the new path).
+        files: Vec<String>,
+    },
     /// A worktree's branch was rebased on `base` without conflicts.
     WorktreeRebased {
         #[serde(rename = "worktreePath")]
@@ -380,6 +431,79 @@ pub enum GrantRule {
     Network { domain: String },
     /// An MCP server's tool (`*` for every tool of the server).
     McpTool { server: String, tool: String },
+}
+
+/// A review decision on a changed file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Decision {
+    Accept,
+    Reject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    /// Unmerged in the index: git stopped on a conflict here.
+    Conflicted,
+}
+
+/// One file with uncommitted changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChangedFile {
+    pub path: String,
+    /// The path in the index, for a rename.
+    pub old_path: Option<String>,
+    pub status: FileStatus,
+    /// Lines added and removed.
+    pub added: u32,
+    pub removed: u32,
+    /// Git shows no text diff for the file.
+    pub binary: bool,
+    pub decision: Option<Decision>,
+    pub hunks: Vec<Hunk>,
+}
+
+/// One hunk of a file's diff. `id` is stable while the hunk's own lines are unchanged:
+/// it hashes the index-side path and range with the hunk's lines, so edits elsewhere in
+/// the file and renaming the file leave it alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Hunk {
+    pub id: String,
+    /// The `@@ -a,b +c,d @@ context` line.
+    pub header: String,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DiffLine {
+    pub kind: LineKind,
+    /// Line number on the index side (context and removed lines).
+    pub old: Option<u32>,
+    /// Line number on the working-tree side (context and added lines).
+    pub new: Option<u32>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LineKind {
+    Context,
+    Added,
+    Removed,
 }
 
 /// One commit on a worktree's branch.
