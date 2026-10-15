@@ -77,6 +77,10 @@ pub struct Runtime {
     pub claude_home: PathBuf,
     /// Tells the core when a Worktree changes on disk (ADR-0008).
     pub watcher: Arc<dyn watcher::Watcher>,
+    /// How often the core re-derives Worktrees whose watcher cannot run, and tries to watch
+    /// them again (about [`watcher::FALLBACK_EVERY`]); `None`: only when
+    /// [`Core::fallback_tick`] is called (tests tick it by hand).
+    pub unwatched_every: Option<std::time::Duration>,
 }
 
 impl Default for Runtime {
@@ -94,6 +98,7 @@ impl Default for Runtime {
             claude_home: context::default_claude_home(),
             sandbox_evidence: policy::detect_sandbox,
             watcher: Arc::new(watcher::NoWatcher),
+            unwatched_every: None,
         }
     }
 }
@@ -135,6 +140,8 @@ pub(crate) struct Inner {
     forge: forge::Tracker,
     /// The core itself, for callbacks that re-enter it from other threads (the watcher).
     me: Weak<Mutex<Inner>>,
+    /// Worktrees whose watcher cannot run, by path, with why: re-derived on a slow cadence.
+    unwatched: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -163,12 +170,14 @@ impl Core {
             review: Default::default(),
             forge: Default::default(),
             me: Weak::new(),
+            unwatched: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
         shells::kill_orphans(&inner);
         review::load(&mut inner);
         let every = inner.runtime.forge_poll_every;
+        let unwatched_every = inner.runtime.unwatched_every;
         let inner = Arc::new(Mutex::new(inner));
         inner.lock().expect("core lock").me = Arc::downgrade(&inner);
         if let Some(every) = every {
@@ -179,7 +188,22 @@ impl Core {
                 forge::poll(&core);
             });
         }
+        if let Some(every) = unwatched_every {
+            let weak = Arc::downgrade(&inner);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(every);
+                let Some(core) = weak.upgrade() else { break };
+                disk::fallback_tick_locking(&core);
+            });
+        }
         Ok(Core { inner })
+    }
+
+    /// One beat of the slow cadence for Worktrees whose watcher cannot run: re-derive each
+    /// and try its watcher again. The core ticks itself every [`Runtime::unwatched_every`]
+    /// when that is set.
+    pub fn fallback_tick(&self) {
+        disk::fallback_tick_locking(&self.inner);
     }
 
     /// One tick of the Forge poller: poll every worktree branch whose turn it is, and clean
@@ -372,7 +396,7 @@ impl Inner {
 
     /// Watch each of an announced repository's worktrees and push their facts, so none
     /// waits for a change to have them.
-    fn watch_and_refresh(&self, repo: &StoredRepository) {
+    fn watch_and_refresh(&mut self, repo: &StoredRepository) {
         disk::watch_repository(self, Path::new(&repo.path));
         worktrees::refresh_repository(self, Path::new(&repo.path));
     }

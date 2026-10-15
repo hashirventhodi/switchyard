@@ -722,6 +722,23 @@ pub enum Event {
         worktree_path: String,
         facts: WorktreeFacts,
     },
+    /// Live updates are unavailable for a worktree: its watcher could not start or failed.
+    /// Its facts are re-derived on a slow cadence until [`Event::WorktreeWatched`]. Replayed
+    /// on attach for worktrees still in that state.
+    WorktreeUnwatched {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        /// Why the watcher cannot run, for the person reading the notice.
+        reason: String,
+    },
+    /// A worktree's watcher works again: live updates resume (the all-clear for
+    /// [`Event::WorktreeUnwatched`]).
+    WorktreeWatched {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// A Session was archived (replaced, or its worktree removed), or an archived Session
     /// is replayed on attach. It is no longer a live Session.
     SessionArchived { archived: ArchivedSession },

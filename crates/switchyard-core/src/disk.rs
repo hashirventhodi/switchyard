@@ -2,11 +2,15 @@
 //! watched through the [`crate::watcher::Watcher`] in the Runtime; the paths it reports are
 //! sorted into kinds of change, and [`worktree_changed`] acts on each kind and then pushes
 //! the Worktree's facts. The end of an agent turn comes through [`worktree_changed`] too.
+//! A Worktree whose watcher cannot run is *unwatched*: the core says so, re-derives it
+//! through [`worktree_changed`] on every [`fallback_tick`] and tries to watch it again.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use crate::watcher::{ChangeSink, Watch};
+use switchyard_schema::Event;
+
+use crate::watcher::{ChangeSink, Watch, WatchReport};
 use crate::{git, sessions, worktrees, Inner};
 
 /// What kinds of thing changed in a Worktree. Each kind has its own branch in
@@ -28,7 +32,7 @@ impl Kinds {
 }
 
 /// Start watching every worktree git lists for the repository at `dir`.
-pub(crate) fn watch_repository(inner: &Inner, dir: &Path) {
+pub(crate) fn watch_repository(inner: &mut Inner, dir: &Path) {
     let Ok(list) = git::worktrees(dir) else { return };
     for wt in list {
         watch(inner, &wt.path);
@@ -36,8 +40,20 @@ pub(crate) fn watch_repository(inner: &Inner, dir: &Path) {
 }
 
 /// Start (or restart) watching the Worktree at `worktree`: its working tree and its
-/// Repository's `.git`.
-pub(crate) fn watch(inner: &Inner, worktree: &Path) {
+/// Repository's `.git`. A watch that cannot start leaves the Worktree unwatched, and says
+/// so even when it already was (attach replays it this way); one that starts clears that.
+pub(crate) fn watch(inner: &mut Inner, worktree: &Path) {
+    match start(inner, worktree) {
+        Ok(()) => watched(inner, worktree),
+        Err(reason) => {
+            let worktree_path = worktree.to_string_lossy().into_owned();
+            inner.unwatched.insert(worktree_path.clone(), reason.clone());
+            inner.emit(Event::WorktreeUnwatched { worktree_path, reason });
+        }
+    }
+}
+
+fn start(inner: &Inner, worktree: &Path) -> Result<(), String> {
     let mut roots = vec![worktree.to_path_buf()];
     // A primary worktree's `.git` is inside it already.
     if let Some(common) = git::common_dir(worktree) {
@@ -47,22 +63,65 @@ pub(crate) fn watch(inner: &Inner, worktree: &Path) {
         }
     }
     let watch = Watch { worktree: worktree.to_path_buf(), roots };
-    // A watcher that cannot start leaves the Worktree to the other refresh triggers.
-    let _ = inner.runtime.watcher.watch(watch, sink(inner, worktree));
+    inner.runtime.watcher.watch(watch, sink(inner, worktree))
 }
 
-pub(crate) fn unwatch(inner: &Inner, worktree: &Path) {
+/// The Worktree at `worktree` is watched: if it was not, live updates resume.
+fn watched(inner: &mut Inner, worktree: &Path) {
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    if inner.unwatched.remove(&worktree_path).is_some() {
+        inner.emit(Event::WorktreeWatched { worktree_path });
+    }
+}
+
+pub(crate) fn unwatch(inner: &mut Inner, worktree: &Path) {
     inner.runtime.watcher.unwatch(worktree);
+    inner.unwatched.remove(&*worktree.to_string_lossy());
+}
+
+/// The watch on `worktree` failed after it started: fall back until it can be watched again.
+fn failed(inner: &mut Inner, worktree: &Path, reason: String) {
+    inner.runtime.watcher.unwatch(worktree);
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    if inner.unwatched.insert(worktree_path.clone(), reason.clone()).is_none() {
+        inner.emit(Event::WorktreeUnwatched { worktree_path, reason });
+    }
+}
+
+/// One beat of the slow cadence for unwatched Worktrees: try each one's watcher again, and
+/// re-derive it the way a change on disk would (once more after a watch starts, to catch up
+/// on what happened while nothing was watching).
+pub(crate) fn fallback_tick_locking(core: &Mutex<Inner>) {
+    let mut inner = core.lock().expect("core lock");
+    fallback_tick(&mut inner);
+    sessions::flush(&mut inner);
+}
+
+fn fallback_tick(inner: &mut Inner) {
+    let unwatched: Vec<String> = inner.unwatched.keys().cloned().collect();
+    for worktree_path in unwatched {
+        let worktree = PathBuf::from(&worktree_path);
+        match start(inner, &worktree) {
+            Ok(()) => watched(inner, &worktree),
+            Err(reason) => {
+                inner.unwatched.insert(worktree_path.clone(), reason);
+            }
+        }
+        worktree_changed(inner, &worktree_path, Kinds { files: true, git: true, config: true });
+    }
 }
 
 /// Where the watcher's reports re-enter the core: on the watcher's thread, like agent output.
 fn sink(inner: &Inner, worktree: &Path) -> ChangeSink {
     let core = inner.me.clone();
     let worktree = worktree.to_path_buf();
-    Arc::new(move |paths| {
+    Arc::new(move |report| {
         if let Some(core) = core.upgrade() {
             let mut inner = core.lock().expect("core lock");
-            disk_changed(&mut inner, &worktree, &paths);
+            match report {
+                WatchReport::Changed(paths) => disk_changed(&mut inner, &worktree, &paths),
+                WatchReport::Failed(reason) => failed(&mut inner, &worktree, reason),
+            }
             sessions::flush(&mut inner);
         }
     })

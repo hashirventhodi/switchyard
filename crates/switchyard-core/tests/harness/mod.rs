@@ -26,7 +26,7 @@ use switchyard_core::agents::{AgentHandle, AgentLauncher, AgentOutput, AgentSink
 use switchyard_core::compat::AgentProbe;
 use switchyard_core::processes::ProcessTable;
 use switchyard_core::forge::GhForge;
-use switchyard_core::watcher::{ChangeSink, Watch, Watcher};
+use switchyard_core::watcher::{ChangeSink, Watch, WatchReport, Watcher};
 use switchyard_core::{Core, Runtime};
 use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Repository};
 use tempfile::TempDir;
@@ -83,6 +83,7 @@ impl Harness {
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
             watcher: Arc::new(FakeWatcher::default()),
+            unwatched_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -148,6 +149,7 @@ impl Harness {
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
             watcher: real_watcher.unwrap_or_else(|| Arc::new(watcher.clone())),
+            unwatched_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -231,6 +233,27 @@ impl Harness {
         self.drain()
     }
 
+    /// The watcher for `worktree` fails with `reason`, and keeps failing (a new watch on it
+    /// cannot start) until `watcher_recovered`; returns the events it caused.
+    pub fn watcher_failed(&mut self, worktree: &Path, reason: &str) -> Vec<Event> {
+        self.watcher.fail(worktree, reason);
+        self.drain()
+    }
+
+    /// A watcher for `worktree` can start again; the core finds out on its next
+    /// `fallback_tick`, which this runs. Returns the events it caused.
+    pub fn watcher_recovered(&mut self, worktree: &Path) -> Vec<Event> {
+        self.watcher.recover(worktree);
+        self.fallback_tick()
+    }
+
+    /// One beat of the core's slow cadence for unwatched worktrees; returns the events it
+    /// caused.
+    pub fn fallback_tick(&mut self) -> Vec<Event> {
+        self.core.fallback_tick();
+        self.drain()
+    }
+
     pub fn drain(&mut self) -> Vec<Event> {
         self.events.try_iter().collect()
     }
@@ -302,6 +325,8 @@ fn fake_gh_in(data_dir: &TempDir) -> FakeGh {
 #[derive(Clone, Default)]
 pub struct FakeWatcher {
     watches: Arc<Mutex<Vec<(Watch, ChangeSink)>>>,
+    /// Worktrees whose watch fails, with why.
+    failing: Arc<Mutex<Vec<(PathBuf, String)>>>,
 }
 
 impl FakeWatcher {
@@ -321,13 +346,29 @@ impl FakeWatcher {
     fn deliver(&self, worktree: &Path, paths: &[&Path]) {
         let sink = self.watches.lock().unwrap().iter().find(|(w, _)| w.worktree == worktree).map(|(_, s)| s.clone());
         if let Some(sink) = sink {
-            sink(paths.iter().map(|p| p.to_path_buf()).collect());
+            sink(WatchReport::Changed(paths.iter().map(|p| p.to_path_buf()).collect()));
         }
+    }
+
+    /// The watch on `worktree` fails with `reason`, and any new one fails to start.
+    fn fail(&self, worktree: &Path, reason: &str) {
+        self.failing.lock().unwrap().push((worktree.to_path_buf(), reason.to_string()));
+        let sink = self.watches.lock().unwrap().iter().find(|(w, _)| w.worktree == worktree).map(|(_, s)| s.clone());
+        if let Some(sink) = sink {
+            sink(WatchReport::Failed(reason.to_string()));
+        }
+    }
+
+    fn recover(&self, worktree: &Path) {
+        self.failing.lock().unwrap().retain(|(w, _)| w != worktree);
     }
 }
 
 impl Watcher for FakeWatcher {
     fn watch(&self, watch: Watch, sink: ChangeSink) -> Result<(), String> {
+        if let Some((_, reason)) = self.failing.lock().unwrap().iter().find(|(w, _)| *w == watch.worktree) {
+            return Err(reason.clone());
+        }
         let mut watches = self.watches.lock().unwrap();
         watches.retain(|(w, _)| w.worktree != watch.worktree);
         watches.push((watch, sink));

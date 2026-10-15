@@ -763,6 +763,11 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                   </span>
                 </>
               )}
+              {state.unwatched[w.path] !== undefined && (
+                <p className="wt-unwatched" role="status">
+                  Live updates unavailable for {w.branch ?? w.path}: {state.unwatched[w.path]}
+                </p>
+              )}
             </li>
           );
         })}

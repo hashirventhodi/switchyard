@@ -79,6 +79,8 @@ export interface State {
   agents: AgentSetup[];
   /** What the core last read from the VCS about each worktree, by path. */
   worktreeFacts: Record<string, WorktreeFacts>;
+  /** Why live updates are unavailable for each worktree whose watcher cannot run, by path. */
+  unwatched: Record<string, string>;
   /** Uncommitted changes the core last read for each worktree, by path. */
   changes: Record<string, ChangedFile[]>;
   /** Each worktree's conflicts with their hunks, by path, as last read with its changes. */
@@ -188,6 +190,7 @@ export const initialState: State = {
   toasts: [],
   agents: [],
   worktreeFacts: {},
+  unwatched: {},
   changes: {},
   history: {},
   policies: {},
@@ -240,6 +243,7 @@ export function reduce(state: State, event: Event): State {
         pullRequests: {},
         taskLinks: {},
         conflicts: {},
+        unwatched: {},
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -275,6 +279,12 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "worktreeUnwatched":
+      return { ...state, unwatched: { ...state.unwatched, [event.worktreePath]: event.reason } };
+    case "worktreeWatched": {
+      const { [event.worktreePath]: _cleared, ...unwatched } = state.unwatched;
+      return { ...state, unwatched };
+    }
     case "mcpServersChanged":
       return { ...state, mcpDeclared: { ...state.mcpDeclared, [event.repositoryId]: { servers: event.servers, error: event.error } } };
     case "contextRead":
