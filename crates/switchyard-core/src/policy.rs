@@ -206,6 +206,21 @@ fn claude_rule(rule: &GrantRule, deny: bool) -> Option<String> {
 }
 
 /// Whether dangerous commands always prompt in `mode` (every mode below Full auto).
+/// Requests the session's mode itself answers, for an agent whose CLI asks Switchyard more
+/// than the mode needs. Codex in Auto edit runs with approval policy `untrusted` so that a
+/// dangerous command can never run inside the worktree without the user (`on-request`
+/// would let it); Switchyard then allows what Auto edit means: file edits and commands
+/// outside the dangerous classes. Claude Code applies Auto edit itself (acceptEdits).
+pub(crate) fn mode_allows(agent: AgentKind, mode: PermissionMode, request: &RequestDetail) -> bool {
+    match (agent, mode, request) {
+        (AgentKind::Codex, PermissionMode::AutoEdit, RequestDetail::FileWrite { .. }) => true,
+        (AgentKind::Codex, PermissionMode::AutoEdit, RequestDetail::Command { command, .. }) => {
+            dangerous::classes(command).is_empty()
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn guards_dangerous(mode: PermissionMode) -> bool {
     rank(mode) < rank(PermissionMode::FullAuto)
 }

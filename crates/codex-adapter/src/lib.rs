@@ -324,7 +324,7 @@ impl CodexAdapter {
                 self.thread_id = Some(thread_id.clone());
                 self.phase = Phase::Ready;
                 let (permission_mode, cli_permission_mode) =
-                    mode::read_back(result.get("approvalPolicy"), result.get("sandbox"));
+                    mode::read_back(result.get("approvalPolicy"), result.get("sandbox"), self.launch.permission_mode);
                 let version = self
                     .cli_version
                     .clone()

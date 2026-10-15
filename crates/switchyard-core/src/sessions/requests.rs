@@ -5,7 +5,7 @@
 //! surfaces, it is answered at once and noted as a system line.
 
 use adapter_protocol::{Command as AgentCommand, RequestDetail, Verdict as AgentVerdict};
-use switchyard_schema::{Entry, Event, PermissionMode, Request, RequestState, SessionStatus, Verdict};
+use switchyard_schema::{AgentKind, Entry, Event, PermissionMode, Request, RequestState, SessionStatus, Verdict};
 
 use super::{append, change_status, send_to_agent, Cause, SessionState};
 use crate::policy::{self, Decision};
@@ -18,8 +18,9 @@ const STOPPED: &str = "The session was stopped.";
 pub(super) fn arrived(inner: &mut Inner, id: &str, request_id: String, detail: RequestDetail, reason: Option<String>) {
     let Some(state) = super::find(inner, id) else { return };
     let live = matches!(state.session.status, SessionStatus::Running | SessionStatus::Waiting);
-    let (repository_id, mode) = (state.session.repository_id.clone(), state.session.permission_mode);
-    if live && answered_by_policy(inner, id, &repository_id, mode, &request_id, &detail) {
+    let (repository_id, mode, agent) =
+        (state.session.repository_id.clone(), state.session.permission_mode, state.session.agent);
+    if live && answered_by_policy(inner, id, &repository_id, agent, mode, &request_id, &detail) {
         return;
     }
     let Some(state) = super::find(inner, id) else { return };
@@ -50,12 +51,17 @@ fn answered_by_policy(
     inner: &mut Inner,
     id: &str,
     repository_id: &str,
+    agent: AgentKind,
     mode: PermissionMode,
     request_id: &str,
     detail: &RequestDetail,
 ) -> bool {
     let Some(repo) = policy::repository(inner, repository_id) else { return false };
     let (line, verdict) = match policy::decide(&policy::resolve(inner, &repo), detail, mode) {
+        Decision::Ask if policy::mode_allows(agent, mode, detail) => (
+            format!("Allowed without asking: {} ({})", asked(detail), policy::mode_label(mode)),
+            AgentVerdict::AllowOnce,
+        ),
         Decision::Ask => return false,
         Decision::Allow(grant) => (
             format!("Allowed without asking: {} ({} {})", asked(detail), policy::source(&grant), policy::describe(&grant.rule)),
