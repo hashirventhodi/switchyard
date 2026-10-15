@@ -194,19 +194,111 @@ fn list(inner: &Inner, repo: &StoredRepository) -> Vec<Secret> {
         .collect()
 }
 
+/// The environment for a spawn in `repo`: its granted secrets that have a value (keychain
+/// first, then Switchyard's environment), and every other secret name Switchyard knows
+/// (this repository's ungranted ones and every other repository's) stripped.
+pub(crate) fn spawn_env(inner: &Inner, repo: &StoredRepository) -> SpawnEnv {
+    let values = &inner.runtime.secrets;
+    let mut env = SpawnEnv::default();
+    for secret in list(inner, repo).into_iter().filter(|s| s.granted) {
+        let value = values.keychain_get(&secret.name).ok().flatten().or_else(|| values.environment(&secret.name));
+        if let Some(value) = value {
+            env.set.insert(secret.name, value);
+        }
+    }
+    let mut known: BTreeSet<String> = rows(inner.store.db(), None).unwrap_or_default().into_iter().map(|r| r.name).collect();
+    for other in inner.store.repositories().unwrap_or_default() {
+        known.extend(declared(&other).into_keys());
+    }
+    env.remove = known.into_iter().filter(|name| !env.set.contains_key(name)).collect();
+    env
+}
+
+/// The `addSecret` command: a local name, not granted.
+pub(crate) fn add(inner: &mut Inner, repository_id: &str, name: &str) {
+    const COMMAND: &str = "addSecret";
+    let Some(repo) = policy::repository(inner, repository_id) else {
+        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    };
+    let name = name.trim();
+    if !valid_name(name) {
+        return inner.refuse(COMMAND, format!("{name} is not an environment variable name (letters, digits and _)"));
+    }
+    let saved = inner.store.db().execute(
+        "INSERT INTO secrets (repository_id, name, local) VALUES (?1, ?2, 1)
+         ON CONFLICT (repository_id, name) DO UPDATE SET local = 1",
+        params![repo.id, name],
+    );
+    if let Err(e) = saved {
+        return inner.refuse(COMMAND, format!("cannot save the secret: {e}"));
+    }
+    emit(inner, &repo);
+}
+
+/// The `removeSecret` command: a locally added name and its grant. Declared names stay.
+pub(crate) fn remove(inner: &mut Inner, repository_id: &str, name: &str) {
+    const COMMAND: &str = "removeSecret";
+    let Some(repo) = policy::repository(inner, repository_id) else {
+        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    };
+    match declared(&repo).get(name) {
+        Some(SecretOrigin::Policy) => {
+            return inner.refuse(COMMAND, format!("{name} is named in the repository's policy file; change it there"))
+        }
+        Some(_) => return inner.refuse(COMMAND, format!("{name} is used by the repository's .mcp.json; change it there")),
+        None => {}
+    }
+    let was_granted = list(inner, &repo).iter().any(|s| s.name == name && s.granted);
+    match inner.store.db().execute("DELETE FROM secrets WHERE repository_id = ?1 AND name = ?2", params![repo.id, name]) {
+        Ok(0) => return inner.refuse(COMMAND, format!("{name} is not one of this repository's secrets")),
+        Ok(_) => {}
+        Err(e) => return inner.refuse(COMMAND, format!("cannot remove the secret: {e}")),
+    }
+    emit(inner, &repo);
+    if was_granted {
+        let note = format!("{name} was revoked for this repository. The running agent keeps it until it is next started.");
+        crate::sessions::note_running(inner, &repo.id, &note);
+    }
+}
+
+/// The `setSecretValue` command: into the keychain, never the store. Not echoed back.
+pub(crate) fn set_value(inner: &mut Inner, repository_id: &str, name: &str, value: &str) {
+    const COMMAND: &str = "setSecretValue";
+    let Some(repo) = policy::repository(inner, repository_id) else {
+        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    };
+    if !list(inner, &repo).iter().any(|s| s.name == name) {
+        return inner.refuse(COMMAND, format!("{name} is not one of this repository's secrets"));
+    }
+    if value.is_empty() {
+        return inner.refuse(COMMAND, "Type a value first".into());
+    }
+    if let Err(e) = inner.runtime.secrets.keychain_set(name, value) {
+        return inner.refuse(COMMAND, format!("The keychain did not take {name}: {e}"));
+    }
+    emit(inner, &repo);
+}
+
 /// The `grantSecret` and `revokeSecret` commands.
 pub(crate) fn set_grant(inner: &mut Inner, repository_id: &str, name: &str, granted: bool) {
     let command = if granted { "grantSecret" } else { "revokeSecret" };
     let Some(repo) = policy::repository(inner, repository_id) else {
         return inner.refuse(command, format!("There is no repository {repository_id}"));
     };
-    if !list(inner, &repo).iter().any(|s| s.name == name) {
+    let Some(current) = list(inner, &repo).into_iter().find(|s| s.name == name) else {
         return inner.refuse(command, format!("{name} is not one of this repository's secrets"));
+    };
+    if current.granted == granted {
+        return emit(inner, &repo);
     }
     if let Err(e) = set_granted(inner.store.db(), &repo.id, name, granted) {
         return inner.refuse(command, format!("cannot save the grant: {e}"));
     }
     emit(inner, &repo);
+    if !granted {
+        let note = format!("{name} was revoked for this repository. The running agent keeps it until it is next started.");
+        crate::sessions::note_running(inner, &repo.id, &note);
+    }
 }
 
 fn emit(inner: &Inner, repo: &StoredRepository) {

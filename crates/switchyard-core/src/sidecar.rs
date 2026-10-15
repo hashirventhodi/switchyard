@@ -46,7 +46,12 @@ impl AgentLauncher for SidecarLauncher {
             "allow_bypass": spec.sandboxed,
             "mcp_servers": crate::mcp::claude_servers(&spec.mcp_servers),
         });
-        let mut child = Command::new(&self.node)
+        let mut command = Command::new(&self.node);
+        // Granted secrets in, every other known secret out; the CLI the sidecar starts, and
+        // the MCP servers the CLI starts, inherit this environment. Values never go in the
+        // config argument.
+        spec.env.apply(&mut command);
+        let mut child = command
             .arg(&self.script)
             .arg("--config")
             .arg(config.to_string())

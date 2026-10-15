@@ -30,6 +30,12 @@ pub struct LaunchSpec {
     /// them through the CLI's per-invocation flags (strict for Claude Code, so no
     /// user-level server leaks in) and never writes a CLI config file.
     pub mcp_servers: Vec<crate::mcp::McpServer>,
+    /// The repository's granted secrets to set, and every other known secret name to strip
+    /// from the inherited environment. Launchers apply it to the agent process
+    /// ([`SpawnEnv::apply`]); the CLI's own children (MCP servers) inherit the result.
+    ///
+    /// [`SpawnEnv::apply`]: crate::secrets::SpawnEnv::apply
+    pub env: crate::secrets::SpawnEnv,
 }
 
 /// The protocol mode a launcher asks its CLI for: Full auto bypasses every check only in

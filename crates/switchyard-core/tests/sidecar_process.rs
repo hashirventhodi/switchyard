@@ -111,6 +111,32 @@ fn the_sidecar_is_given_the_repositorys_mcp_servers_and_no_config_file_changes()
 }
 
 #[test]
+fn the_sidecar_and_the_processes_it_starts_see_granted_secrets_and_none_of_the_others() {
+    // Switchyard itself was started with an ungranted secret in its environment.
+    std::env::set_var("SY26_STRIPE_KEY", "sk-must-not-leak");
+    let repo = TempRepo::new("acme");
+    std::fs::create_dir_all(repo.path.join(".switchyard")).unwrap();
+    std::fs::write(repo.path.join(".switchyard/policy.yml"), "secrets: [SY26_NPM_TOKEN, SY26_STRIPE_KEY]\n").unwrap();
+    let worktree = repo.add_worktree("feat/x");
+    let mut core = Harness::launch_with(fake_sidecar());
+    let repository_id = harness::added_repository(&core.add_repository(&repo.path)).id;
+    core.secrets.in_keychain("SY26_NPM_TOKEN", "npm-123");
+    core.dispatch(Command::GrantSecret { repository_id, name: "SY26_NPM_TOKEN".into() });
+
+    core.dispatch(Command::StartSession {
+        worktree_path: worktree.to_string_lossy().into_owned(),
+        agent: switchyard_schema::AgentKind::ClaudeCode,
+        permission_mode: switchyard_schema::PermissionMode::AskFirst,
+        prompt: "env SY26_NPM_TOKEN SY26_STRIPE_KEY".into(),
+    });
+    let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+
+    let texts = agent_texts(&events);
+    assert!(texts.contains(&"self: SY26_NPM_TOKEN=npm-123 SY26_STRIPE_KEY=<unset>".to_string()), "{texts:#?}");
+    assert!(texts.contains(&"child: SY26_NPM_TOKEN=npm-123 SY26_STRIPE_KEY=<unset>".to_string()), "{texts:#?}");
+}
+
+#[test]
 fn full_auto_in_a_declared_sandbox_launches_the_sidecar_in_bypass() {
     let repo = TempRepo::new("acme");
     std::fs::create_dir_all(repo.path.join(".switchyard")).unwrap();

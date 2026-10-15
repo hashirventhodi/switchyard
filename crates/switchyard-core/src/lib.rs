@@ -201,9 +201,11 @@ impl Core {
             Command::ReadSecrets { repository_id } => secrets::read(&inner, &repository_id),
             Command::GrantSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, true),
             Command::RevokeSecret { repository_id, name } => secrets::set_grant(&mut inner, &repository_id, &name, false),
-            Command::AddSecret { .. }
-            | Command::RemoveSecret { .. }
-            | Command::SetSecretValue { .. } => inner.refuse("secrets", "not yet".into()),
+            Command::AddSecret { repository_id, name } => secrets::add(&mut inner, &repository_id, &name),
+            Command::RemoveSecret { repository_id, name } => secrets::remove(&mut inner, &repository_id, &name),
+            Command::SetSecretValue { repository_id, name, value } => {
+                secrets::set_value(&mut inner, &repository_id, &name, &value)
+            }
         }
         sessions::flush(&mut inner);
     }

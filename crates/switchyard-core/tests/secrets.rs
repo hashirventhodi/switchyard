@@ -3,10 +3,12 @@
 //! store; a granted secret reaches the spawn's environment, an ungranted one is kept out.
 mod harness;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use harness::{added_repository, Harness, TempRepo};
-use switchyard_schema::{Command, Event, Secret, SecretOrigin, SecretSource};
+use adapter_protocol::Event as AgentEvent;
+use switchyard_schema::{Command, Entry, Event, Secret, SecretOrigin, SecretSource};
 
 struct Setup {
     core: Harness,
@@ -91,6 +93,150 @@ fn granting_and_revoking_show_in_context_at_once_and_survive_a_relaunch() {
     let mut core = core.relaunch();
     let after = listed(&core.send(Command::ReadSecrets { repository_id: repo_id }));
     assert_eq!(granted_names(&after), ["NPM_TOKEN"]);
+}
+
+#[test]
+fn the_session_environment_has_the_granted_secrets_and_none_of_the_others() {
+    let mut s = setup(Some(POLICY), Some(MCP));
+    s.core.secrets.in_keychain("NPM_TOKEN", "npm-123");
+    s.core.secrets.in_environment("NPM_TOKEN", "npm-from-env");
+    s.core.secrets.in_environment("GITHUB_TOKEN", "ghp-456");
+    s.core.secrets.in_environment("SENTRY_DSN", "https://sentry");
+    grant(&mut s, "NPM_TOKEN");
+    grant(&mut s, "SENTRY_DSN");
+
+    let worktree = s.worktree.clone();
+    harness::started_session(&s.core.start_session(&worktree, "Ship it."));
+
+    let env = &s.core.agents.launches()[0].env;
+    assert_eq!(
+        env.set,
+        BTreeMap::from([("NPM_TOKEN".into(), "npm-123".into()), ("SENTRY_DSN".into(), "https://sentry".into())])
+    );
+    assert_eq!(env.remove, BTreeSet::from(["GITHUB_TOKEN".to_string()]));
+}
+
+#[test]
+fn a_secret_granted_to_another_repository_is_kept_out() {
+    let mut s = setup(None, None);
+    let other = TempRepo::new("billing");
+    std::fs::create_dir_all(other.path.join(".switchyard")).unwrap();
+    std::fs::write(other.path.join(".switchyard/policy.yml"), "secrets: [STRIPE_KEY]\n").unwrap();
+    let other_id = added_repository(&s.core.add_repository(&other.path)).id;
+    s.core.secrets.in_environment("STRIPE_KEY", "sk-789");
+    s.core.send(Command::GrantSecret { repository_id: other_id, name: "STRIPE_KEY".into() });
+
+    let worktree = s.worktree.clone();
+    harness::started_session(&s.core.start_session(&worktree, "Ship it."));
+
+    let env = &s.core.agents.launches()[0].env;
+    assert!(env.set.is_empty(), "{env:?}");
+    assert_eq!(env.remove, BTreeSet::from(["STRIPE_KEY".to_string()]));
+}
+
+#[test]
+fn revoking_is_noted_in_running_sessions_and_takes_effect_at_the_next_spawn() {
+    let mut s = setup(Some(POLICY), None);
+    s.core.secrets.in_keychain("NPM_TOKEN", "npm-123");
+    grant(&mut s, "NPM_TOKEN");
+    let worktree = s.worktree.clone();
+    let id = harness::started_session(&s.core.start_session(&worktree, "Ship it."));
+    s.core.agent_says(0, init());
+    s.core.agent_says(0, AgentEvent::TurnComplete);
+
+    let events = revoke(&mut s, "NPM_TOKEN");
+
+    let note = events.iter().find_map(|e| match e {
+        Event::TranscriptEntry { session_id, entry: Entry::System { text }, .. } if *session_id == id => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        note.as_deref(),
+        Some("NPM_TOKEN was revoked for this repository. The running agent keeps it until it is next started.")
+    );
+    assert_eq!(granted_names(&listed(&events)), Vec::<String>::new());
+
+    // The agent process ends; talking to it again starts it without the secret.
+    s.core.agent_exits(0, Some(0), "");
+    s.core.send(Command::SendPrompt { session_id: id, text: "Go on.".into() });
+    let relaunch = &s.core.agents.launches()[1].env;
+    assert!(relaunch.set.is_empty(), "{relaunch:?}");
+    assert_eq!(relaunch.remove, BTreeSet::from(["NPM_TOKEN".to_string(), "SENTRY_DSN".to_string()]));
+}
+
+fn init() -> AgentEvent {
+    AgentEvent::SessionInit {
+        external_session_id: "ext-1".into(),
+        permission_mode: adapter_protocol::PermissionMode::AskFirst,
+        cli_permission_mode: "default".into(),
+        cli: adapter_protocol::CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
+        model: None,
+        mcp_servers: vec![],
+    }
+}
+
+#[test]
+fn a_value_set_from_context_goes_to_the_keychain_and_never_into_the_store_or_events() {
+    let mut s = setup(None, None);
+    let repository_id = s.repo_id.clone();
+    let added = s.core.send(Command::AddSecret { repository_id: repository_id.clone(), name: "STRIPE_KEY".into() });
+    assert_eq!(listed(&added), vec![secret("STRIPE_KEY", false, SecretOrigin::Local, SecretSource::Missing)]);
+
+    let events = s.core.send(Command::SetSecretValue {
+        repository_id: repository_id.clone(),
+        name: "STRIPE_KEY".into(),
+        value: "sk-live-0123456789".into(),
+    });
+    grant(&mut s, "STRIPE_KEY");
+
+    assert_eq!(s.core.secrets.keychain("STRIPE_KEY").as_deref(), Some("sk-live-0123456789"));
+    assert_eq!(listed(&events), vec![secret("STRIPE_KEY", false, SecretOrigin::Local, SecretSource::Keychain)]);
+    assert!(!format!("{events:?}").contains("sk-live"), "{events:#?}");
+    let worktree = s.worktree.clone();
+    harness::started_session(&s.core.start_session(&worktree, "Ship it."));
+    assert!(!format!("{:?}", s.core.agents.launches()[0]).contains("sk-live"), "Debug of a launch shows no value");
+    // Nothing the core wrote on disk holds the value.
+    for file in walk(s.core.data_dir()) {
+        let bytes = std::fs::read(&file).unwrap();
+        assert!(!bytes.windows(10).any(|w| w == b"sk-live-01"), "{} holds the value", file.display());
+    }
+}
+
+fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_locally_added_secret_can_be_removed_but_a_declared_one_stays() {
+    let mut s = setup(Some(POLICY), None);
+    let repository_id = s.repo_id.clone();
+    s.core.send(Command::AddSecret { repository_id: repository_id.clone(), name: "STRIPE_KEY".into() });
+    grant(&mut s, "STRIPE_KEY");
+
+    let removed = s.core.send(Command::RemoveSecret { repository_id: repository_id.clone(), name: "STRIPE_KEY".into() });
+    assert_eq!(listed(&removed).iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["NPM_TOKEN", "SENTRY_DSN"]);
+
+    let refused = s.core.send(Command::RemoveSecret { repository_id, name: "NPM_TOKEN".into() });
+    assert!(
+        refused.iter().any(|e| matches!(e, Event::CommandRefused { reason, .. } if reason.contains("policy"))),
+        "{refused:#?}"
+    );
+}
+
+#[test]
+fn a_secret_name_must_be_an_environment_variable_name() {
+    let mut s = setup(None, None);
+    let events = s.core.send(Command::AddSecret { repository_id: s.repo_id.clone(), name: "not a name".into() });
+    assert!(events.iter().any(|e| matches!(e, Event::CommandRefused { .. })), "{events:#?}");
 }
 
 #[test]
