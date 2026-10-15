@@ -22,6 +22,10 @@ _Avoid_: Main worktree, root
 One agent running on one Worktree for a while. Owns its transcript; owns no git state. At most one per Worktree at a time, Explore sessions included.
 _Avoid_: Run, conversation, chat, thread
 
+**Model**:
+The LLM a Session's agent is using. Chosen by the user when the Session starts (or left at Default, meaning the CLI's own choice) and changeable by the user between requests; the agent never changes it. Every Model the Session uses is a named one in its transcript, Default included once resolved.
+_Avoid_: Engine, LLM, agent (the agent is the CLI)
+
 **Archived session**:
 A Session that was replaced or whose Worktree was removed. Its transcript is kept as the audit trail; it can be read but not resumed.
 _Avoid_: Deleted session, history
