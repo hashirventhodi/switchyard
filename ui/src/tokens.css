@@ -1,0 +1,45 @@
+/* Design tokens, adopted verbatim from the prototype (switchyard.html). Colour is reserved for state. */
+:root{
+  --bg:#0f1116; --bg-1:#141720; --bg-2:#1a1e29; --bg-3:#222736; --bg-4:#2b3141;
+  --line:#262b38; --line-2:#333a4b;
+  --fg:#e7e9ef; --fg-1:#a9b0c0; --fg-2:#737b8e;
+  --accent:#6fb0ec; --accent-soft:rgba(111,176,236,.14); --accent-fg:#0b1220;
+  --ok:#4fc58d; --warn:#e9b84f; --bad:#e76c54; --info:#6fb0ec;
+  --ok-soft:rgba(79,197,141,.15); --warn-soft:rgba(233,184,79,.16); --bad-soft:rgba(231,108,84,.15);
+  --ag-claude:#dc9a5f; --ag-codex:#7ed4b8; --ag-gemini:#9aa6f3; --ag-aider:#e58fae;
+  --diff-add:rgba(79,197,141,.13); --diff-del:rgba(231,108,84,.13);
+  --diff-add-strong:rgba(79,197,141,.32); --diff-del-strong:rgba(231,108,84,.32);
+  --shadow:0 12px 40px rgba(0,0,0,.5);
+  --font-ui:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --radius:6px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f5f6f9; --bg-1:#ffffff; --bg-2:#f0f2f6; --bg-3:#e6e9f0; --bg-4:#dadfe8;
+    --line:#dde1e9; --line-2:#c9cfdb;
+    --fg:#171a22; --fg-1:#4a5163; --fg-2:#7a8294;
+    --accent:#1f6fb8; --accent-soft:rgba(31,111,184,.12); --accent-fg:#ffffff;
+    --ok:#1f9a62; --warn:#b7801a; --bad:#c8432c; --info:#1f6fb8;
+    --ok-soft:rgba(31,154,98,.13); --warn-soft:rgba(183,128,26,.15); --bad-soft:rgba(200,67,44,.12);
+    --ag-claude:#b9692b; --ag-codex:#1f8f6e; --ag-gemini:#4a56c8; --ag-aider:#b8416d;
+    --diff-add:rgba(31,154,98,.12); --diff-del:rgba(200,67,44,.11);
+    --diff-add-strong:rgba(31,154,98,.3); --diff-del-strong:rgba(200,67,44,.28);
+    --shadow:0 12px 40px rgba(20,30,50,.18);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#f5f6f9; --bg-1:#ffffff; --bg-2:#f0f2f6; --bg-3:#e6e9f0; --bg-4:#dadfe8;
+  --line:#dde1e9; --line-2:#c9cfdb;
+  --fg:#171a22; --fg-1:#4a5163; --fg-2:#7a8294;
+  --accent:#1f6fb8; --accent-soft:rgba(31,111,184,.12); --accent-fg:#ffffff;
+  --ok:#1f9a62; --warn:#b7801a; --bad:#c8432c; --info:#1f6fb8;
+  --ok-soft:rgba(31,154,98,.13); --warn-soft:rgba(183,128,26,.15); --bad-soft:rgba(200,67,44,.12);
+  --ag-claude:#b9692b; --ag-codex:#1f8f6e; --ag-gemini:#4a56c8; --ag-aider:#b8416d;
+  --diff-add:rgba(31,154,98,.12); --diff-del:rgba(200,67,44,.11);
+  --diff-add-strong:rgba(31,154,98,.3); --diff-del-strong:rgba(200,67,44,.28);
+  --shadow:0 12px 40px rgba(20,30,50,.18);
+  color-scheme:light;
+}

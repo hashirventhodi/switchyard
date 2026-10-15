@@ -1,0 +1,4 @@
+# ts-rs writes the TypeScript generated from crates/switchyard-schema into the renderer.
+# Regenerate with: cargo test -p switchyard-schema
+[env]
+TS_RS_EXPORT_DIR = { value = "ui/src/schema", relative = true }
