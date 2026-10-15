@@ -62,16 +62,24 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
     Some(worktree)
 }
 
+/// "Create new from base": a fresh worktree, then a session on it. A session that cannot
+/// start leaves the worktree free rather than deleting what was just made.
 pub(crate) fn start_session_on_new(
-    _inner: &mut Inner,
-    _core: &Arc<Mutex<Inner>>,
-    _repository_id: &str,
-    _branch: &str,
-    _agent: AgentKind,
-    _permission_mode: PermissionMode,
-    _prompt: &str,
+    inner: &mut Inner,
+    core: &Arc<Mutex<Inner>>,
+    repository_id: &str,
+    branch: &str,
+    agent: AgentKind,
+    permission_mode: PermissionMode,
+    prompt: &str,
 ) {
-    let _ = sessions::start;
+    const COMMAND: &str = "startSessionOnNewWorktree";
+    if prompt.trim().is_empty() {
+        return inner.refuse(COMMAND, "Write a prompt for the agent first".into());
+    }
+    if let Some(worktree) = create(inner, COMMAND, repository_id, branch) {
+        sessions::start(inner, core, &worktree.path, agent, permission_mode, prompt);
+    }
 }
 
 /// Remove a worktree that is not primary, has no session and no uncommitted files. The

@@ -4,8 +4,8 @@ mod harness;
 
 use std::path::{Path, PathBuf};
 
-use harness::{added_repository, Harness, TempRepo};
-use switchyard_schema::{Command, Event, Worktree, WorktreeFacts};
+use harness::{added_repository, started_session, Harness, TempRepo};
+use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Worktree, WorktreeFacts};
 
 fn create(core: &mut Harness, repository_id: &str, branch: &str) -> Vec<Event> {
     core.send(Command::CreateWorktree { repository_id: repository_id.into(), branch: branch.into() })
@@ -168,6 +168,64 @@ fn the_primary_worktree_is_never_removed() {
 
     assert!(reason.contains("primary"), "{reason}");
     assert!(repo.path.join("README").is_file());
+}
+
+fn start_on_new(core: &mut Harness, repository_id: &str, branch: &str, mode: PermissionMode, prompt: &str) -> Vec<Event> {
+    core.send(Command::StartSessionOnNewWorktree {
+        repository_id: repository_id.into(),
+        branch: branch.into(),
+        agent: AgentKind::ClaudeCode,
+        permission_mode: mode,
+        prompt: prompt.into(),
+    })
+}
+
+#[test]
+fn create_new_from_base_makes_the_worktree_then_starts_the_session_on_it() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    let events = start_on_new(&mut core, &repository.id, "feat/login", PermissionMode::AskFirst, "Add a login form.");
+
+    let worktree = added_worktree(&events);
+    started_session(&events);
+    assert!(PathBuf::from(&worktree.path).starts_with(core.worktree_root()));
+    let session = events
+        .iter()
+        .find_map(|e| match e {
+            Event::SessionStarted { session } => Some(session.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(session.worktree_path, worktree.path);
+    assert_eq!(session.branch.as_deref(), Some("feat/login"));
+    assert_eq!(core.agents.launches()[0].cwd, PathBuf::from(&worktree.path));
+}
+
+#[test]
+fn create_new_from_base_with_no_prompt_creates_nothing() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    let reason = refused(&start_on_new(&mut core, &repository.id, "feat/login", PermissionMode::AskFirst, "  "));
+
+    assert!(reason.contains("prompt"), "{reason}");
+    assert_eq!(git_worktree_paths(&repo.path), vec![repo.path.clone()]);
+    assert!(core.agents.launches().is_empty());
+}
+
+#[test]
+fn a_branch_that_already_exists_is_refused_with_the_reason() {
+    let repo = TempRepo::new("acme");
+    repo.add_worktree("feat/login");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    let reason = refused(&create(&mut core, &repository.id, "feat/login"));
+
+    assert!(reason.contains("feat/login") && reason.contains("already exists"), "{reason}");
 }
 
 #[test]
