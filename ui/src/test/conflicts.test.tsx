@@ -40,7 +40,9 @@ const lib: ChangedFile = {
   removed: 1,
   binary: false,
   decision: "accept",
+  stale: false,
   hunks: [],
+  staleHunks: [],
 };
 const unmergedReadme: ChangedFile = { ...lib, path: "README", status: "conflicted", decision: null };
 const readmeConflicts: ConflictFile = {

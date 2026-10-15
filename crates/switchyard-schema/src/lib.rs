@@ -798,6 +798,11 @@ pub enum Event {
         commit: String,
         /// Paths committed (for a rename, the new path).
         files: Vec<String>,
+        /// Accepted files left out because they changed since you decided (their Accept is
+        /// a Stale decision): re-confirm them to commit them.
+        #[serde(rename = "skippedStale")]
+        #[ts(rename = "skippedStale")]
+        skipped_stale: Vec<String>,
     },
     /// One hunk's review as it stands now (decision, comment, whether they were sent to the
     /// agent). Replaces that hunk's earlier review.
@@ -1255,7 +1260,29 @@ pub struct ChangedFile {
     /// Git shows no text diff for the file.
     pub binary: bool,
     pub decision: Option<Decision>,
+    /// The file's Decision is a Stale decision: it was made on content that has since
+    /// changed, so it is shown but does not count until re-confirmed.
+    pub stale: bool,
     pub hunks: Vec<Hunk>,
+    /// Hunk Decisions on hunks no longer in the diff (the hunk changed since you decided):
+    /// kept to show, never counted.
+    pub stale_hunks: Vec<StaleHunk>,
+}
+
+/// A hunk Decision whose hunk has since changed (a Stale decision). With `decision` Reject
+/// and `sent`, the agent revised the hunk after receiving the feedback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StaleHunk {
+    /// The id the hunk had when decided.
+    pub id: String,
+    /// The hunk's `@@` line when decided.
+    pub header: String,
+    pub decision: Decision,
+    pub comment: Option<String>,
+    /// The Hunk feedback had been sent to the agent.
+    pub sent: bool,
 }
 
 /// One hunk of a file's diff. `id` is stable while the hunk's own lines are unchanged:
