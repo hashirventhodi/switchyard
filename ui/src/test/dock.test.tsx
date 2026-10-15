@@ -88,7 +88,7 @@ const shellOpened: Event = { type: "shellOpened", shell: { id: "shell-1", worktr
 
 test("+ shell opens a shell in the shown session's worktree at the terminal's size", () => {
   const { sent } = launch({ type: "sessionStarted", session });
-  fireEvent.click(screen.getByRole("button", { name: /fix\/readme/ }));
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByRole("button", { name: /fix\/readme/ }));
 
   fireEvent.click(within(dock()).getByRole("button", { name: "+ shell" }));
 

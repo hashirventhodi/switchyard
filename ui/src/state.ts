@@ -4,6 +4,9 @@ import type { AgentSetup } from "./schema/AgentSetup";
 import type { Entry } from "./schema/Entry";
 import type { Event } from "./schema/Event";
 import type { Repository } from "./schema/Repository";
+import type { Request } from "./schema/Request";
+import { detail, verb } from "./requests";
+import { AGENT_LABEL } from "./status";
 import type { Session } from "./schema/Session";
 import type { SessionFacts } from "./schema/SessionFacts";
 import type { Shell } from "./schema/Shell";
@@ -24,10 +27,28 @@ export interface SessionView extends Session {
   spend: SpendSample[];
 }
 
+/** A Permission request waiting for the user. */
+export interface PendingRequest {
+  sessionId: string;
+  requestId: string;
+  /** Its transcript index. */
+  index: number;
+  request: Request;
+}
+
+/** How long a toast stays: a Permission request 20 s, the result of a user action 4 s. */
+export const REQUEST_TOAST_MS = 20_000;
+export const RESULT_TOAST_MS = 4_000;
+
 export interface Toast {
   id: number;
   tone: "bad" | "ok" | "info" | "warn";
   text: string;
+  ms: number;
+  /** Mono second line: the exact command. */
+  detail?: string;
+  /** The Permission request the toast offers to answer; it goes when the request does. */
+  request?: PendingRequest;
 }
 
 export interface State {
@@ -36,6 +57,8 @@ export interface State {
   sessions: Record<string, SessionView>;
   /** Open shell terminals, in open order. */
   shells: Shell[];
+  /** Pending Permission requests by session, in transcript order. */
+  requests: Record<string, PendingRequest[]>;
   toasts: Toast[];
   /** What the core detected about each agent CLI; empty until it reports. */
   agents: AgentSetup[];
@@ -43,7 +66,15 @@ export interface State {
   worktreeFacts: Record<string, WorktreeFacts>;
 }
 
-export const initialState: State = { repositories: [], sessions: {}, shells: [], toasts: [], agents: [], worktreeFacts: {} };
+export const initialState: State = {
+  repositories: [],
+  sessions: {},
+  shells: [],
+  requests: {},
+  toasts: [],
+  agents: [],
+  worktreeFacts: {},
+};
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
 
@@ -57,7 +88,14 @@ function updateSession(state: State, id: string, change: (s: SessionView) => Ses
 export function reduce(state: State, event: Event): State {
   switch (event.type) {
     case "attached":
-      return { ...state, repositories: [], sessions: {}, shells: [] };
+      return {
+        ...state,
+        repositories: [],
+        sessions: {},
+        shells: [],
+        requests: {},
+        toasts: state.toasts.filter((t) => !t.request),
+      };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
       return { ...state, repositories: [...others, { ...event.repository, worktrees: [] }] };
@@ -76,19 +114,22 @@ export function reduce(state: State, event: Event): State {
       const gone = repo?.worktrees.find((w) => w.path === event.worktreePath);
       const { [event.worktreePath]: _dropped, ...worktreeFacts } = state.worktreeFacts;
       const text = `Removed worktree ${gone?.branch ?? event.worktreePath}`;
-      return {
-        ...state,
-        worktreeFacts,
-        repositories: state.repositories.map((r) =>
-          r.id === event.repositoryId ? { ...r, worktrees: r.worktrees.filter((w) => w.path !== event.worktreePath) } : r,
-        ),
-        toasts: [...state.toasts, { id: ++toastSeq, tone: "ok", text }],
-      };
+      return resultToast(
+        {
+          ...state,
+          worktreeFacts,
+          repositories: state.repositories.map((r) =>
+            r.id === event.repositoryId ? { ...r, worktrees: r.worktrees.filter((w) => w.path !== event.worktreePath) } : r,
+          ),
+        },
+        text,
+        "ok",
+      );
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
     case "commandRefused":
-      return { ...state, toasts: [...state.toasts, { id: ++toastSeq, tone: "bad", text: event.reason }] };
+      return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {
       const s = event.session;
       const view = { ...s, facts: noFacts, transcript: emptyChunked<Entry>(), rawEvents: emptyChunked<string>(), spend: [] };
@@ -103,11 +144,13 @@ export function reduce(state: State, event: Event): State {
         ...s,
         spend: [...s.spend, { atMs: event.atMs, spend: event.spend }],
       }));
-    case "transcriptEntry":
-      return updateSession(state, event.sessionId, (s) => ({
+    case "transcriptEntry": {
+      const next = updateSession(state, event.sessionId, (s) => ({
         ...s,
         transcript: put(s.transcript, event.index, event.entry),
       }));
+      return event.entry.type === "request" ? trackRequest(next, event.sessionId, event.index, event.entry) : next;
+    }
     case "agentEventReceived":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
@@ -125,8 +168,46 @@ export function reduce(state: State, event: Event): State {
   }
 }
 
+/** Keep the pending list (and the request's toast) in step with a request card. */
+function trackRequest(state: State, sessionId: string, index: number, entry: Entry & { type: "request" }): State {
+  const list = state.requests[sessionId] ?? [];
+  const known = list.some((r) => r.requestId === entry.requestId);
+  if (entry.state === "pending") {
+    if (known) return state;
+    const pending: PendingRequest = { sessionId, requestId: entry.requestId, index, request: entry.request };
+    const requests = { ...state.requests, [sessionId]: [...list, pending].sort((a, b) => a.index - b.index) };
+    const session = state.sessions[sessionId];
+    const who = session ? `${AGENT_LABEL[session.agent]} on ${session.branch ?? session.worktreePath}` : "An agent";
+    return addToast(
+      { ...state, requests },
+      { tone: "warn", text: `${who} ${verb(entry.request)}`, detail: detail(entry.request), ms: REQUEST_TOAST_MS, request: pending },
+    );
+  }
+  if (!known) return state;
+  const gone = (r?: PendingRequest) => r?.sessionId === sessionId && r.requestId === entry.requestId;
+  return {
+    ...state,
+    requests: { ...state.requests, [sessionId]: list.filter((r) => !gone(r)) },
+    toasts: state.toasts.filter((t) => !gone(t.request)),
+  };
+}
+
+function addToast(state: State, toast: Omit<Toast, "id">): State {
+  return { ...state, toasts: [...state.toasts, { id: ++toastSeq, ...toast }] };
+}
+
+/** A toast for the result of something the user just did (4 s). */
+export function resultToast(state: State, text: string, tone: Toast["tone"] = "info"): State {
+  return addToast(state, { tone, text, ms: RESULT_TOAST_MS });
+}
+
 export function dismissToast(state: State, id: number): State {
   return { ...state, toasts: state.toasts.filter((t) => t.id !== id) };
+}
+
+/** Sessions that need the user, in start order. */
+export function waitingSessions(state: State): SessionView[] {
+  return Object.values(state.sessions).filter((s) => s.status === "waiting");
 }
 
 /** The session occupying a worktree, if any (at most one, ADR-0005). */

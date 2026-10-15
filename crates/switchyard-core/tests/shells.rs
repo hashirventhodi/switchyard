@@ -170,7 +170,9 @@ fn a_refused_worktree_removal_leaves_its_shells_open() {
 
     let events = core.send(Command::RemoveWorktree { worktree_path: worktree.to_string_lossy().into_owned() });
 
-    assert!(matches!(&events[..], [Event::CommandRefused { .. }]), "{events:#?}");
+    // (Shell output may arrive meanwhile; only the refusal and the absence of a close matter.)
+    assert!(events.iter().any(|e| matches!(e, Event::CommandRefused { command, .. } if command == "removeWorktree")), "{events:#?}");
+    assert_eq!(closed(&events, &shell), None);
     write(&mut core, &shell, "echo alive-$((2+3))\n");
     output_until(&mut core, &shell, "alive-5");
 }

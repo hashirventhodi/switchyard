@@ -6,7 +6,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { PermissionMode, ProtocolEvent } from "./protocol.ts";
-import { CLI_MODE, ClaudeTranslator } from "./translate.ts";
+import { CLI_MODE, ClaudeTranslator, type PermissionResult } from "./translate.ts";
 
 export interface SidecarConfig {
   /** The worktree. */
@@ -41,6 +41,35 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
     }
   };
 
+  // canUseTool calls waiting on the host's verdict, by request id. They may wait forever:
+  // the request sits in the user's queue until answered or the turn is interrupted.
+  const waiting = new Map<string, (result: PermissionResult) => void>();
+  const canUseTool = (
+    toolName: string,
+    input: Record<string, unknown>,
+    o: { signal: AbortSignal; requestId: string; toolUseID: string; title?: string; decisionReason?: string; blockedPath?: string },
+  ) =>
+    new Promise<PermissionResult>((resolve) => {
+      waiting.set(o.requestId, resolve);
+      o.signal.addEventListener("abort", () => {
+        if (waiting.delete(o.requestId))
+          ingest(JSON.stringify({ type: "switchyard", subtype: "can_use_tool_aborted", request_id: o.requestId }));
+      });
+      ingest(
+        JSON.stringify({
+          type: "switchyard",
+          subtype: "can_use_tool",
+          request_id: o.requestId,
+          tool_name: toolName,
+          input,
+          tool_use_id: o.toolUseID,
+          title: o.title ?? null,
+          decision_reason: o.decisionReason ?? null,
+          blocked_path: o.blockedPath ?? null,
+        }),
+      );
+    });
+
   const prompts = new Pushable<SDKUserMessage>();
   const q = query({
     prompt: prompts,
@@ -49,9 +78,9 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       // Always passed: when omitted the CLI picks its own default mode.
       permissionMode: CLI_MODE[config.permission_mode] as Options["permissionMode"],
       pathToClaudeCodeExecutable: config.claude_path ?? undefined,
-      // Until the permission relay exists, anything that would prompt is denied rather than
-      // left hanging; the agent sees the denial and carries on.
-      permissionPrompts: "none",
+      // Everything that would prompt comes to canUseTool and from there to the user's queue.
+      permissionPrompts: "host",
+      canUseTool,
       env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
     } as Options,
   });
@@ -72,6 +101,10 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       for (const op of ops) {
         if (op.op === "push_user_message") prompts.push(op.message as SDKUserMessage);
         else if (op.op === "interrupt") await q.interrupt();
+        else if (op.op === "resolve_permission") {
+          waiting.get(op.request_id)?.(op.result);
+          waiting.delete(op.request_id);
+        }
       }
     }
     prompts.end();

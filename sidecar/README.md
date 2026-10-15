@@ -43,6 +43,20 @@ recording, never an edited one, and an updated supported range in
 4. Send a follow-up from the composer, press Stop (or Esc) mid-turn: the pill shows Paused
    and `git status` in the worktree is unchanged.
 
+## Manual permission-relay check: the M1 vertical-slice gate (real CLI, model calls)
+
+1. `pnpm tauri dev`, add a repository with a hand-made worktree (`git worktree add ../x -b x`).
+2. New session: Claude Code, that worktree, Ask first, prompt "Run `ls -la` with Bash, then
+   ask me with AskUserQuestion whether to add a NOTES.md, then do what I say."
+3. Switch to the Dashboard. When the agent asks to run `ls -la`: the sidebar row, the Needs
+   you KPI and card, the top-bar count and the status bar turn amber together, and one toast
+   names Claude Code, the branch and `ls -la`. Press Approve on the toast: the view stays on
+   the Dashboard and the session goes back to Running.
+4. ⌘J opens the session at the question card; pick an option (or type in the composer).
+5. The session ends Needs you with its work visible (`git status` in the worktree shows
+   NOTES.md if you said yes). Repeat once answering Skip: the card reads "Skipped…".
+6. Optional: record it with `SWITCHYARD_RECORD_DIR` (above) as `permission-relay-live`.
+
 ## Manual compat check (real CLI, no model call)
 
 1. `pnpm tauri dev` with `claude` on PATH in the supported range: the Dashboard shows no Setup
