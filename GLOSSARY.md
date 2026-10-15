@@ -63,6 +63,18 @@ _Avoid_: Allow-list entry, whitelist, always-allow
 The layered set of Grants and denials that answers a permission request: organisation policy, then the Repository's committed policy, then the user's local Grants for that Repository. A denial at a higher layer wins.
 _Avoid_: Settings, config, rules
 
+**Policy request**:
+Anything in a Repository's committed files that would expand what agents may do: a committed allow rule, a sandbox declaration, a default mode above Ask first, a worktree root of its own, an MCP server in `.mcp.json`. Shown but not applied until acknowledged (ADR-0006). Committed denials and the ceiling apply at once.
+_Avoid_: Committed grant, trusted config
+
+**Acknowledgement**:
+The user's local yes to a Policy request, pinned to a hash of exactly what was approved; any change asks again. Kept in Switchyard's store, never in the Repository.
+_Avoid_: Trust, approval, consent
+
+**Declared MCP server**:
+An MCP server listed in the Repository's `.mcp.json`. Not passed to any agent until enabled (an Acknowledgement for that server's exact definition).
+_Avoid_: Installed server, configured server
+
 **Run once**:
 Approving a single permission request without creating a Grant.
 _Avoid_: Session allow, temporary grant
