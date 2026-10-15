@@ -215,44 +215,58 @@ pub fn log_above(dir: &Path, base: &str, limit: usize) -> Result<Vec<LogEntry>, 
         .collect())
 }
 
-/// How a rebase ended.
+/// How a rebase (or a continued one) ended.
 #[derive(Debug)]
 pub enum Rebase {
     Done,
-    /// It stopped on conflicts in these files and was aborted: the branch, working tree
-    /// and index are as they were.
-    Aborted { conflicts: Vec<String> },
+    /// It stopped, on conflicts in these files: left stopped (never aborted), so they are
+    /// real conflicts in the tree to resolve, after which the rebase is continued.
+    Stopped { conflicts: Vec<String> },
 }
 
 /// `git rebase <onto>` in the worktree at `dir`, never interactive and never stashing.
-/// A rebase that stops is aborted at once.
+/// A rebase that stops on conflicts is left stopped.
 pub fn rebase(dir: &Path, onto: &str) -> Result<Rebase, GitError> {
+    run_rebase(dir, &["-c", "rebase.autoStash=false", "rebase", "--no-autosquash", onto])
+}
+
+/// `git rebase --continue` after the conflicts it stopped on were resolved.
+pub fn continue_rebase(dir: &Path) -> Result<Rebase, GitError> {
+    run_rebase(dir, &["rebase", "--continue"])
+}
+
+/// The branch a stopped rebase in `dir` is rebasing (git detaches HEAD meanwhile).
+pub fn rebasing_branch(dir: &Path) -> Option<String> {
+    ["rebase-merge/head-name", "rebase-apply/head-name"].iter().find_map(|name| {
+        let path = git(dir, &["rev-parse", "--path-format=absolute", "--git-path", name]).ok()?;
+        let head = std::fs::read_to_string(path.trim()).ok()?;
+        let head = head.trim();
+        Some(head.strip_prefix("refs/heads/").unwrap_or(head).to_string())
+    })
+}
+
+/// Files git holds unmerged in the worktree at `dir`.
+pub fn unmerged_files(dir: &Path) -> Vec<String> {
+    let out = git(dir, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
+    out.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect()
+}
+
+fn run_rebase(dir: &Path, args: &[&str]) -> Result<Rebase, GitError> {
     let out = Command::new("git")
-        .args(["-c", "rebase.autoStash=false", "rebase", "--no-autosquash", onto])
+        .args(args)
         .env("GIT_EDITOR", "true")
         .env("GIT_SEQUENCE_EDITOR", "true")
         .current_dir(dir)
         .output()
         .map_err(|e| GitError(format!("could not run git: {e}")))?;
-    if out.status.success() {
+    if out.status.success() && !rebase_in_progress(dir) {
         return Ok(Rebase::Done);
     }
-    let conflicts = git(dir, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
-    let conflicts: Vec<String> = conflicts.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
-    // A rebase that never started (say, git refused it) has nothing to abort.
-    let started = git(dir, &["rev-parse", "--git-path", "rebase-merge"])
-        .into_iter()
-        .chain(git(dir, &["rev-parse", "--git-path", "rebase-apply"]))
-        .any(|p| {
-            let p = PathBuf::from(p.trim());
-            (if p.is_absolute() { p } else { dir.join(p) }).exists()
-        });
-    if started {
-        git(dir, &["rebase", "--abort"])?;
-        Ok(Rebase::Aborted { conflicts })
-    } else {
-        Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    if rebase_in_progress(dir) {
+        return Ok(Rebase::Stopped { conflicts: unmerged_files(dir) });
     }
+    // It never started (say, git refused it): nothing is in progress.
+    Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
 }
 
 /// (ahead, behind): commits HEAD has that `base` lacks, and the other way round.

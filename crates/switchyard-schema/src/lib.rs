@@ -847,6 +847,16 @@ pub enum Event {
         /// Why `.mcp.json` could not be read, when it could not.
         error: Option<String>,
     },
+    /// Rebase on base stopped on conflicts and was left stopped: they are real conflicts in
+    /// the worktree now, to resolve (Keep ours / Keep base, or the agent), after which
+    /// Rebase again continues it.
+    RebaseStopped {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        base: String,
+        conflicts: Vec<String>,
+    },
     /// The worktree's context files as they are on disk (replaces earlier ones for it).
     ContextRead {
         #[serde(rename = "worktreePath")]

@@ -52,7 +52,7 @@ base: string, commits: Array<Commit>, } | { "type": "mcpServersChanged", reposit
 /**
  * Why `.mcp.json` could not be read, when it could not.
  */
-error: string | null, } | { "type": "contextRead", worktreePath: string, files: Array<ContextFile>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
+error: string | null, } | { "type": "rebaseStopped", worktreePath: string, base: string, conflicts: Array<string>, } | { "type": "contextRead", worktreePath: string, files: Array<ContextFile>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
 /**
  * The pull request's number; `null` for a Local merge.
  */

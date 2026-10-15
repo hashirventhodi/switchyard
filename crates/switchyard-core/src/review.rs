@@ -163,7 +163,7 @@ pub(crate) fn read(inner: &mut Inner, worktree_path: &str) {
     emit_changes(inner, COMMAND, worktree_path);
 }
 
-fn emit_changes(inner: &mut Inner, command: &str, worktree_path: &str) {
+pub(crate) fn emit_changes(inner: &mut Inner, command: &str, worktree_path: &str) {
     match changes(inner, worktree_path) {
         Ok(list) => {
             let files = list.into_iter().map(|(f, _)| f).collect();

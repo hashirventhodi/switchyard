@@ -153,7 +153,12 @@ function WorktreeCard(props: {
           )}
           <PullRequestActions state={state} worktreePath={w.path} send={send} openLink={openLink} />
           {!w.primary && !!facts?.behind && (
-            <button className="btn sm" onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}>
+            <button
+              className="btn sm"
+              disabled={occupant?.status === "running" || occupant?.status === "waiting"}
+              title="Rebase when no agent is at work here (Paused, Finished or Error)"
+              onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}
+            >
               Rebase on {repository.baseBranch}
             </button>
           )}

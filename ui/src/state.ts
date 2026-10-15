@@ -279,6 +279,15 @@ export function reduce(state: State, event: Event): State {
       const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
       return resultToast(state, `Rebased ${worktree?.branch ?? event.worktreePath} on ${event.base}`, "ok");
     }
+    case "rebaseStopped": {
+      const branch = branchAt(state, event.worktreePath);
+      const files = event.conflicts.length ? ` on conflicts in ${event.conflicts.join(", ")}` : "";
+      return resultToast(
+        state,
+        `Rebasing ${branch} on ${event.base} stopped${files}: resolve them in Changes, then Rebase again to continue`,
+        "warn",
+      );
+    }
     case "commandRefused":
       return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {
