@@ -74,7 +74,33 @@ pub(crate) fn start_session_on_new(
     let _ = sessions::start;
 }
 
-pub(crate) fn remove(_inner: &mut Inner, _worktree_path: &str) {}
+/// Remove a worktree that is not primary, has no session and no uncommitted files. The
+/// branch stays. Shells on the worktree close with it (once the dock owns shells, close
+/// them here, after git succeeds).
+pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
+    const COMMAND: &str = "removeWorktree";
+    let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
+        return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
+    };
+    let name = worktree.branch.clone().unwrap_or_else(|| worktree_path.to_string());
+    if worktree.primary {
+        return inner.refuse(COMMAND, format!("{name} is the primary worktree; it is never removed"));
+    }
+    if let Some(status) = sessions::occupant(inner, worktree_path) {
+        let label = sessions::status_label(status);
+        return inner.refuse(COMMAND, format!("{name} has a {label} session; it cannot be removed while a session is on it"));
+    }
+    match git::dirty_count(&worktree.path) {
+        Ok(0) => {}
+        Ok(1) => return inner.refuse(COMMAND, format!("{name} has 1 uncommitted file; commit or discard it before removing the worktree")),
+        Ok(n) => return inner.refuse(COMMAND, format!("{name} has {n} uncommitted files; commit or discard them before removing the worktree")),
+        Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("git could not read {name}: {e}")),
+    }
+    if let Err(git::GitError(e)) = git::remove_worktree(Path::new(&repo.path), &worktree.path) {
+        return inner.refuse(COMMAND, format!("Could not remove {name}: {e}"));
+    }
+    inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
+}
 
 /// Re-read every known worktree's facts from git and emit them.
 pub(crate) fn refresh(inner: &Inner) {

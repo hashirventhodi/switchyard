@@ -115,3 +115,71 @@ fn worktree_facts_count_commits_ahead_and_behind_base_and_uncommitted_files() {
     assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 2 });
     assert_eq!(facts_of(&events, &repo.path), WorktreeFacts { ahead: 0, behind: 0, dirty: 0 });
 }
+
+fn remove(core: &mut Harness, path: &Path) -> Vec<Event> {
+    core.send(Command::RemoveWorktree { worktree_path: path.to_string_lossy().into_owned() })
+}
+
+#[test]
+fn removing_a_dirty_worktree_is_refused_and_names_the_reason() {
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("feat/login");
+    std::fs::write(worktree.join("README"), "edited\n").unwrap();
+    std::fs::write(worktree.join("new.txt"), "new\n").unwrap();
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+    let before = harness::worktree_snapshot(&worktree);
+
+    let reason = refused(&remove(&mut core, &worktree));
+
+    assert!(reason.contains("feat/login") && reason.contains("2 uncommitted files"), "{reason}");
+    assert!(git_worktree_paths(&repo.path).contains(&worktree));
+    assert_eq!(harness::worktree_snapshot(&worktree), before, "nothing touched");
+}
+
+#[test]
+fn removing_a_clean_worktree_runs_git_worktree_remove_and_keeps_the_branch() {
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("feat/login");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    let events = remove(&mut core, &worktree);
+
+    assert_eq!(
+        events,
+        vec![Event::WorktreeRemoved {
+            repository_id: repository.id,
+            worktree_path: worktree.to_string_lossy().into_owned(),
+        }]
+    );
+    assert!(!worktree.exists());
+    assert!(!git_worktree_paths(&repo.path).contains(&worktree));
+    harness::git(&repo.path, &["show-ref", "--verify", "refs/heads/feat/login"]);
+}
+
+#[test]
+fn the_primary_worktree_is_never_removed() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+
+    let reason = refused(&remove(&mut core, &repo.path));
+
+    assert!(reason.contains("primary"), "{reason}");
+    assert!(repo.path.join("README").is_file());
+}
+
+#[test]
+fn a_worktree_with_a_session_on_it_is_not_removed() {
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("feat/login");
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+    core.start_session(&worktree, "Add a login form.");
+
+    let reason = refused(&remove(&mut core, &worktree));
+
+    assert!(reason.contains("Running"), "{reason}");
+    assert!(worktree.is_dir());
+}
