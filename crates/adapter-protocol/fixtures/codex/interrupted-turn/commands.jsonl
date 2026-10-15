@@ -1,3 +1,3 @@
 {"after_input":0,"command":{"type":"send_text","text":"Run the full test suite."},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
-{"after_input":8,"command":{"type":"interrupt"},"expect_responses":[{"method":"turn/interrupt","id":4,"params":{"threadId":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a03","turnId":"turn-1"}}]}
-{"after_input":11,"command":{"type":"interrupt"},"expect_responses":[]}
+{"after_input":9,"command":{"type":"interrupt"},"expect_responses":[{"method":"turn/interrupt","id":5,"params":{"threadId":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a03","turnId":"turn-1"}}]}
+{"after_input":12,"command":{"type":"interrupt"},"expect_responses":[]}

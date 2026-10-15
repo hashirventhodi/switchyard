@@ -1,0 +1,4 @@
+{"after_input":1,"message":{"method":"initialized"}}
+{"after_input":1,"message":{"method":"config/read","id":2,"params":{"includeLayers":false,"cwd":"/wt/acme/feat-billing"}}}
+{"after_input":2,"message":{"method":"thread/start","id":3,"params":{"cwd":"/wt/acme/feat-billing","approvalPolicy":"untrusted","approvalsReviewer":"user","sandbox":"workspace-write","config":{"mcp_servers.docs.command":"npx","mcp_servers.docs.args":["-y","@acme/docs-mcp"],"mcp_servers.search.url":"https://search.example.com/mcp"}}}}
+{"after_input":3,"message":{"method":"turn/start","id":4,"params":{"threadId":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a07","input":[{"type":"text","text":"Look up the billing docs.","text_elements":[]}]}}}

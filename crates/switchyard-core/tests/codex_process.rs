@@ -66,6 +66,8 @@ fn sent(log: &Path) -> Vec<serde_json::Value> {
 fn codex_app_server_runs_in_the_worktree_and_its_turn_reaches_the_transcript() {
     let fake = fake_codex();
     let repo = TempRepo::new("acme");
+    std::fs::write(repo.path.join(".mcp.json"), r#"{"mcpServers":{"docs":{"command":"npx","args":["-y","docs-mcp"]}}}"#)
+        .unwrap();
     let worktree = repo.add_worktree("feat/x");
     let mut core = Harness::launch_with(fake.launcher.clone());
     core.add_repository(&repo.path);
@@ -79,13 +81,16 @@ fn codex_app_server_runs_in_the_worktree_and_its_turn_reaches_the_transcript() {
     assert!(log.contains(&format!("cwd={}\n", worktree.canonicalize().unwrap().display())), "{log}");
     let sent = sent(&fake.log);
     let methods: Vec<&str> = sent.iter().filter_map(|m| m["method"].as_str()).collect();
-    assert_eq!(methods, vec!["initialize", "initialized", "thread/start", "turn/start"]);
-    let thread = &sent[2]["params"];
+    assert_eq!(methods, vec!["initialize", "initialized", "config/read", "thread/start", "turn/start"]);
+    let thread = &sent[3]["params"];
     assert_eq!(thread["cwd"], worktree.to_string_lossy().as_ref());
     assert_eq!(thread["approvalPolicy"], "untrusted");
     assert_eq!(thread["sandbox"], "workspace-write");
-    assert_eq!(sent[3]["params"]["threadId"], "thread-fake");
-    assert_eq!(sent[3]["params"]["input"][0]["text"], "hello");
+    // Codex's own MCP server is off for this thread; the repository's is defined.
+    assert_eq!(thread["config"]["mcp_servers.notion.enabled"], false);
+    assert_eq!(thread["config"]["mcp_servers.docs.command"], "npx");
+    assert_eq!(sent[4]["params"]["threadId"], "thread-fake");
+    assert_eq!(sent[4]["params"]["input"][0]["text"], "hello");
 }
 
 #[test]

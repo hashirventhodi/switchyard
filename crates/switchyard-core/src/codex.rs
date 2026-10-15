@@ -22,6 +22,7 @@ use adapter_protocol::Adapter;
 use codex_adapter::{CodexAdapter, Launch, McpRule};
 use serde_json::{Map, Value};
 
+use crate::mcp;
 use crate::agents::{protocol_mode, AgentHandle, AgentLauncher, AgentOutput, AgentSink, LaunchSpec};
 
 /// Lines of stderr kept for the transcript when the process exits.
@@ -36,11 +37,11 @@ pub struct CodexLauncher {
 }
 
 /// Per-spawn config overrides for Codex: config.toml dotted keys to JSON values, sent as
-/// `thread/start`'s (and `thread/resume`'s) `config`. Nothing yet; MCP servers passed per
-/// spawn (#25) belong here (`mcp_servers.<name>.command`, `.args`, `.env`, `.url`), and
-/// the MCP Grants in `spec` then apply to them as well as to the servers Codex has.
-pub fn spawn_config(_spec: &LaunchSpec) -> Map<String, Value> {
-    Map::new()
+/// `thread/start`'s (and `thread/resume`'s) `config`. Today: the repository's MCP servers
+/// ([`mcp::codex_config`]). Every other server Codex would load from its own config is
+/// switched off by the adapter, and the MCP Grants apply to these servers.
+pub fn spawn_config(spec: &LaunchSpec) -> Map<String, Value> {
+    mcp::codex_config(&spec.mcp_servers).into_iter().collect()
 }
 
 /// What the adapter is started with for `spec`.
@@ -57,6 +58,7 @@ pub fn launch_for(spec: &LaunchSpec) -> Launch {
         cwd: spec.cwd.to_string_lossy().into_owned(),
         permission_mode: protocol_mode(spec.permission_mode, spec.sandboxed),
         config: spawn_config(spec),
+        mcp_servers: spec.mcp_servers.iter().map(|s| s.name.clone()).collect(),
         mcp_rules,
     }
 }

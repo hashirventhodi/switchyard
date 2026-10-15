@@ -7,10 +7,11 @@
 //! A session runs as one Codex thread:
 //!
 //! 1. The host's first command (`send_text`, or `resume` after a relaunch) opens the
-//!    handshake: `initialize`; on its result, `initialized`, then (only when there are MCP
-//!    rules to translate) `config/read` for the worktree, then `thread/start` (or
-//!    `thread/resume` by thread id) with the worktree as `cwd` and the permission mode as
-//!    approval policy + sandbox ([`mode`]). Prompts sent meanwhile are queued.
+//!    handshake: `initialize`; on its result, `initialized` and `config/read` for the
+//!    worktree (to learn which MCP servers Codex would load on its own), then
+//!    `thread/start` (or `thread/resume` by thread id) with the worktree as `cwd`, the
+//!    permission mode as approval policy + sandbox ([`mode`]) and the config overrides
+//!    ([`thread_config`]). Prompts sent meanwhile are queued.
 //! 2. The thread's result is `session_init` (the thread id is the external session id; the
 //!    mode is read back from the policy Codex actually applied). Queued prompts become the
 //!    first `turn/start`.
@@ -25,8 +26,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use adapter_protocol::{
-    Adapter, AdapterError, AdapterManifest, CliInfo, Command, Event, PermissionMode, RequestDetail,
-    Verdict,
+    Adapter, AdapterError, AdapterManifest, CliInfo, Command, Event, McpServerState,
+    McpServerStatus, PermissionMode, RequestDetail, Verdict,
 };
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
@@ -53,12 +54,17 @@ pub struct Launch {
     /// The mode to ask Codex for (bypass only when the repository declares a sandbox).
     pub permission_mode: PermissionMode,
     /// Per-spawn config overrides, as config.toml dotted keys to JSON values, passed as the
-    /// thread's `config` (never written to Codex's own files). MCP servers Switchyard adds
-    /// for this spawn go here (`mcp_servers.<name>.command`, ...).
+    /// thread's `config` (never written to Codex's own files). The MCP servers Switchyard
+    /// gives this session are defined here (`mcp_servers.<name>.command`, ...).
     #[serde(default)]
     pub config: Map<String, Value>,
+    /// The names of the MCP servers `config` defines: the only ones the session may use.
+    /// Every other server Codex would load (from its own config files) is switched off for
+    /// this thread, as Claude Code's strict MCP mode does.
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
     /// The resolved Policy's MCP tool Grants and denials, translated into the thread's
-    /// config for every server Codex has ([`McpRule`]).
+    /// config for the servers in `mcp_servers` ([`McpRule`]).
     #[serde(default)]
     pub mcp_rules: Vec<McpRule>,
 }
@@ -139,6 +145,8 @@ pub struct CodexAdapter {
     started: BTreeSet<String>,
     /// Turns whose failure was already reported by an `error` notification.
     reported: BTreeSet<String>,
+    /// Each MCP server's last reported state.
+    mcp: BTreeMap<String, McpServerState>,
 }
 
 impl CodexAdapter {
@@ -159,7 +167,51 @@ impl CodexAdapter {
             file_changes: HashMap::new(),
             started: BTreeSet::new(),
             reported: BTreeSet::new(),
+            mcp: BTreeMap::new(),
         }
+    }
+
+    /// Every server Switchyard gave the session, at thread start: still connecting unless
+    /// Codex already said otherwise.
+    fn mcp_at_init(&mut self) -> Vec<McpServerStatus> {
+        let mut statuses = Vec::new();
+        for name in &self.launch.mcp_servers {
+            let state = *self
+                .mcp
+                .entry(name.clone())
+                .or_insert(McpServerState::Pending);
+            statuses.push(McpServerStatus {
+                name: name.clone(),
+                state,
+                error: None,
+            });
+        }
+        statuses
+    }
+
+    /// `mcpServer/startupStatus/updated`: one `mcp_status` when the state changed.
+    fn mcp_startup(&mut self, params: &Value) -> Vec<Event> {
+        let Some(name) = str_at(params, "/name") else {
+            return vec![];
+        };
+        let state = match str_at(params, "/status").as_deref() {
+            Some("starting") => McpServerState::Pending,
+            Some("ready") => McpServerState::Connected,
+            Some("failed") | Some("cancelled") => McpServerState::Failed,
+            _ => return vec![],
+        };
+        if self.mcp.insert(name.clone(), state) == Some(state) {
+            return vec![];
+        }
+        let error = str_at(params, "/error").or_else(|| str_at(params, "/failureReason"));
+        let error = if state == McpServerState::Failed {
+            error
+        } else {
+            None
+        };
+        vec![Event::McpStatus {
+            servers: vec![McpServerStatus { name, state, error }],
+        }]
     }
 
     fn request(&mut self, call: Call, method: &str, params: Value) -> String {
@@ -236,22 +288,16 @@ impl CodexAdapter {
                     .and_then(version_from_user_agent);
                 self.replies
                     .push(json!({ "method": "initialized" }).to_string());
-                if self.launch.mcp_rules.is_empty() {
-                    let config = self.launch.config.clone();
-                    let start = self.open_thread(config);
-                    self.replies.push(start);
-                } else {
-                    let read = self.request(
-                        Call::ConfigRead,
-                        "config/read",
-                        json!({ "includeLayers": false, "cwd": self.launch.cwd }),
-                    );
-                    self.replies.push(read);
-                }
+                let read = self.request(
+                    Call::ConfigRead,
+                    "config/read",
+                    json!({ "includeLayers": false, "cwd": self.launch.cwd }),
+                );
+                self.replies.push(read);
                 vec![]
             }
             Call::ConfigRead => {
-                // Without the effective config, configure only Switchyard's own servers.
+                // Without the effective config (an error), nothing is switched off.
                 let codex_servers: BTreeSet<String> = message
                     .pointer("/result/config/mcp_servers")
                     .and_then(Value::as_object)
@@ -293,6 +339,7 @@ impl CodexAdapter {
                         version,
                     },
                     model: str_at(result, "/model"),
+                    mcp_servers: self.mcp_at_init(),
                 };
                 if !self.queued.is_empty() {
                     let texts = std::mem::take(&mut self.queued);
@@ -367,6 +414,7 @@ impl CodexAdapter {
                     fatal: false,
                 }]
             }
+            "mcpServer/startupStatus/updated" => self.mcp_startup(params),
             "item/started" => self.item_started(params.get("item").unwrap_or(&Value::Null)),
             "item/completed" => self.item_completed(params.get("item").unwrap_or(&Value::Null)),
             "thread/tokenUsage/updated" => {
@@ -745,21 +793,19 @@ impl Adapter for CodexAdapter {
     }
 }
 
-/// The thread's config: the launch's own overrides plus the MCP rules for every server
-/// that exists, either in Codex's effective config or among the launch's own overrides.
-/// A rule for any other server is left out: configuring a server Codex does not have
-/// would leave it half-defined.
+/// The thread's config: the launch's own overrides (which define Switchyard's MCP servers
+/// for this session), every other server Codex would load on its own (`codex_servers`,
+/// from `config/read`) switched off, and the MCP rules for Switchyard's servers. Codex has
+/// no strict MCP mode; this is its per-thread equivalent, and nothing is written to its
+/// config files. A rule for a server the session does not have is left out: configuring
+/// a server that is not defined would leave it half-defined.
 pub fn thread_config(launch: &Launch, codex_servers: &BTreeSet<String>) -> Map<String, Value> {
-    let mut servers = codex_servers.clone();
-    for key in launch.config.keys() {
-        if let Some(server) = key
-            .strip_prefix("mcp_servers.")
-            .and_then(|rest| rest.split('.').next())
-        {
-            servers.insert(server.to_string());
-        }
-    }
+    let ours: BTreeSet<&str> = launch.mcp_servers.iter().map(String::as_str).collect();
+    let key = |server: &str, rest: &str| format!("mcp_servers.{}.{rest}", toml_key(server));
     let mut config: BTreeMap<String, Value> = launch.config.clone().into_iter().collect();
+    for server in codex_servers.iter().filter(|s| !ours.contains(s.as_str())) {
+        config.insert(key(server, "enabled"), json!(false));
+    }
     let mut disabled: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     let denied = |server: &str, tool: &str| {
         launch
@@ -769,37 +815,41 @@ pub fn thread_config(launch: &Launch, codex_servers: &BTreeSet<String>) -> Map<S
     };
     for rule in &launch.mcp_rules {
         let server = rule.server.as_str();
-        // Dotted keys cannot carry a name with a dot in it.
-        if !servers.contains(server) || server.contains('.') || rule.tool.contains('.') {
+        if !ours.contains(server) {
             continue;
         }
         match (rule.allow, rule.tool.as_str()) {
             (false, "*") => {
-                config.insert(format!("mcp_servers.{server}.enabled"), json!(false));
+                config.insert(key(server, "enabled"), json!(false));
             }
             (false, tool) => disabled.entry(server).or_default().push(json!(tool)),
             (true, _) if denied(server, &rule.tool) => {}
             (true, "*") => {
-                config.insert(
-                    format!("mcp_servers.{server}.default_tools_approval_mode"),
-                    json!("approve"),
-                );
+                config.insert(key(server, "default_tools_approval_mode"), json!("approve"));
             }
             (true, tool) => {
-                config.insert(
-                    format!("mcp_servers.{server}.tools.{tool}.approval_mode"),
-                    json!("approve"),
-                );
+                let field = format!("tools.{}.approval_mode", toml_key(tool));
+                config.insert(key(server, &field), json!("approve"));
             }
         }
     }
     for (server, tools) in disabled {
-        config.insert(
-            format!("mcp_servers.{server}.disabled_tools"),
-            Value::Array(tools),
-        );
+        config.insert(key(server, "disabled_tools"), Value::Array(tools));
     }
     config.into_iter().collect()
+}
+
+/// A config.toml key segment: bare when it can be, quoted otherwise.
+fn toml_key(segment: &str) -> String {
+    let bare = !segment.is_empty()
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if bare {
+        segment.to_string()
+    } else {
+        Value::String(segment.to_string()).to_string()
+    }
 }
 
 /// A tool call item as the protocol's tool name and input.

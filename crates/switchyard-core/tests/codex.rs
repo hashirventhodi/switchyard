@@ -60,6 +60,7 @@ fn thread_init(thread: &str, mode: adapter_protocol::PermissionMode, cli_mode: &
         cli_permission_mode: cli_mode.into(),
         cli: adapter_protocol::CliInfo { name: "codex".into(), version: "0.144.1".into() },
         model: Some("gpt-5.6-terra".into()),
+        mcp_servers: vec![],
     }
 }
 
@@ -271,4 +272,40 @@ fn every_recorded_codex_fixture_is_inside_this_builds_supported_range() {
         let codex = agents.into_iter().find(|a| a.agent == AgentKind::Codex).unwrap();
         assert_eq!(codex.state, AgentSetupState::Ready { version: version.clone() }, "{version} is outside the range");
     }
+}
+
+#[test]
+fn a_codex_session_is_given_the_repositorys_mcp_servers_and_reports_their_state() {
+    let repo = TempRepo::new("acme");
+    std::fs::write(
+        repo.path.join(".mcp.json"),
+        r#"{"mcpServers":{"docs":{"command":"npx","args":["-y","@acme/docs-mcp"]},"search":{"type":"http","url":"https://search.example.com/mcp"}}}"#,
+    )
+    .unwrap();
+    let worktree = repo.add_worktree("feat/docs");
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+    start(&mut core, &worktree, AgentKind::Codex, PermissionMode::AskFirst, "Look up the billing docs.");
+    let names: Vec<String> = core.agents.launches()[0].mcp_servers.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, vec!["docs".to_string(), "search".into()]);
+
+    let events = core.agent_replays(0, &recorded_events("codex/mcp-servers"));
+
+    let facts = events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::SessionFactsChanged { facts, .. } => Some(facts.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let states: Vec<(String, switchyard_schema::McpState, Option<String>)> =
+        facts.mcp_servers.into_iter().map(|f| (f.name, f.state, f.error)).collect();
+    assert_eq!(
+        states,
+        vec![
+            ("docs".into(), switchyard_schema::McpState::Connected, None),
+            ("search".into(), switchyard_schema::McpState::Failed, Some("HTTP 401 Unauthorized".into())),
+        ]
+    );
 }

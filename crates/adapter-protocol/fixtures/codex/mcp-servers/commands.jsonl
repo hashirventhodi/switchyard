@@ -1,0 +1,1 @@
+{"after_input":0,"command":{"type":"send_text","text":"Look up the billing docs."},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
