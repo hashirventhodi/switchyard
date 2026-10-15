@@ -44,6 +44,41 @@ pub enum Command {
         session_id: String,
         text: String,
     },
+    /// Open a shell terminal (a PTY running the user's shell) in a worktree, sized in cells.
+    OpenShell {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        cols: u16,
+        rows: u16,
+    },
+    /// Keystrokes (or pasted text) typed into a shell terminal.
+    WriteShell {
+        #[serde(rename = "shellId")]
+        #[ts(rename = "shellId")]
+        shell_id: String,
+        data: String,
+    },
+    /// The shell terminal's visible size changed.
+    ResizeShell {
+        #[serde(rename = "shellId")]
+        #[ts(rename = "shellId")]
+        shell_id: String,
+        cols: u16,
+        rows: u16,
+    },
+    /// Close one shell terminal, killing its shell.
+    CloseShell {
+        #[serde(rename = "shellId")]
+        #[ts(rename = "shellId")]
+        shell_id: String,
+    },
+    /// Close every shell terminal on a worktree (the worktree is going away).
+    CloseWorktreeShells {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// Create a worktree of a Repository on a new `branch` from its base branch, in the
     /// Switchyard worktree root (or the root the repository's policy names).
     CreateWorktree {
@@ -160,6 +195,35 @@ pub enum Event {
         index: u32,
         entry: Entry,
     },
+    /// Adapter-protocol event number `index` of a Session, exactly as the adapter sent it
+    /// (JSON). For the Agent log's debug view; replayed on attach.
+    AgentEventReceived {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        index: u32,
+        json: String,
+    },
+    /// A shell terminal exists (newly opened, or replayed on attach).
+    ShellOpened { shell: Shell },
+    /// Output from a shell terminal, as text (escape sequences included). On attach, a
+    /// shell's recent output is replayed as one of these after its [`Event::ShellOpened`].
+    ShellOutput {
+        #[serde(rename = "shellId")]
+        #[ts(rename = "shellId")]
+        shell_id: String,
+        data: String,
+    },
+    /// A shell terminal is gone: closed by the user, its worktree closed, or its shell exited
+    /// (`exit_code` is then the shell's, when known).
+    ShellClosed {
+        #[serde(rename = "shellId")]
+        #[ts(rename = "shellId")]
+        shell_id: String,
+        #[serde(rename = "exitCode")]
+        #[ts(rename = "exitCode")]
+        exit_code: Option<u32>,
+    },
     /// Whether each agent this build knows can start a Session: its CLI is installed, its
     /// version is inside the range this build was recorded against, and its adapter speaks
     /// this build's protocol. Sent on attach and after [`Command::CheckAgents`]; replaces
@@ -194,6 +258,16 @@ pub struct WorktreeFacts {
     pub behind: u32,
     /// Uncommitted files: modified, staged, deleted or untracked.
     pub dirty: u32,
+}
+
+/// A shell terminal in the dock: a PTY running the user's shell in a worktree. Shells
+/// belong to the worktree, never to a Session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Shell {
+    pub id: String,
+    pub worktree_path: String,
 }
 
 /// One agent's readiness, as detected on this machine.

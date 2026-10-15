@@ -162,6 +162,7 @@ test("the palette finds worktrees by branch and shows actions with their keys", 
   });
   expect(within(palette).getAllByRole("option").map((o) => o.textContent)).toEqual([
     expect.stringContaining("acme/feat/login-form"),
+    expect.stringContaining("Shell in acme/feat/login-form"),
   ]);
 });
 
