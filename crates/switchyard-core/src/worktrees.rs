@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use switchyard_schema::{AgentKind, Event, PermissionMode, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
-use crate::{git, repo_policy, sessions, Inner};
+use crate::{git, repo_policy, sessions, shells, Inner};
 
 /// Create a worktree on a new `branch` from the repository's base; announce it and its
 /// facts. Returns it, or refuses `command` with the reason.
@@ -97,8 +97,7 @@ pub(crate) fn start_session_on_new(
 }
 
 /// Remove a worktree that is not primary, has no session and no uncommitted files. The
-/// branch stays. Shells on the worktree close with it (once the dock owns shells, close
-/// them here, after git succeeds).
+/// branch stays. Shells on the worktree close with it, once git has removed it.
 pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     const COMMAND: &str = "removeWorktree";
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
@@ -121,6 +120,7 @@ pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     if let Err(git::GitError(e)) = git::remove_worktree(Path::new(&repo.path), &worktree.path) {
         return inner.refuse(COMMAND, format!("Could not remove {name}: {e}"));
     }
+    shells::close_worktree(inner, worktree_path);
     inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
 }
 

@@ -8,13 +8,16 @@ use std::sync::{Arc, Mutex, Weak};
 use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
 use serde_json::Value;
 use switchyard_schema::{
-    AgentKind, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, ToolState,
+    AgentKind, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, ToolState, Verdict,
 };
 
 use crate::spend::{PriceTable, Usage};
 use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::Inner;
+
+mod requests;
+pub(crate) use requests::answer as answer_request;
 
 #[derive(Default)]
 pub(crate) struct Sessions {
@@ -28,6 +31,10 @@ struct SessionState {
     transcript: Vec<Entry>,
     /// Transcript index of each tool call, by call id.
     tool_calls: HashMap<String, usize>,
+    /// Every protocol event the agent sent, as JSON, for the Agent log's debug view.
+    raw_events: Vec<String>,
+    /// Transcript index of each Permission request, by request id.
+    requests: HashMap<String, usize>,
     /// Every token_usage report, oldest first. Each holds running totals.
     usage: Vec<Usage>,
     agent: Box<dyn AgentHandle>,
@@ -43,8 +50,10 @@ enum Cause {
     AgentFailed,
     /// The user pressed Stop / Esc.
     UserStop,
-    /// The user sent a prompt (or answered a request).
+    /// The user sent a prompt.
     UserMessage,
+    /// The user answered the last pending Permission request.
+    RequestAnswered,
 }
 
 /// The state machine. Returns the new status, or `None` when `cause` does not move a
@@ -71,6 +80,7 @@ fn transition(from: SessionStatus, cause: &Cause) -> Option<SessionStatus> {
         (Running | Waiting, Cause::AgentFailed) => Some(Failed),
         (Running | Waiting, Cause::UserStop) => Some(Idle),
         (Waiting | Failed | Done, Cause::UserMessage) => Some(Running),
+        (Waiting, Cause::RequestAnswered) => Some(Running),
         _ => None,
     }
 }
@@ -138,6 +148,8 @@ pub(crate) fn start(
         facts: SessionFacts::default(),
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
+        raw_events: Vec::new(),
+        requests: HashMap::new(),
         usage: Vec::new(),
         agent: handle,
     });
@@ -156,8 +168,12 @@ pub(crate) fn stop(inner: &mut Inner, id: &str) {
         return inner.refuse(COMMAND, "The session is not running".into());
     };
     let entry = append(state, Entry::System { text: "Stopped by you.".into() });
+    let cancelled = requests::cancel_all(state);
     inner.emit(status);
     inner.emit(entry);
+    for event in cancelled {
+        inner.emit(event);
+    }
     // Interrupting ends the CLI's turn; it never touches the worktree's files.
     send_to_agent(inner, id, AgentCommand::Interrupt);
 }
@@ -167,6 +183,13 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };
+    // While the agent asks something, what the user types is the answer to its question.
+    if let Some(question) = requests::pending_question(state) {
+        return requests::resolve(inner, id, &question, Verdict::Answer { text: text.into() });
+    }
+    if requests::has_pending(state) {
+        return inner.refuse(COMMAND, "Answer the agent's request first: Run once or Skip".into());
+    }
     let Some(status) = change_status(state, &Cause::UserMessage) else {
         let reason = match state.session.status {
             SessionStatus::Running => "The agent is still working; wait for it or stop it first",
@@ -198,6 +221,9 @@ pub(crate) fn replay(inner: &Inner) {
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
         }
+        for (index, json) in state.raw_events.iter().enumerate() {
+            inner.emit(Event::AgentEventReceived { session_id: id.clone(), index: index as u32, json: json.clone() });
+        }
     }
 }
 
@@ -210,10 +236,20 @@ fn sink(core: Weak<Mutex<Inner>>, session_id: String) -> AgentSink {
     })
 }
 
+fn find<'a>(inner: &'a mut Inner, id: &str) -> Option<&'a mut SessionState> {
+    inner.sessions.list.iter_mut().find(|s| s.session.id == id)
+}
+
 fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
+    if let AgentOutput::Event(AgentEvent::PermissionRequest { request_id, request, reason }) = output {
+        return requests::arrived(inner, id, request_id, request, reason);
+    }
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else { return };
     let mut out = Vec::new();
     let mut cause = None;
+    if let AgentOutput::Event(event) = &output {
+        out.push(record_raw(state, event));
+    }
     let mut failure = None;
     match output {
         AgentOutput::Event(event) => match event {
@@ -242,7 +278,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     });
                 }
             }
-            AgentEvent::PermissionRequest { .. } => cause = Some(Cause::NeedsUser),
+            AgentEvent::PermissionRequest { .. } => {} // handled above, by requests::arrived
             AgentEvent::TurnComplete => {
                 state.facts.turns += 1;
                 out.push(facts(state));
@@ -300,6 +336,13 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     if let Some((class, detail)) = failure {
         compat::record(inner, agent, class, cli_version.as_deref(), &detail);
     }
+}
+
+fn record_raw(state: &mut SessionState, event: &AgentEvent) -> Event {
+    let json = serde_json::to_string(event).unwrap_or_else(|e| format!("{{\"unserialisable\":\"{e}\"}}"));
+    let index = state.raw_events.len() as u32;
+    state.raw_events.push(json.clone());
+    Event::AgentEventReceived { session_id: state.session.id.clone(), index, json }
 }
 
 fn change_status(state: &mut SessionState, cause: &Cause) -> Option<Event> {

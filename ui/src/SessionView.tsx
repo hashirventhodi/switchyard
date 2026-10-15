@@ -1,15 +1,17 @@
 // The Session view: header with status and Stop, the summary strip, the virtualised
 // transcript and the composer.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
+import { RequestCard } from "./RequestCard";
 import { ReviewPane } from "./ReviewPane";
 import type { ChangedFile } from "./schema/ChangedFile";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
+import type { Verdict } from "./schema/Verdict";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
-import type { SessionView as Session } from "./state";
+import type { PendingRequest, SessionView as Session } from "./state";
 import { sessionCost } from "./spend";
 import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, Status } from "./status";
 import { VirtualList } from "./VirtualList";
@@ -17,6 +19,10 @@ import { VirtualList } from "./VirtualList";
 export interface SessionViewProps {
   session: Session;
   send: (command: Command) => void;
+  /** Its pending Permission requests, in transcript order. */
+  pending: PendingRequest[];
+  /** Changes when the view should scroll to the first pending request (⌘J, inbox). */
+  revealRequest?: number;
   /** The worktree's uncommitted changes, once the core has read them. */
   changes?: ChangedFile[];
   facts?: WorktreeFacts;
@@ -26,7 +32,8 @@ export interface SessionViewProps {
 }
 
 export function SessionView(props: SessionViewProps) {
-  const { session, send, changes, facts, reviewHidden = false, onToggleReview } = props;
+  const { session, send, pending, revealRequest, changes, facts, reviewHidden = false, onToggleReview } = props;
+  const composer = useRef<HTMLTextAreaElement>(null);
   const active = session.status === "running" || session.status === "waiting";
   const stop = () => send({ type: "stopSession", sessionId: session.id });
   // Esc's last layer: interrupt the agent of the session on screen.
@@ -81,8 +88,13 @@ export function SessionView(props: SessionViewProps) {
       <div className={workbench}>
         <div className="pane agent-pane">
           <SummaryStrip session={session} />
-          <Transcript session={session} />
-          <Composer session={session} send={send} draft={draft} />
+          <Transcript
+            session={session}
+            answer={(requestId, verdict) => send({ type: "answerRequest", sessionId: session.id, requestId, verdict })}
+            answerInChat={() => composer.current?.focus()}
+            reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
+          />
+          <Composer session={session} send={send} pending={pending} input={composer} draft={draft} />
         </div>
         {!reviewHidden && (
           <ReviewPane
@@ -144,9 +156,15 @@ function Elapsed({ since }: { since: number }) {
   return <>{h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`}</>;
 }
 
-const ESTIMATE: Record<Entry["type"], number> = { user: 64, agent: 64, tool: 26, system: 26 };
+const ESTIMATE: Record<Entry["type"], number> = { user: 64, agent: 64, tool: 26, system: 26, request: 130 };
 
-function Transcript({ session }: { session: Session }) {
+function Transcript(props: {
+  session: Session;
+  answer: (requestId: string, verdict: Verdict) => void;
+  answerInChat: () => void;
+  reveal?: { index: number; seq: number };
+}) {
+  const { session, answer, answerInChat, reveal } = props;
   // Expanded/collapsed tool rows the user toggled, by transcript index.
   const [toggled, setToggled] = useState<Set<number>>(() => new Set());
   const { transcript } = session;
@@ -163,10 +181,13 @@ function Transcript({ session }: { session: Session }) {
       count={transcript.length}
       version={transcript}
       estimate={estimate}
+      reveal={reveal}
       renderRow={(i) => (
         <EntryRow
           entry={at(transcript, i)!}
           agent={AGENT_SHORT[session.agent]}
+          answer={answer}
+          answerInChat={answerInChat}
           toggled={toggled.has(i)}
           onToggle={() =>
             setToggled((t) => {
@@ -187,9 +208,20 @@ function isOpen(entry: Entry & { type: "tool" }, toggled: boolean): boolean {
   return toggled ? !byDefault : byDefault;
 }
 
-function EntryRow(props: { entry: Entry; agent: string; toggled: boolean; onToggle: () => void }) {
-  const { entry, agent, toggled, onToggle } = props;
+function EntryRow(props: {
+  entry: Entry;
+  agent: string;
+  answer: (requestId: string, verdict: Verdict) => void;
+  answerInChat: () => void;
+  toggled: boolean;
+  onToggle: () => void;
+}) {
+  const { entry, agent, answer, answerInChat, toggled, onToggle } = props;
   switch (entry.type) {
+    case "request":
+      return (
+        <RequestCard entry={entry} answer={(verdict) => answer(entry.requestId, verdict)} answerInChat={answerInChat} />
+      );
     case "user":
     case "agent":
       return (
@@ -222,23 +254,35 @@ function EntryRow(props: { entry: Entry; agent: string; toggled: boolean; onTogg
   }
 }
 
-function Composer(props: { session: Session; send: (command: Command) => void; draft: { text: string; seq: number } }) {
-  const { session, send, draft } = props;
+function Composer(props: {
+  session: Session;
+  send: (command: Command) => void;
+  pending: PendingRequest[];
+  input: RefObject<HTMLTextAreaElement>;
+  /** Text something else (Ask agent in review) drafted for the user to finish and send. */
+  draft: { text: string; seq: number };
+}) {
+  const { session, send, pending, input, draft } = props;
   const [text, setText] = useState("");
-  const ref = useRef<HTMLTextAreaElement>(null);
-  // Something else (Ask agent in review) drafted a message: put it here for the user to send.
   useEffect(() => {
     if (draft.seq === 0) return;
     setText(draft.text);
-    ref.current?.focus();
-  }, [draft]);
-  const ready = session.status === "waiting" || session.status === "done" || session.status === "failed";
+    input.current?.focus();
+  }, [draft, input]);
+  // A pending question is answered from here; any other pending request is answered on its card.
+  const question = pending.some((r) => r.request.type === "question");
+  const blocked = pending.length > 0 && !question;
+  const ready = !blocked && (session.status === "waiting" || session.status === "done" || session.status === "failed");
   const submit = () => {
     if (!ready || !text.trim()) return;
     send({ type: "sendPrompt", sessionId: session.id, text });
     setText("");
   };
-  const placeholder = ready
+  const placeholder = blocked
+    ? "Answer the request above first."
+    : question
+      ? "Answer the agent's question…"
+      : ready
     ? "Reply to the agent…"
     : session.status === "running"
       ? "The agent is working…"
@@ -246,7 +290,7 @@ function Composer(props: { session: Session; send: (command: Command) => void; d
   return (
     <div className="composer">
       <textarea
-        ref={ref}
+        ref={input}
         aria-label="Message the agent"
         rows={2}
         value={text}

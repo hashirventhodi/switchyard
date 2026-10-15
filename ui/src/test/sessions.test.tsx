@@ -38,7 +38,8 @@ function launch(...events: Event[]) {
 }
 
 const status = (s: SessionStatus): Event => ({ type: "sessionStatusChanged", sessionId: "session-1", status: s });
-const openSession = () => fireEvent.click(screen.getByRole("button", { name: /fix\/readme/ }));
+const openSession = () =>
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByRole("button", { name: /fix\/readme/ }));
 
 test("New session can start Claude Code on an existing free worktree in Ask first with the prompt", () => {
   const { sent, emit } = launch();
@@ -165,7 +166,7 @@ test("the summary strip shows agent, model, CLI version, path, mode, turns, cost
     vi.useRealTimers();
   });
   launch(
-    { type: "sessionStarted", session },
+    { type: "sessionStarted", session : { ...session, startedAtMs: Date.now() - 65_000 } },
     {
       type: "sessionFactsChanged",
       sessionId: "session-1",

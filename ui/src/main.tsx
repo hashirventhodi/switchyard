@@ -7,6 +7,7 @@ import "./frame.css";
 import "./session.css";
 import "./worktrees.css";
 import "./review.css";
+import "./relay.css";
 
 async function pickFolder(): Promise<string | null> {
   if (!insideTauri()) return window.prompt("Repository path") || null;
