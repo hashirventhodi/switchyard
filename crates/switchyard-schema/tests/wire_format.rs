@@ -104,3 +104,26 @@ fn spend_records_keep_reported_and_estimated_cost_apart() {
         })
     );
 }
+
+#[test]
+fn worktree_lifecycle_commands_and_events_use_camel_case() {
+    use switchyard_schema::WorktreeFacts;
+    let command: Command =
+        serde_json::from_value(json!({"type": "createWorktree", "repositoryId": "repo-1", "branch": "feat/x"}))
+            .unwrap();
+    assert_eq!(command, Command::CreateWorktree { repository_id: "repo-1".into(), branch: "feat/x".into() });
+    let command: Command =
+        serde_json::from_value(json!({"type": "removeWorktree", "worktreePath": "/wt/x"})).unwrap();
+    assert_eq!(command, Command::RemoveWorktree { worktree_path: "/wt/x".into() });
+    let refresh: Command = serde_json::from_value(json!({"type": "refreshWorktrees"})).unwrap();
+    assert_eq!(refresh, Command::RefreshWorktrees);
+
+    let event = Event::WorktreeFactsChanged {
+        worktree_path: "/wt/x".into(),
+        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3 },
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3}})
+    );
+}

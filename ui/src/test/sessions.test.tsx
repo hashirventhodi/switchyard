@@ -40,11 +40,12 @@ function launch(...events: Event[]) {
 const status = (s: SessionStatus): Event => ({ type: "sessionStatusChanged", sessionId: "session-1", status: s });
 const openSession = () => fireEvent.click(screen.getByRole("button", { name: /fix\/readme/ }));
 
-test("New session starts Claude Code on a free worktree in Ask first with the prompt", () => {
+test("New session can start Claude Code on an existing free worktree in Ask first with the prompt", () => {
   const { sent, emit } = launch();
 
   fireEvent.click(screen.getByRole("button", { name: "New session" }));
   const dialog = screen.getByRole("dialog", { name: "New session" });
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Use existing/ }));
   const worktree = within(dialog).getByLabelText("Worktree") as HTMLSelectElement;
   const options = [...worktree.options].map((o) => [o.textContent, o.disabled]);
   expect(options).toEqual([
@@ -76,6 +77,7 @@ test("a worktree occupied by a session is not offered for a new one", () => {
   launch({ type: "sessionStarted", session });
 
   fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  fireEvent.click(screen.getByRole("radio", { name: /Use existing/ }));
 
   const worktree = screen.getByLabelText("Worktree") as HTMLSelectElement;
   const fix = [...worktree.options].find((o) => o.value === "/wt/acme/fix")!;

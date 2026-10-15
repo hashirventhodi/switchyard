@@ -50,9 +50,14 @@ impl Harness {
         let data_dir = TempDir::new().unwrap();
         let (tx, events) = channel();
         let probe = FakeProbe::default();
-        let runtime = Runtime { agents: launcher, now_ms: || NOW_MS, probe: Arc::new(probe.clone()) };
+        let runtime = Runtime { agents: launcher, now_ms: || NOW_MS, probe: Arc::new(probe.clone()), worktree_root: worktree_root_in(&data_dir) };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         Harness { core, events, data_dir, agents: FakeAgents::default(), probe }
+    }
+
+    /// The Switchyard worktree root this core creates worktrees under (canonical path).
+    pub fn worktree_root(&self) -> PathBuf {
+        worktree_root_in(&self.data_dir)
     }
 
     /// Collect events until `done` holds for the collected list (or panic after 20 s).
@@ -72,7 +77,7 @@ impl Harness {
     fn launch_in(data_dir: TempDir, agents: FakeAgents) -> Self {
         let (tx, events) = channel();
         let probe = FakeProbe::default();
-        let runtime = Runtime { agents: Arc::new(agents.clone()), now_ms: || NOW_MS, probe: Arc::new(probe.clone()) };
+        let runtime = Runtime { agents: Arc::new(agents.clone()), now_ms: || NOW_MS, probe: Arc::new(probe.clone()), worktree_root: worktree_root_in(&data_dir) };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         Harness { core, events, data_dir, agents, probe }
     }
@@ -148,6 +153,13 @@ impl Harness {
     pub fn agent_replays(&mut self, agent: usize, events: &[AgentEvent]) -> Vec<Event> {
         events.iter().flat_map(|e| self.agent_says(agent, e.clone())).collect()
     }
+}
+
+/// The worktree root inside a harness data directory: outside every `TempRepo`.
+fn worktree_root_in(data_dir: &TempDir) -> PathBuf {
+    let root = data_dir.path().join("worktrees");
+    std::fs::create_dir_all(&root).unwrap();
+    root.canonicalize().unwrap()
 }
 
 /// Fake agent transport: records launches and commands; events are delivered by the test.
