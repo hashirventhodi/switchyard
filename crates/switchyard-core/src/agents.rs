@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use adapter_protocol::PermissionMode as ProtocolMode;
 use switchyard_schema::{AgentKind, PermissionMode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,13 +15,40 @@ pub struct LaunchSpec {
     pub agent: AgentKind,
     /// The worktree the agent runs in.
     pub cwd: PathBuf,
-    /// The mode the user asked for; the launcher maps it onto the CLI's own.
+    /// The mode the user asked for; the launcher maps it onto the CLI's own
+    /// ([`protocol_mode`]).
     pub permission_mode: PermissionMode,
+    /// The repository's policy declares a sandbox: Full auto runs as the CLI's
+    /// bypass-everything mode, and only then.
+    pub sandboxed: bool,
     /// The resolved Grants, translated into the CLI's own allow rules (Claude Code
     /// `--allowedTools`), so it stops asking for what is already granted.
     pub allowed_tools: Vec<String>,
     /// The resolved denials, as the CLI's deny rules (`--disallowedTools`).
     pub disallowed_tools: Vec<String>,
+}
+
+/// The protocol mode a launcher asks its CLI for: Full auto bypasses every check only in
+/// a repository whose policy declares a sandbox.
+pub fn protocol_mode(mode: PermissionMode, sandboxed: bool) -> ProtocolMode {
+    match mode {
+        PermissionMode::Explore => ProtocolMode::Explore,
+        PermissionMode::AskFirst => ProtocolMode::AskFirst,
+        PermissionMode::AutoEdit => ProtocolMode::AutoEdit,
+        PermissionMode::FullAuto if sandboxed => ProtocolMode::Bypass,
+        PermissionMode::FullAuto => ProtocolMode::FullAuto,
+    }
+}
+
+/// A protocol mode as the user reads it.
+pub fn mode_label(mode: ProtocolMode) -> &'static str {
+    match mode {
+        ProtocolMode::Explore => "Explore",
+        ProtocolMode::AskFirst => "Ask first",
+        ProtocolMode::AutoEdit => "Auto edit",
+        ProtocolMode::FullAuto => "Full auto",
+        ProtocolMode::Bypass => "Full auto (sandbox bypass)",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

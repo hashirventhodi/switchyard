@@ -8,4 +8,14 @@ cliPermissionMode: string | null,
 /**
  * Completed turns.
  */
-turns: number, };
+turns: number, 
+/**
+ * Set when the CLI started in another Permission mode than the one asked for (for
+ * example Full auto unavailable, so the CLI fell back to Ask first): shown on the
+ * summary strip and the session card.
+ */
+modeWarning: string | null, 
+/**
+ * Actions the CLI's own classifier refused in Full auto ("3 denied by classifier").
+ */
+classifierDenials: number, };

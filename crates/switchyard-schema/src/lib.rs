@@ -547,6 +547,14 @@ pub struct SessionFacts {
     pub cli_permission_mode: Option<String>,
     /// Completed turns.
     pub turns: u32,
+    /// Set when the CLI started in another Permission mode than the one asked for (for
+    /// example Full auto unavailable, so the CLI fell back to Ask first): shown on the
+    /// summary strip and the session card.
+    #[serde(default)]
+    pub mode_warning: Option<String>,
+    /// Actions the CLI's own classifier refused in Full auto ("3 denied by classifier").
+    #[serde(default)]
+    pub classifier_denials: u32,
 }
 
 /// A Session's running spend. Cost is either reported by the CLI or, for a CLI that

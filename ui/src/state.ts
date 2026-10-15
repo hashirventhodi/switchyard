@@ -90,7 +90,14 @@ export const initialState: State = {
   policies: {},
 };
 
-const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
+const noFacts: SessionFacts = {
+  model: null,
+  cliVersion: null,
+  cliPermissionMode: null,
+  turns: 0,
+  modeWarning: null,
+  classifierDenials: 0,
+};
 
 let toastSeq = 0;
 

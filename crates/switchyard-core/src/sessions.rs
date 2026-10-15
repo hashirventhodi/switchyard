@@ -5,14 +5,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
+use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode};
 use serde_json::Value;
 use switchyard_schema::{
     AgentKind, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, ToolState, Verdict,
 };
 
 use crate::spend::{PriceTable, Usage};
-use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
+use crate::agents::{self, AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::policy;
 use crate::Inner;
@@ -38,6 +38,8 @@ struct SessionState {
     requests: HashMap<String, usize>,
     /// Every token_usage report, oldest first. Each holds running totals.
     usage: Vec<Usage>,
+    /// The mode the CLI was asked to run in, in protocol terms (bypass in a sandbox).
+    expected_mode: ProtocolMode,
     agent: Box<dyn AgentHandle>,
 }
 
@@ -129,7 +131,10 @@ pub(crate) fn start(
     let id = format!("session-{}", inner.sessions.next_id + 1);
     // Grants reach the CLI as flags; the CLI's own settings files are never written.
     let (allowed_tools, disallowed_tools) = policy::cli_rules(agent, &policy::resolve(inner, &repo));
-    let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, allowed_tools, disallowed_tools };
+    let sandboxed = policy::sandboxed(&repo);
+    let expected_mode = agents::protocol_mode(permission_mode, sandboxed);
+    let spec =
+        LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode, sandboxed, allowed_tools, disallowed_tools };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
         Err(reason) => {
@@ -157,6 +162,7 @@ pub(crate) fn start(
         raw_events: Vec::new(),
         requests: HashMap::new(),
         usage: Vec::new(),
+        expected_mode,
         agent: handle,
     });
     let state = inner.sessions.list.last_mut().expect("just pushed");
@@ -272,7 +278,15 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
-            AgentEvent::SessionInit { cli_permission_mode, cli, model, .. } => {
+            AgentEvent::SessionInit { permission_mode, cli_permission_mode, cli, model, .. } => {
+                state.facts.mode_warning = (permission_mode != state.expected_mode).then(|| {
+                    format!(
+                        "Asked for {}, but {} started in {} ({cli_permission_mode})",
+                        agents::mode_label(state.expected_mode),
+                        agent_name(state.session.agent),
+                        agents::mode_label(permission_mode),
+                    )
+                });
                 state.facts.model = model;
                 state.facts.cli_version = Some(cli.version);
                 state.facts.cli_permission_mode = Some(cli_permission_mode);
@@ -322,8 +336,12 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 let table = PriceTable::read(&inner.data_dir);
                 out.push(spend_event(state, &usage, &table));
             }
-            AgentEvent::ClassifierDenial { tool, detail, .. } => {
-                out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}") }))
+            AgentEvent::ClassifierDenial { tool, detail, reason } => {
+                // Counted and noted; never a Permission request, so the status never moves.
+                state.facts.classifier_denials += 1;
+                let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
+                out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}{why}") }));
+                out.push(facts(state));
             }
         },
         AgentOutput::Unreadable { line } => {

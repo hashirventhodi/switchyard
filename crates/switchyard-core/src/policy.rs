@@ -220,6 +220,11 @@ pub(crate) fn admit_mode(repo: &StoredRepository, mode: PermissionMode) -> Resul
     }
 }
 
+/// Whether the repository's policy declares a sandbox (a broken file declares nothing).
+pub(crate) fn sandboxed(repo: &StoredRepository) -> bool {
+    repo_policy::load(Path::new(&repo.path)).is_ok_and(|file| file.permissions.sandbox)
+}
+
 fn mode_label(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Explore => "Explore",

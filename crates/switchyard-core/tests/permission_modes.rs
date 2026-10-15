@@ -152,3 +152,81 @@ fn an_explicit_grant_for_push_answers_push_in_ask_first() {
         Some(&AgentCommand::AnswerRequest { request_id: "req-1".into(), verdict: AgentVerdict::AllowOnce })
     );
 }
+
+fn init(mode: AgentMode, cli_mode: &str) -> AgentEvent {
+    AgentEvent::SessionInit {
+        external_session_id: "ext-1".into(),
+        permission_mode: mode,
+        cli_permission_mode: cli_mode.into(),
+        cli: CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
+        model: Some("claude-opus-5-5".into()),
+    }
+}
+
+#[test]
+fn init_in_another_mode_than_requested_warns_on_the_facts() {
+    let mut s = setup(None);
+    start(&mut s, PermissionMode::FullAuto);
+    let events = s.core.agent_says(0, init(AgentMode::AskFirst, "default"));
+    assert_eq!(
+        last_facts(&events).mode_warning.as_deref(),
+        Some("Asked for Full auto, but Claude Code started in Ask first (default)")
+    );
+    assert_eq!(status_changes(&events), vec![]);
+}
+
+#[test]
+fn init_in_the_requested_mode_has_no_warning() {
+    let mut s = setup(None);
+    start(&mut s, PermissionMode::AutoEdit);
+    let events = s.core.agent_says(0, init(AgentMode::AutoEdit, "acceptEdits"));
+    assert_eq!(last_facts(&events).mode_warning, None);
+    assert_eq!(last_facts(&events).cli_permission_mode.as_deref(), Some("acceptEdits"));
+}
+
+#[test]
+fn classifier_denials_are_counted_and_noted_but_never_need_you() {
+    let mut s = setup(None);
+    start(&mut s, PermissionMode::FullAuto);
+    s.core.agent_says(0, init(AgentMode::FullAuto, "auto"));
+    let denial = || AgentEvent::ClassifierDenial {
+        tool: "Bash".into(),
+        detail: "rm -rf /tmp/elsewhere".into(),
+        reason: Some("destructive outside the worktree".into()),
+    };
+    s.core.agent_says(0, denial());
+    let events = s.core.agent_says(0, denial());
+    assert_eq!(last_facts(&events).classifier_denials, 2);
+    assert_eq!(
+        system_lines(&events),
+        vec!["Denied by the classifier: Bash rm -rf /tmp/elsewhere (destructive outside the worktree)".to_string()]
+    );
+    assert_eq!(cards(&events), vec![]);
+    assert_eq!(status_changes(&events), vec![], "never Needs you");
+}
+
+#[test]
+fn full_auto_bypasses_only_where_the_policy_declares_a_sandbox() {
+    let mut s = setup(Some("permissions:\n  sandbox: true\n"));
+    start(&mut s, PermissionMode::FullAuto);
+    let launch = s.core.agents.launches().remove(0);
+    assert!(launch.sandboxed);
+    assert_eq!(switchyard_core::agents::protocol_mode(launch.permission_mode, launch.sandboxed), AgentMode::Bypass);
+    let events = s.core.agent_says(0, init(AgentMode::Bypass, "bypassPermissions"));
+    assert_eq!(last_facts(&events).mode_warning, None);
+
+    let mut s = setup(None);
+    start(&mut s, PermissionMode::FullAuto);
+    let launch = s.core.agents.launches().remove(0);
+    assert!(!launch.sandboxed);
+    assert_eq!(switchyard_core::agents::protocol_mode(launch.permission_mode, launch.sandboxed), AgentMode::FullAuto);
+}
+
+#[test]
+fn every_mode_maps_to_its_protocol_mode() {
+    use switchyard_core::agents::protocol_mode;
+    assert_eq!(protocol_mode(PermissionMode::Explore, true), AgentMode::Explore);
+    assert_eq!(protocol_mode(PermissionMode::AskFirst, true), AgentMode::AskFirst);
+    assert_eq!(protocol_mode(PermissionMode::AutoEdit, true), AgentMode::AutoEdit);
+    assert_eq!(protocol_mode(PermissionMode::FullAuto, false), AgentMode::FullAuto);
+}

@@ -16,9 +16,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use adapter_protocol::PermissionMode as ProtocolMode;
 use serde_json::json;
-use switchyard_schema::PermissionMode;
 
 use crate::agents::{AgentHandle, AgentLauncher, AgentOutput, AgentSink, LaunchSpec};
 
@@ -38,7 +36,7 @@ impl AgentLauncher for SidecarLauncher {
     fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String> {
         let config = json!({
             "cwd": spec.cwd,
-            "permission_mode": protocol_mode(spec.permission_mode),
+            "permission_mode": crate::agents::protocol_mode(spec.permission_mode, spec.sandboxed),
             "claude_path": self.claude,
             "allowed_tools": spec.allowed_tools,
             "disallowed_tools": spec.disallowed_tools,
@@ -124,11 +122,3 @@ impl Drop for SidecarHandle {
     }
 }
 
-fn protocol_mode(mode: PermissionMode) -> ProtocolMode {
-    match mode {
-        PermissionMode::Explore => ProtocolMode::Explore,
-        PermissionMode::AskFirst => ProtocolMode::AskFirst,
-        PermissionMode::AutoEdit => ProtocolMode::AutoEdit,
-        PermissionMode::FullAuto => ProtocolMode::FullAuto,
-    }
-}
