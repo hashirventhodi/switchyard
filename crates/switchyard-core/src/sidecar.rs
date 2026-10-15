@@ -4,7 +4,9 @@
 //! the Agent SDK) is the first; see `sidecar/README.md`.
 //!
 //! The sidecar is started as `<node> <script> --config <json>` in the worktree, where the
-//! config is `{"cwd", "permission_mode" (protocol vocabulary), "claude_path" (or null)}`.
+//! config is `{"cwd", "permission_mode" (protocol vocabulary), "claude_path" (or null),
+//! "allowed_tools", "disallowed_tools" (Claude Code permission rules from the resolved
+//! Policy)}`.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -38,6 +40,8 @@ impl AgentLauncher for SidecarLauncher {
             "cwd": spec.cwd,
             "permission_mode": protocol_mode(spec.permission_mode),
             "claude_path": self.claude,
+            "allowed_tools": spec.allowed_tools,
+            "disallowed_tools": spec.disallowed_tools,
         });
         let mut child = Command::new(&self.node)
             .arg(&self.script)

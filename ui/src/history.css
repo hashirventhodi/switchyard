@@ -25,6 +25,18 @@
 .ctx .kv .v.warn{color:var(--warn)}
 .ctx .kv .v button{font-size:11px;color:var(--accent);margin-left:4px}
 
+/* Context: Policy and Grants (#6). */
+.ctx.grants .empty{padding:4px 12px;margin:0;color:var(--fg-2)}
+.ctx .policy-error{margin:4px 12px;padding:6px 8px;border:1px solid var(--bad);border-radius:4px;color:var(--bad);font-size:11.5px;overflow-wrap:anywhere}
+.grant-list{list-style:none;margin:0;padding:0}
+.grant{display:grid;grid-template-columns:40px minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:4px 12px}
+.grant:hover{background:var(--bg-2)}
+.grant .eff{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-2)}
+.grant.deny .eff{color:var(--bad)}
+.grant code{font-family:var(--font-mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.grant .layer{font-size:11px;color:var(--fg-2);white-space:nowrap}
+.grant button{font-size:11px;color:var(--accent)}
+
 /* ↓N behind base: sidebar row, session header. */
 .behind-n{color:var(--warn);font-family:var(--font-mono);font-size:11px;white-space:nowrap;margin-left:6px}
 .lane-head .behind-n{margin-left:0}

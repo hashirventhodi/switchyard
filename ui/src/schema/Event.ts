@@ -4,6 +4,7 @@ import type { ChangedFile } from "./ChangedFile";
 import type { Commit } from "./Commit";
 import type { Decision } from "./Decision";
 import type { Entry } from "./Entry";
+import type { Policy } from "./Policy";
 import type { Repository } from "./Repository";
 import type { Session } from "./Session";
 import type { SessionFacts } from "./SessionFacts";
@@ -32,4 +33,4 @@ files: Array<string>, } | { "type": "worktreeRebased", worktreePath: string, bas
 /**
  * The base branch the commits sit above.
  */
-base: string, commits: Array<Commit>, };
+base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, };

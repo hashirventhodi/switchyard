@@ -6,6 +6,7 @@ import { ChangesTab, changesCount } from "./ChangesTab";
 import type { Command } from "./schema/Command";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView, State } from "./state";
+import { ContextGrants } from "./ContextGrants";
 
 /** "↓3" (warn colour) when the worktree is behind its base; nothing otherwise. */
 export function BehindBadge({ facts, base }: { facts?: WorktreeFacts; base?: string }) {
@@ -83,7 +84,14 @@ export function BranchPane(props: {
         />
       ) : (
         <div className="pane-body" role="tabpanel">
-          {tab === "history" ? <HistoryTab {...props} /> : <BranchContext {...props} />}
+          {tab === "history" ? (
+            <HistoryTab {...props} />
+          ) : (
+            <>
+              <BranchContext {...props} />
+              <ContextGrants {...props} />
+            </>
+          )}
         </div>
       )}
     </aside>

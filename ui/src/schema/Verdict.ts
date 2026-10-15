@@ -3,4 +3,4 @@
 /**
  * The user's answer to a Permission request.
  */
-export type Verdict = { "type": "allowOnce" } | { "type": "deny" } | { "type": "answer", text: string, };
+export type Verdict = { "type": "allowOnce" } | { "type": "allowAlways", pattern: string | null, } | { "type": "deny" } | { "type": "answer", text: string, };

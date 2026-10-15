@@ -10,6 +10,7 @@ pub mod agents;
 pub mod compat;
 mod git;
 mod rebase;
+mod policy;
 mod repo_policy;
 mod review;
 mod sessions;
@@ -146,6 +147,8 @@ impl Core {
                 review::decide(&mut inner, &worktree_path, &path, decision)
             }
             Command::CommitAccepted { worktree_path, message } => review::commit(&mut inner, &worktree_path, &message),
+            Command::ReadPolicy { repository_id } => policy::read(&inner, &repository_id),
+            Command::RevokeGrant { repository_id, grant_id } => policy::revoke(&inner, &repository_id, &grant_id),
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
