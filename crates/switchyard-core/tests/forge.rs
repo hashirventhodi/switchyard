@@ -10,7 +10,7 @@ use harness::gh::gh_pr;
 use harness::{added_repository, git, Harness, TempRepo};
 use serde_json::json;
 use switchyard_schema::{
-    ChecksState, Command, Event, ForgeSetup, ForgeSetupState, PullRequest, PullRequestState, ReviewState,
+    CheckStatus, ChecksState, Command, Event, ForgeSetup, ForgeSetupState, PullRequest, PullRequestState, ReviewState,
 };
 
 fn forge_checked(events: &[Event]) -> ForgeSetup {
@@ -132,6 +132,7 @@ fn open_at(number: u32) -> PullRequest {
         state: PullRequestState::Open,
         draft: false,
         checks: ChecksState::None,
+        check_runs: Vec::new(),
         review: ReviewState::None,
     }
 }
@@ -272,13 +273,18 @@ fn head(dir: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// The pull requests without their individual checks (see the next test for those).
+fn summed_up(prs: Vec<Option<PullRequest>>) -> Vec<Option<PullRequest>> {
+    prs.into_iter().map(|p| p.map(|p| PullRequest { check_runs: Vec::new(), ..p })).collect()
+}
+
 #[test]
 fn polling_reports_checks_and_review_as_they_change() {
     let mut r = with_remote();
     open_pr(&mut r.core, &r.wt);
 
     r.core.gh.set_checks("feat/login", json!([{"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": ""}]));
-    let running = changed(&r.core.poll_forge(), &r.wt);
+    let running = summed_up(changed(&r.core.poll_forge(), &r.wt));
     assert_eq!(running, vec![Some(PullRequest { checks: ChecksState::Running, ..open_at(421) })]);
 
     r.core.gh.set_checks(
@@ -288,15 +294,54 @@ fn polling_reports_checks_and_review_as_they_change() {
             {"__typename": "StatusContext", "state": "FAILURE"},
         ]),
     );
-    let failing = changed(&r.core.poll_forge(), &r.wt);
+    let failing = summed_up(changed(&r.core.poll_forge(), &r.wt));
     assert_eq!(failing, vec![Some(PullRequest { checks: ChecksState::Failing, ..open_at(421) })]);
 
     r.core.gh.set_checks("feat/login", json!([{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}]));
     r.core.gh.set_review("feat/login", "APPROVED");
-    let approved = changed(&r.core.poll_forge(), &r.wt);
+    let approved = summed_up(changed(&r.core.poll_forge(), &r.wt));
     assert_eq!(
         approved,
         vec![Some(PullRequest { checks: ChecksState::Passing, review: ReviewState::Approved, ..open_at(421) })]
+    );
+}
+
+#[test]
+fn polling_reports_each_check_with_its_name_status_and_link() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+
+    r.core.gh.set_checks(
+        "feat/login",
+        json!([
+            {"__typename": "CheckRun", "name": "build", "workflowName": "CI", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "detailsUrl": "https://github.com/acme/acme/runs/1"},
+            {"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": "",
+             "detailsUrl": "https://github.com/acme/acme/runs/2"},
+            {"__typename": "CheckRun", "name": "deploy", "status": "QUEUED", "conclusion": ""},
+            {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "TIMED_OUT"},
+            {"__typename": "CheckRun", "name": "docs", "status": "COMPLETED", "conclusion": "SKIPPED"},
+            {"__typename": "StatusContext", "context": "ci/legacy", "state": "ERROR",
+             "targetUrl": "https://ci.example.com/7"},
+            {"__typename": "StatusContext", "context": "coverage", "state": "PENDING"},
+        ]),
+    );
+    let polled = changed(&r.core.poll_forge(), &r.wt);
+    let pr = polled.last().cloned().flatten().expect("a pull request");
+    assert_eq!(pr.checks, ChecksState::Failing);
+    let runs: Vec<(String, CheckStatus, Option<String>)> =
+        pr.check_runs.into_iter().map(|c| (c.name, c.status, c.url)).collect();
+    assert_eq!(
+        runs,
+        vec![
+            ("build".into(), CheckStatus::Passing, Some("https://github.com/acme/acme/runs/1".into())),
+            ("test".into(), CheckStatus::Running, Some("https://github.com/acme/acme/runs/2".into())),
+            ("deploy".into(), CheckStatus::Pending, None),
+            ("lint".into(), CheckStatus::Failing, None),
+            ("docs".into(), CheckStatus::Skipped, None),
+            ("ci/legacy".into(), CheckStatus::Failing, Some("https://ci.example.com/7".into())),
+            ("coverage".into(), CheckStatus::Pending, None),
+        ]
     );
 }
 

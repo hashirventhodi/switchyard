@@ -10,6 +10,8 @@ import { ContextArchive } from "./ContextArchive";
 import { ContextGrants } from "./ContextGrants";
 import { ContextMcp } from "./ContextMcp";
 import { ContextTask } from "./ContextTask";
+import { HistoryPullRequest } from "./HistoryPullRequest";
+import type { OpenLink } from "./Setup";
 
 /** "↓3" (warn colour) when the worktree is behind its base; nothing otherwise. */
 export function BehindBadge({ facts, base }: { facts?: WorktreeFacts; base?: string }) {
@@ -46,6 +48,8 @@ export function BranchPane(props: {
   onAsk?: (text: string) => void;
   /** Open Tasks to pick the session's task ("Pick one"; `relink` to change it). */
   onPickTask?: (sessionId: string, relink: boolean) => void;
+  /** Open an https link in the browser (pull request, checks). */
+  openLink?: OpenLink;
 }) {
   const { state, session, send, expanded = false, onToggleExpand, onAsk = () => {} } = props;
   const [tab, setTab] = useState<"changes" | "history" | "context">("changes");
@@ -86,11 +90,15 @@ export function BranchPane(props: {
           base={repository?.baseBranch}
           send={send}
           onAsk={onAsk}
+          conflicts={state.conflicts[path]?.files}
         />
       ) : (
         <div className="pane-body" role="tabpanel">
           {tab === "history" ? (
-            <HistoryTab {...props} />
+            <>
+              <HistoryTab {...props} />
+              <HistoryPullRequest state={state} worktreePath={path} openLink={props.openLink ?? (() => {})} />
+            </>
           ) : (
             <>
               <ContextTask {...props} />

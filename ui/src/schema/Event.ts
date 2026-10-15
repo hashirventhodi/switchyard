@@ -3,6 +3,8 @@ import type { AgentSetup } from "./AgentSetup";
 import type { ArchivedSession } from "./ArchivedSession";
 import type { ChangedFile } from "./ChangedFile";
 import type { Commit } from "./Commit";
+import type { ConflictFile } from "./ConflictFile";
+import type { ConflictSide } from "./ConflictSide";
 import type { Decision } from "./Decision";
 import type { Entry } from "./Entry";
 import type { ForgeSetup } from "./ForgeSetup";
@@ -39,7 +41,7 @@ files: Array<string>, } | { "type": "hunkReviewed", worktreePath: string, path: 
 /**
  * How many hunks the message covered.
  */
-hunks: number, } | { "type": "worktreeRebased", worktreePath: string, base: string, } | { "type": "worktreeHistory", worktreePath: string, 
+hunks: number, } | { "type": "conflictsRead", worktreePath: string, base: string, files: Array<ConflictFile>, } | { "type": "conflictResolved", worktreePath: string, path: string, side: ConflictSide, remaining: number, } | { "type": "worktreeRebased", worktreePath: string, base: string, } | { "type": "worktreeHistory", worktreePath: string, 
 /**
  * The base branch the commits sit above.
  */

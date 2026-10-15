@@ -81,3 +81,10 @@
   .workbench.show-changes .session{display:none}
   .workbench.show-changes .changes-pane,.workbench.focus-changes .changes-pane{display:flex}
 }
+
+/* Conflict hunks (#21): the branch's lines, then base's highlighted; Keep ours / Keep base. */
+.hunkbox.conflict{border-color:var(--bad)}
+.conf-note{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bad-soft);color:var(--fg);font-size:12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.conf-note b{color:var(--bad)}
+.conf-note .r{margin-left:auto;display:flex;gap:4px}
+.ln.base{background:var(--warn-soft)}.ln.base .s{color:var(--warn)}

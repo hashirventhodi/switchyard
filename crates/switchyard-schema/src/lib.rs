@@ -193,6 +193,22 @@ pub enum Command {
         #[ts(rename = "worktreePath")]
         worktree_path: String,
     },
+    /// Resolve one conflict hunk of a file git holds unmerged (a merge or rebase stopped on
+    /// it) by keeping the branch's side or base's: the file is rewritten with that side in
+    /// place of the hunk's markers, and once no markers remain git is told it is resolved.
+    /// Refused while the worktree's Session is Running. Answered with
+    /// [`Event::ConflictResolved`], then [`Event::ChangesRead`], [`Event::ConflictsRead`]
+    /// and the worktree's facts (the dry-run merge re-run).
+    ResolveConflict {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        #[serde(rename = "hunkId")]
+        #[ts(rename = "hunkId")]
+        hunk_id: String,
+        side: ConflictSide,
+    },
     /// Send the Session's agent one message asking it to rebase its branch on base and
     /// resolve the conflicts itself. The Session goes Running.
     AskAgentToRebase {
@@ -567,6 +583,26 @@ pub enum Event {
         /// How many hunks the message covered.
         hunks: u32,
     },
+    /// The worktree's conflicts with their hunks, read with [`Event::ChangesRead`]:
+    /// files git holds unmerged, then files a merge of `base` would conflict on. Replaces
+    /// earlier ones.
+    ConflictsRead {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        base: String,
+        files: Vec<ConflictFile>,
+    },
+    /// One conflict hunk was resolved by keeping `side`; `remaining` hunks of the file
+    /// still conflict.
+    ConflictResolved {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        path: String,
+        side: ConflictSide,
+        remaining: u32,
+    },
     /// A worktree's branch was rebased on `base` without conflicts.
     WorktreeRebased {
         #[serde(rename = "worktreePath")]
@@ -707,7 +743,34 @@ pub struct PullRequest {
     pub state: PullRequestState,
     pub draft: bool,
     pub checks: ChecksState,
+    /// Every check the Forge reports on the pull request's head, in the Forge's order.
+    #[serde(default)]
+    pub check_runs: Vec<Check>,
     pub review: ReviewState,
+}
+
+/// One check on a pull request: a CI job or a commit status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Check {
+    pub name: String,
+    pub status: CheckStatus,
+    /// Where the Forge shows the check's details, when it says.
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CheckStatus {
+    /// Queued or expected, not started.
+    Pending,
+    Running,
+    Passing,
+    Failing,
+    /// Skipped, neutral or stale: finished without a verdict.
+    Skipped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -876,6 +939,55 @@ pub struct DiffLine {
     /// Line number on the working-tree side (context and added lines).
     pub new: Option<u32>,
     pub text: String,
+}
+
+/// A file that conflicts, with its conflict hunks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConflictFile {
+    pub path: String,
+    pub kind: ConflictKind,
+    /// Empty when the conflict has no text hunks (a binary file, or one side deleted it).
+    pub hunks: Vec<ConflictHunk>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ConflictKind {
+    /// Git holds the file unmerged: a merge or rebase stopped here and the working tree has
+    /// conflict markers. Keep ours / Keep base resolve it.
+    Unmerged,
+    /// Only a dry-run merge of base conflicts here; the working tree is untouched. Resolved
+    /// by rebasing (or asking the agent to).
+    Base,
+}
+
+/// One conflicting region: the branch's lines and base's lines for the same place, with up
+/// to three unconflicted lines either side. `id` hashes the path, the region's place among
+/// the file's conflicts and both sides, so it changes when the conflict does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConflictHunk {
+    pub id: String,
+    pub before: Vec<String>,
+    /// The branch's lines.
+    pub ours: Vec<String>,
+    /// Base's lines.
+    pub base: Vec<String>,
+    pub after: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ConflictSide {
+    /// The branch's lines.
+    Ours,
+    /// Base's lines.
+    Base,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

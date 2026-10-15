@@ -4,6 +4,7 @@ import type { AgentSetup } from "./schema/AgentSetup";
 import type { ArchivedSession } from "./schema/ArchivedSession";
 import type { Settings } from "./schema/Settings";
 import type { ChangedFile } from "./schema/ChangedFile";
+import type { ConflictFile } from "./schema/ConflictFile";
 import type { Entry } from "./schema/Entry";
 import type { Policy } from "./schema/Policy";
 import type { Event } from "./schema/Event";
@@ -74,6 +75,8 @@ export interface State {
   worktreeFacts: Record<string, WorktreeFacts>;
   /** Uncommitted changes the core last read for each worktree, by path. */
   changes: Record<string, ChangedFile[]>;
+  /** Each worktree's conflicts with their hunks, by path, as last read with its changes. */
+  conflicts: Record<string, WorktreeConflicts>;
   /** The commits each worktree's branch has above its base, by path, as last read. */
   history: Record<string, WorktreeHistory>;
   /** Each Repository's resolved Policy, by repository id, once the core has sent it. */
@@ -94,6 +97,11 @@ export interface State {
   houseRules: Record<string, string>;
   /** The Task each Session (live or archived) is linked to, by session id. */
   taskLinks: Record<string, string>;
+}
+
+export interface WorktreeConflicts {
+  base: string;
+  files: ConflictFile[];
 }
 
 export interface WorktreeHistory {
@@ -121,6 +129,7 @@ export const initialState: State = {
   tasks: {},
   houseRules: {},
   taskLinks: {},
+  conflicts: {},
 };
 
 const noFacts: SessionFacts = {
@@ -154,6 +163,7 @@ export function reduce(state: State, event: Event): State {
         archivedTranscript: null,
         pullRequests: {},
         taskLinks: {},
+        conflicts: {},
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -236,6 +246,18 @@ export function reduce(state: State, event: Event): State {
       return { ...state, agents: event.agents };
     case "changesRead":
       return { ...state, changes: { ...state.changes, [event.worktreePath]: event.files } };
+    case "conflictsRead":
+      return { ...state, conflicts: { ...state.conflicts, [event.worktreePath]: { base: event.base, files: event.files } } };
+    case "conflictResolved": {
+      const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
+      const session = Object.values(state.sessions).find((s) => s.worktreePath === event.worktreePath);
+      const base = state.conflicts[event.worktreePath]?.base ?? "base";
+      const kept = event.side === "base" ? base : (worktree?.branch ?? session?.branch ?? "the branch");
+      const n = event.remaining;
+      return n === 0
+        ? resultToast(state, `Resolved ${event.path}, keeping ${kept}`, "ok")
+        : resultToast(state, `Kept ${kept} in ${event.path} · ${n} conflict${n === 1 ? "" : "s"} left`, "ok");
+    }
     case "fileDecided": {
       const list = state.changes[event.worktreePath];
       if (!list) return state;

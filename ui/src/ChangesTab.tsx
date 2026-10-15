@@ -4,12 +4,18 @@
 // Accept / Reject / Comment; rejected hunks and comments go to the agent as Hunk feedback
 // (Send feedback to agent), and a file with a rejected hunk stays out of commits until the
 // agent revises it or the user accepts the whole file. Switchyard never reverts anything.
+// A conflicted file shows its conflict hunks (base's lines highlighted) with Keep ours /
+// Keep base (files git holds unmerged; the core writes the chosen side) and Ask agent to
+// rebase; Commit stays disabled while any conflict is left.
 import { useEffect, useRef, useState } from "react";
 import { useAction, usePaletteSource } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
 import type { ChangedFile } from "./schema/ChangedFile";
 import type { Command } from "./schema/Command";
+import type { ConflictFile } from "./schema/ConflictFile";
+import type { ConflictHunk } from "./schema/ConflictHunk";
+import type { ConflictSide } from "./schema/ConflictSide";
 import type { Decision } from "./schema/Decision";
 import type { FileStatus } from "./schema/FileStatus";
 import type { Hunk } from "./schema/Hunk";
@@ -82,9 +88,11 @@ export interface ChangesTabProps {
   send: (command: Command) => void;
   /** Put text in the composer for the user to finish and send. */
   onAsk: (text: string) => void;
+  /** The worktree's conflicts with their hunks (conflictsRead), when read. */
+  conflicts?: ConflictFile[];
 }
 
-export function ChangesTab({ session, files, facts, base, send, onAsk }: ChangesTabProps) {
+export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts: conflictFiles = [] }: ChangesTabProps) {
   const worktreePath = session.worktreePath;
   // Re-read whenever the agent may have changed something: on open and on every status change.
   useEffect(() => {
@@ -171,6 +179,11 @@ export function ChangesTab({ session, files, facts, base, send, onAsk }: Changes
               }
               onComment={(hunk, comment) => send({ type: "commentHunk", worktreePath, path: active.path, hunkId: hunk.id, comment })}
               onAsk={() => onAsk(`Explain the change in ${active.path} and whether it needs a test.`)}
+              conflict={conflictFiles.find((c) => c.path === active.path)}
+              branch={session.branch}
+              canAskRebase={session.status === "waiting" || session.status === "done" || session.status === "failed"}
+              onResolve={(hunk, side) => send({ type: "resolveConflict", worktreePath, path: active.path, hunkId: hunk.id, side })}
+              onAskRebase={() => send({ type: "askAgentToRebase", sessionId: session.id })}
             />
           )}
           <div className="commit-box">
@@ -273,6 +286,11 @@ function FileDiff(props: {
   onDecideHunk: (hunk: Hunk, d: Decision) => void;
   onComment: (hunk: Hunk, comment: string | null) => void;
   onAsk: () => void;
+  conflict?: ConflictFile;
+  branch: string | null;
+  canAskRebase: boolean;
+  onResolve: (hunk: ConflictHunk, side: ConflictSide) => void;
+  onAskRebase: () => void;
 }) {
   const { file, base, onDecide, onDecideHunk, onComment, onAsk } = props;
   const rejectedCount = rejectedHunks(file);
@@ -315,7 +333,21 @@ function FileDiff(props: {
           Not committable: {rejectedCount} rejected hunk{rejectedCount === 1 ? "" : "s"}. Send feedback to the agent, or Accept file.
         </p>
       )}
-      {file.status === "conflicted" ? (
+      {conflict && props.conflict?.hunks.length ? (
+        props.conflict.hunks.map((h, i, all) => (
+          <ConflictHunkView
+            key={h.id}
+            hunk={h}
+            label={`Conflict with ${base ?? "base"} in ${file.path} (${i + 1} of ${all.length})`}
+            base={base ?? "base"}
+            branch={props.branch}
+            resolvable={props.conflict!.kind === "unmerged"}
+            canAskRebase={props.canAskRebase}
+            onResolve={(side) => props.onResolve(h, side)}
+            onAskRebase={props.onAskRebase}
+          />
+        ))
+      ) : file.status === "conflicted" ? (
         <p className="diff-empty">This file has a merge conflict. Resolve it before deciding.</p>
       ) : file.baseConflict && !file.hunks.length ? (
         <p className="diff-empty">
@@ -337,6 +369,66 @@ function FileDiff(props: {
           />
         ))
       )}
+    </div>
+  );
+}
+
+/** One conflict: the branch's lines, then base's (highlighted), with context either side. */
+function ConflictHunkView(props: {
+  hunk: ConflictHunk;
+  label: string;
+  base: string;
+  branch: string | null;
+  /** The file is unmerged in the working tree: Keep ours / Keep base can write it. */
+  resolvable: boolean;
+  canAskRebase: boolean;
+  onResolve: (side: ConflictSide) => void;
+  onAskRebase: () => void;
+}) {
+  const { hunk, label, base, branch, resolvable, canAskRebase, onResolve, onAskRebase } = props;
+  const ours = branch?.split("/").pop() || "ours";
+  const line = (kind: string, text: string, i: number, sign = " ") => (
+    <div key={`${kind}-${i}`} className={`ln ${kind}`}>
+      <span className="g" />
+      <span className="g" />
+      <span className="s">{sign}</span>
+      <span className="c">{text}</span>
+    </div>
+  );
+  return (
+    <div className="hunkbox conflict" role="group" aria-label={label}>
+      <div className="conf-note">
+        <b>Conflict with {base}</b>
+        <span>
+          {resolvable
+            ? `${base} changed these lines too. Keep one side, or ask the agent.`
+            : `${base} changed these lines while the agent worked; merging it would conflict.`}
+        </span>
+        <span className="r">
+          {resolvable && (
+            <>
+              <button className="btn sm" title={`Keep ${branch ?? "this branch"}'s lines`} onClick={() => onResolve("ours")}>
+                Keep {ours}
+              </button>
+              <button className="btn sm" title={`Keep ${base}'s lines`} onClick={() => onResolve("base")}>
+                Keep {base}
+              </button>
+            </>
+          )}
+          <button
+            className="btn sm primary"
+            disabled={!canAskRebase}
+            title={canAskRebase ? "Send the agent one message asking it to rebase and resolve conflicts" : "The agent is busy or paused"}
+            onClick={onAskRebase}
+          >
+            Ask agent to rebase
+          </button>
+        </span>
+      </div>
+      {hunk.before.map((t, i) => line("context", t, i))}
+      {hunk.ours.map((t, i) => line("ours added", t, i, "+"))}
+      {hunk.base.map((t, i) => line("base", t, i, "−"))}
+      {hunk.after.map((t, i) => line("context after", t, i))}
     </div>
   );
 }

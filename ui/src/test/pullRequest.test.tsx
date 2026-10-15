@@ -34,6 +34,7 @@ const pr = (change: Partial<PullRequest> = {}): PullRequest => ({
   state: "open",
   draft: false,
   checks: "none",
+  checkRuns: [],
   review: "none",
   ...change,
 });
@@ -232,4 +233,59 @@ test("a repository with no remote gets Local merge instead, and never both", () 
   fireEvent.click(screen.getByRole("button", { name: "Worktrees" }));
   expect(within(card("docs/api")).queryByRole("button", { name: "Local merge into main" })).toBeNull();
   expect(within(card("docs/api")).getByRole("button", { name: "Open pull request" })).toBeTruthy();
+});
+
+test("History shows the pull request beneath the commits with each check and its status", () => {
+  const { emit, openLink } = launch([{ type: "sessionStarted", session: finished }]);
+  openSession();
+  fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+  act(() =>
+    emit(
+      {
+        type: "worktreeHistory",
+        worktreePath: "/wt/acme/login",
+        base: "main",
+        commits: [{ hash: "a".repeat(40), short: "aaaaaaa", subject: "Add the login form", author: "Ada", atMs: 1000 }],
+      },
+      prChanged(
+        pr({
+          checks: "failing",
+          checkRuns: [
+            { name: "build", status: "passing", url: "https://github.com/acme/acme/runs/1" },
+            { name: "test", status: "failing", url: null },
+            { name: "deploy", status: "pending", url: null },
+          ],
+        }),
+      ),
+    ),
+  );
+
+  const section = screen.getByRole("region", { name: "Pull request" });
+  const commits = screen.getByRole("list", { name: "Commits on feat/login" });
+  expect(section.compareDocumentPosition(commits) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  expect(section.textContent).toContain("#421");
+  expect(section.textContent).toContain("open");
+  const checks = within(within(section).getByRole("list", { name: "Checks" })).getAllByRole("listitem");
+  expect(checks.map((c) => c.textContent)).toEqual([
+    expect.stringMatching(/build.*passing/),
+    expect.stringMatching(/test.*failing/),
+    expect.stringMatching(/deploy.*pending/),
+  ]);
+  fireEvent.click(within(checks[0]).getByRole("button", { name: "build" }));
+  expect(openLink).toHaveBeenCalledWith("https://github.com/acme/acme/runs/1");
+  expect(within(checks[1]).queryByRole("button")).toBeNull();
+  fireEvent.click(within(section).getByRole("button", { name: "View PR #421" }));
+  expect(openLink).toHaveBeenCalledWith("https://github.com/acme/acme/pull/421");
+
+  act(() => emit(prChanged(pr({ state: "merged", checks: "passing", checkRuns: [] }))));
+  expect(screen.getByRole("region", { name: "Pull request" }).textContent).toContain("merged");
+  expect(screen.getByRole("region", { name: "Pull request" }).textContent).toContain("No checks reported");
+});
+
+test("History shows no pull request section when the branch has none", () => {
+  const { emit } = launch([{ type: "sessionStarted", session: finished }]);
+  openSession();
+  fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+  act(() => emit({ type: "worktreeHistory", worktreePath: "/wt/acme/login", base: "main", commits: [] }));
+  expect(screen.queryByRole("region", { name: "Pull request" })).toBeNull();
 });
