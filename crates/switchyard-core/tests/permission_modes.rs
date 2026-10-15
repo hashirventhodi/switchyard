@@ -324,3 +324,54 @@ fn a_resumed_sandboxed_session_relaunches_into_bypass_and_still_warns_on_another
         Some("Asked for Full auto (sandbox bypass), but Claude Code started in Ask first (default)")
     );
 }
+
+fn always(s: &mut Setup, session: &str, request_id: &str, pattern: Option<&str>) -> Vec<Event> {
+    s.core.send(Command::AnswerRequest {
+        session_id: session.into(),
+        request_id: request_id.into(),
+        verdict: switchyard_schema::Verdict::AllowAlways { pattern: pattern.map(str::to_owned) },
+    })
+}
+
+fn always_allowed(events: &[Event]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::TranscriptEntry { entry: Entry::Request { state: RequestState::AlwaysAllowed, answer, .. }, .. } => {
+                answer.clone()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Always allow on a dangerous command grants a pattern that names it, so the grant the
+/// card promises is the one that answers it next time.
+#[test]
+fn always_allow_on_a_dangerous_command_grants_a_pattern_that_names_it_and_is_honoured() {
+    let mut s = setup(None);
+    let session = start(&mut s, PermissionMode::AskFirst);
+    s.core.agent_says(0, command("req-1", "npm run db:migrate"));
+    let events = always(&mut s, &session, "req-1", None);
+    assert_eq!(always_allowed(&events), vec!["npm run db:migrate *".to_string()]);
+
+    let events = s.core.agent_says(0, command("req-2", "npm run db:migrate"));
+    assert_eq!(cards(&events), vec![], "the grant answers it: {events:#?}");
+    assert_eq!(
+        system_lines(&events),
+        vec!["Allowed without asking: npm run db:migrate (your grant npm run db:migrate *)".to_string()]
+    );
+}
+
+#[test]
+fn a_grant_the_dangerous_guard_would_ignore_is_refused_rather_than_promised() {
+    let mut s = setup(None);
+    let session = start(&mut s, PermissionMode::AutoEdit);
+    s.core.agent_says(0, command("req-1", "npm run db:migrate"));
+    let events = always(&mut s, &session, "req-1", Some("npm run *"));
+    assert_eq!(
+        refused(&events),
+        vec!["npm run * would not answer npm run db:migrate: below Full auto a migration command is granted only by a pattern that names it, such as npm run db:migrate *".to_string()]
+    );
+    assert_eq!(always_allowed(&events), Vec::<String>::new());
+}

@@ -5,6 +5,8 @@
 import type { GrantRule } from "./schema/GrantRule";
 import type { PolicyLayer } from "./schema/PolicyLayer";
 import type { Request } from "./schema/Request";
+// The one classifier the sidecar and (in Rust) the core keep in step; pure, no imports.
+import { classes } from "../../sidecar/src/dangerous";
 
 const CHAIN = [";", "|", "&", "`", "$(", "<", ">", "\n", "\r"];
 const RUNNERS = ["eval", "xargs", "env", "npx"];
@@ -20,14 +22,28 @@ function startsWithInterpreter(command: string): boolean {
   return SHELLS.includes(name) && !!flag && flag.startsWith("-") && !flag.startsWith("--") && flag.includes("c");
 }
 
+/** Whether a grant's literal text (before `*`) names every dangerous class of `command`. */
+function explicitlyCovers(pattern: string, command: string): boolean {
+  const star = pattern.indexOf("*");
+  const named = classes(star < 0 ? pattern : pattern.slice(0, star));
+  return classes(command).every((c) => named.includes(c));
+}
+
 /** The command pattern Always allow grants: the command and its subcommand plus `*`, or the
- * exact command where a wildcard would not cover it (an interpreter, a chain). */
+ * exact command where a wildcard would not cover it (an interpreter, a chain). A dangerous
+ * command's pattern grows word by word until it names the command's classes
+ * (`npm run db:migrate *`), as only such a grant answers it below Full auto. */
 export function suggestCommandPattern(command: string): string {
   const c = squash(command);
   if (startsWithInterpreter(c) || CHAIN.some((ch) => c.includes(ch)) || c.includes("*")) return c;
-  const [first, sub] = c.split(" ");
-  const prefix = sub && /^[A-Za-z0-9_:-]+$/.test(sub) && !sub.startsWith("-") ? `${first} ${sub}` : first;
-  return `${prefix} *`;
+  const words = c.split(" ");
+  const [, sub] = words;
+  const start = sub && /^[A-Za-z0-9_:-]+$/.test(sub) && !sub.startsWith("-") ? 2 : 1;
+  for (let n = start; n <= words.length; n++) {
+    const pattern = `${words.slice(0, n).join(" ")} *`;
+    if (explicitlyCovers(pattern, c)) return pattern;
+  }
+  return c;
 }
 
 /** What Always allow would grant for a request; null for kinds never granted. */

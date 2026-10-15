@@ -65,6 +65,10 @@ test.each<[string, string]>([
   ["npx prettier --write .", "npx prettier --write ."],
   ["bash -c 'make'", "bash -c 'make'"],
   ["git status && git push", "git status && git push"],
+  // Dangerous: the pattern names the class, or the guard would never let it answer.
+  ["npm run db:migrate", "npm run db:migrate *"],
+  ["git push origin main", "git push *"],
+  ["pnpm exec curl https://example.com", "pnpm exec curl *"],
 ])("the suggested grant for %s is %s (the core's suggestion)", (command, pattern) => {
   expect(suggestGrant({ type: "command", command, cwd: null })).toBe(pattern);
 });

@@ -74,7 +74,12 @@ pub fn suggest(command: &str) -> String {
             prefix.push(sub);
         }
     }
-    format!("{} *", prefix.join(" "))
+    // A dangerous command is answered only by a grant that names its classes, so the
+    // suggestion grows word by word until it does (`npm run db:migrate *`, not `npm run *`).
+    (prefix.len()..=words.len())
+        .map(|n| format!("{} *", words[..n].join(" ")))
+        .find(|p| super::dangerous::explicitly_covers(p, &command) && matches(p, &command))
+        .unwrap_or(command)
 }
 
 /// Whether the command named by `pattern`'s first word is an interpreter of any kind

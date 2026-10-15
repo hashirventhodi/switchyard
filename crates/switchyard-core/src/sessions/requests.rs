@@ -115,7 +115,7 @@ pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Ver
     }
     if let Verdict::AllowAlways { pattern } = &verdict {
         let (detail, repository_id) = (detail(request), state.session.repository_id.clone());
-        let rule = match policy::grant_for(&detail, pattern.as_deref()) {
+        let rule = match policy::grant_for(&detail, pattern.as_deref(), state.session.permission_mode) {
             Ok(rule) => rule,
             Err(reason) => return inner.refuse(COMMAND, reason),
         };

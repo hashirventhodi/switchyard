@@ -109,7 +109,11 @@ fn rule_matches(rule: &GrantRule, request: &RequestDetail) -> bool {
 
 /// The Grant "Always allow" makes for `request`, with the user's `pattern` for a command
 /// (or the suggested one). Err is the reason shown to the user.
-pub(crate) fn grant_for(request: &RequestDetail, pattern: Option<&str>) -> Result<GrantRule, String> {
+/// The rule Always allow saves for `request` in a session in `mode`: `pattern` (the user's,
+/// or the suggestion when none). Refused when it would not answer the request next time,
+/// so a card never says "Always allowed" for a grant that will not apply: it must cover the
+/// command, and below Full auto name each dangerous class the command is in.
+pub(crate) fn grant_for(request: &RequestDetail, pattern: Option<&str>, mode: PermissionMode) -> Result<GrantRule, String> {
     match request {
         RequestDetail::Command { command, .. } => {
             let pattern = match pattern.map(pattern::squash).filter(|p| !p.is_empty()) {
@@ -117,6 +121,17 @@ pub(crate) fn grant_for(request: &RequestDetail, pattern: Option<&str>) -> Resul
                 None => pattern::suggest(command),
             };
             if pattern::matches(&pattern, command) {
+                if guards_dangerous(mode) && !dangerous::explicitly_covers(&pattern, command) {
+                    let literal = &pattern[..pattern.find('*').unwrap_or(pattern.len())];
+                    let named = dangerous::classes(literal);
+                    let class = dangerous::classes(command).into_iter().find(|c| !named.contains(c)).expect("uncovered");
+                    return Err(format!(
+                        "{pattern} would not answer {}: below Full auto a {} command is granted only by a pattern that names it, such as {}",
+                        pattern::squash(command),
+                        class.label(),
+                        pattern::suggest(command),
+                    ));
+                }
                 return Ok(GrantRule::Command { pattern });
             }
             let why = if pattern.contains('*') && covers_but_for_interpreter(&pattern, command) {
