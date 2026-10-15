@@ -6,6 +6,9 @@
 .lane-head .pr-sub{margin:0 6px}
 .worktree .meta .pr-sub{margin-left:6px}
 .card .pr-sub,.wtc .pr-sub{display:block;margin-top:4px}
+/* "checked N s ago" on Forge data only (pull request card, Tasks header). */
+.checked-ago{font-size:11px;font-weight:400;color:var(--fg-2);white-space:nowrap;text-transform:none;letter-spacing:0}
+.pagehead .right .checked-ago{align-self:center}
 
 .endbox{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 16px;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:var(--radius);background:var(--bg-1);font-size:12.5px}
 .endbox .tx{flex:1;min-width:160px;color:var(--fg-1)}
