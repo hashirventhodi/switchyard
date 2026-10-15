@@ -37,6 +37,11 @@ impl LocalTasks {
         LocalTasks { file: data_dir.join("tasks").join(format!("{folder}.json")) }
     }
 
+    /// Where the tasks are kept.
+    pub(crate) fn file(&self) -> &Path {
+        &self.file
+    }
+
     fn read(&self) -> Result<TaskFile, String> {
         match std::fs::read_to_string(&self.file) {
             Ok(text) => serde_json::from_str(&text)

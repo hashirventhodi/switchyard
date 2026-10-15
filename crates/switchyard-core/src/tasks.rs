@@ -15,7 +15,7 @@ mod github;
 mod local;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
@@ -254,6 +254,11 @@ fn announce(inner: &Inner, command: &str, repo: &StoredRepository) {
         Ok(tasks) => inner.emit(tasks_changed(inner, repo, tasks)),
         Err(reason) => inner.refuse(command, format!("Could not read the tasks: {reason}")),
     }
+}
+
+/// The repository's local tasks file (which may not exist yet).
+pub(crate) fn local_file(inner: &Inner, repo: &StoredRepository) -> PathBuf {
+    LocalTasks::new(&inner.data_dir, &worktrees::repository_folder(Path::new(&repo.path))).file().to_path_buf()
 }
 
 /// [`Command::ReadTasks`](switchyard_schema::Command::ReadTasks).

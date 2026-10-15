@@ -131,7 +131,10 @@ fn every_known_worktree_is_watched_from_attach_with_its_repositorys_git_folder()
     expected.sort();
     assert_eq!(core.watcher.watching(), expected);
     assert_eq!(core.watcher.roots(&worktree), vec![worktree.clone(), repo.path.join(".git")]);
-    assert_eq!(core.watcher.roots(&repo.path), vec![repo.path.clone()], "its .git is inside it");
+    // Beside the configuration it is watched for (the local tasks file).
+    let primary = core.watcher.roots(&repo.path);
+    assert_eq!(primary[0], repo.path);
+    assert!(!primary.iter().any(|root| root.ends_with(".git")), "its .git is inside it: {primary:?}");
 }
 
 #[test]

@@ -13,6 +13,11 @@ use crate::Inner;
 const INSTRUCTIONS: &[&str] =
     &["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", "AGENTS.override.md", ".codex/AGENTS.md"];
 
+/// Whether `rel` (relative to a worktree) is one of its instruction files.
+pub(crate) fn is_instructions(rel: &Path) -> bool {
+    INSTRUCTIONS.iter().any(|name| rel == Path::new(name))
+}
+
 /// The most of one file sent to the renderer.
 pub(crate) const MAX_BYTES: usize = 64 * 1024;
 
@@ -23,7 +28,7 @@ pub fn default_claude_home() -> PathBuf {
 }
 
 /// Claude Code's memory directory for a session started in `dir`.
-fn memory_dir(claude_home: &Path, dir: &str) -> PathBuf {
+pub(crate) fn memory_dir(claude_home: &Path, dir: &str) -> PathBuf {
     let slug: String = dir.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     claude_home.join("projects").join(slug).join("memory")
 }
