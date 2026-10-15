@@ -1,0 +1,6 @@
+{
+  "adapter": "echo",
+  "cli": { "name": "echo-cli", "version": "1.0.0" },
+  "protocol": "0.1.0",
+  "description": "A session touching every event kind and every command, including all five Permission request kinds and all four verdicts."
+}
