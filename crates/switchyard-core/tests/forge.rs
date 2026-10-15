@@ -7,7 +7,7 @@ mod harness;
 use std::path::{Path, PathBuf};
 
 use harness::gh::gh_pr;
-use harness::{added_repository, git, Harness, TempRepo};
+use harness::{added_repository, git, Harness, TempRepo, NOW_MS};
 use serde_json::json;
 use switchyard_schema::{
     CheckStatus, ChecksState, Command, Event, ForgeSetup, ForgeSetupState, PullRequest, PullRequestState, ReviewState,
@@ -162,7 +162,7 @@ fn open_pull_request_pushes_the_branch_and_opens_one_against_base() {
         events,
         vec![
             Event::PullRequestOpened { worktree_path: path(&r.wt), pull_request: open_at(421) },
-            Event::PullRequestChanged { worktree_path: path(&r.wt), pull_request: Some(open_at(421)) },
+            Event::PullRequestChanged { worktree_path: path(&r.wt), pull_request: Some(open_at(421)), checked_at_ms: NOW_MS },
         ]
     );
     // The branch tracks the remote now.
@@ -252,7 +252,7 @@ fn changed(events: &[Event], wt: &Path) -> Vec<Option<PullRequest>> {
     events
         .iter()
         .filter_map(|e| match e {
-            Event::PullRequestChanged { worktree_path, pull_request } if *worktree_path == path(wt) => {
+            Event::PullRequestChanged { worktree_path, pull_request, .. } if *worktree_path == path(wt) => {
                 Some(pull_request.clone())
             }
             _ => None,
@@ -356,6 +356,33 @@ fn polled_on(core: &mut Harness, ticks: u32) -> Vec<u32> {
         }
     }
     on
+}
+
+/// The `checkedAtMs` of every `PullRequestChanged` for the worktree.
+fn checked(events: &[Event], wt: &Path) -> Vec<u64> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::PullRequestChanged { worktree_path, checked_at_ms, .. } if *worktree_path == path(wt) => {
+                Some(*checked_at_ms)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_pull_request_says_when_it_was_last_checked_even_when_nothing_changed() {
+    let mut r = with_remote();
+    assert_eq!(checked(&open_pr(&mut r.core, &r.wt), &r.wt), vec![NOW_MS]);
+    assert_eq!(checked(&r.core.poll_forge(), &r.wt), vec![NOW_MS], "polled again, unchanged");
+
+    let core = std::mem::replace(&mut r.core, Harness::launch()).relaunch_at(|| NOW_MS + 15_000);
+    r.core = core;
+    r.core.send(Command::Attach);
+    assert_eq!(checked(&r.core.poll_forge(), &r.wt), vec![NOW_MS + 15_000]);
+    let replayed = r.core.send(Command::Attach);
+    assert_eq!(checked(&replayed, &r.wt), vec![NOW_MS + 15_000], "attach replays the last check");
 }
 
 #[test]

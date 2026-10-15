@@ -238,14 +238,20 @@ fn house_rules(repo: &StoredRepository) -> String {
         .unwrap_or_else(|| DEFAULT_HOUSE_RULES.to_string())
 }
 
+/// The repository's whole task list, with when its GitHub issues were last read.
+fn tasks_changed(inner: &Inner, repo: &StoredRepository, tasks: Vec<Task>) -> Event {
+    Event::TasksChanged {
+        repository_id: repo.id.clone(),
+        tasks,
+        house_rules: house_rules(repo),
+        checked_at_ms: github::checked_at(inner.store.db(), &repo.id),
+    }
+}
+
 /// Emit the repository's whole task list, or refuse `command` with why it cannot be read.
 fn announce(inner: &Inner, command: &str, repo: &StoredRepository) {
     match list(inner, repo) {
-        Ok(tasks) => inner.emit(Event::TasksChanged {
-            repository_id: repo.id.clone(),
-            tasks,
-            house_rules: house_rules(repo),
-        }),
+        Ok(tasks) => inner.emit(tasks_changed(inner, repo, tasks)),
         Err(reason) => inner.refuse(command, format!("Could not read the tasks: {reason}")),
     }
 }
@@ -278,9 +284,16 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     };
     // `gh` runs without holding the core.
     let read = forge::admit(core).and_then(|()| forge.issues(&dir));
-    let inner = core.lock().expect("core lock");
+    let mut inner = core.lock().expect("core lock");
     let failed = match read {
-        Ok(issues) => github::save(inner.store.db(), &repo.id, &issues).err(),
+        Ok(issues) => {
+            let now = (inner.runtime.now_ms)();
+            let kept = github::save(inner.store.db(), &repo.id, &issues)
+                .and_then(|()| github::checked(inner.store.db(), &repo.id, now));
+            // Synced: the Forge poller keeps the issues current from here, starting afresh.
+            forge::issues_synced(&mut inner, &repo.id);
+            kept.err()
+        }
         Err(reason) => Some(reason),
     };
     announce(&inner, COMMAND, &repo);
@@ -470,7 +483,7 @@ fn advance_all(
             Some(command) => announce(inner, command, &repo),
             None => {
                 if let Ok(tasks) = list(inner, &repo) {
-                    inner.emit(Event::TasksChanged { repository_id: repo.id.clone(), tasks, house_rules: house_rules(&repo) });
+                    inner.emit(tasks_changed(inner, &repo, tasks));
                 }
             }
         }
@@ -537,9 +550,9 @@ pub(crate) fn linked_issues(inner: &Inner, path: &str, branch: &str) -> Vec<u32>
     issues
 }
 
-/// Read a repository's issues again (after a merge) and announce the board; quiet when the
-/// Forge cannot answer. Runs `gh` without holding the core. Only for a repository that
-/// has been synced before.
+/// Read a repository's issues again (on the Forge poller's schedule, or after a merge) and
+/// announce the board with the time they were read; quiet when the Forge cannot answer.
+/// Runs `gh` without holding the core. Only for a repository that has been synced before.
 pub(crate) fn refresh_issues(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     let (dir, forge) = {
         let inner = core.lock().expect("core lock");
@@ -549,12 +562,27 @@ pub(crate) fn refresh_issues(core: &Arc<Mutex<Inner>>, repository_id: &str) {
         }
         (Path::new(&repo.path).to_path_buf(), inner.runtime.forge.clone())
     };
-    let Ok(issues) = forge.issues(&dir) else { return };
-    let inner = core.lock().expect("core lock");
+    let read = forge.issues(&dir);
+    let mut inner = core.lock().expect("core lock");
+    let Ok(issues) = read else {
+        // Offline, say: try again later.
+        return forge::issues_polled(&mut inner, repository_id, false);
+    };
     let Some(repo) = worktrees::repository(&inner, repository_id) else { return };
-    if github::save(inner.store.db(), &repo.id, &issues).is_ok() {
+    let changed = github::differ(inner.store.db(), &repo.id, &issues);
+    forge::issues_polled(&mut inner, repository_id, changed);
+    let now = (inner.runtime.now_ms)();
+    let kept =
+        github::save(inner.store.db(), &repo.id, &issues).and_then(|()| github::checked(inner.store.db(), &repo.id, now));
+    if kept.is_ok() {
         if let Ok(tasks) = list(&inner, &repo) {
-            inner.emit(Event::TasksChanged { repository_id: repo.id.clone(), tasks, house_rules: house_rules(&repo) });
+            inner.emit(tasks_changed(&inner, &repo, tasks));
         }
     }
+}
+
+/// Is the repository's GitHub issues source one the Forge poller keeps current (synced
+/// at least once)?
+pub(crate) fn issues_synced(inner: &Inner, repository_id: &str) -> bool {
+    github::synced(inner.store.db(), repository_id)
 }
