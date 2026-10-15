@@ -233,7 +233,7 @@ fn announce(inner: &Inner, command: &str, repo: &StoredRepository) {
 /// [`Command::ReadTasks`](switchyard_schema::Command::ReadTasks).
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(command_name::READ_TASKS, format!("There is no repository {repository_id}"));
+        return inner.refuse(command_name::READ_TASKS, crate::no_repository(&repository_id));
     };
     announce(inner, command_name::READ_TASKS, &repo);
 }
@@ -246,7 +246,7 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     let (repo, dir, forge) = {
         let inner = core.lock().expect("core lock");
         let Some(repo) = worktrees::repository(&inner, repository_id) else {
-            return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+            return inner.refuse(COMMAND, crate::no_repository(&repository_id));
         };
         let dir = Path::new(&repo.path).to_path_buf();
         if git::remote(&dir).is_none() {
@@ -273,7 +273,7 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
 pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
     const COMMAND: &str = command_name::CREATE_TASK;
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
     };
     let title = new.title.trim().to_string();
     if title.is_empty() {
@@ -333,7 +333,7 @@ fn linked_task(db: &Connection, session_id: &str) -> Option<String> {
 pub(crate) fn link(inner: &Inner, session_id: &str, task_id: Option<&str>, relink: bool) {
     const COMMAND: &str = command_name::LINK_TASK;
     let Some(session) = sessions::live(inner, session_id) else {
-        return inner.refuse(COMMAND, format!("There is no session {session_id}"));
+        return inner.refuse(COMMAND, crate::no_session(&session_id));
     };
     let db = inner.store.db();
     let Some(task_id) = task_id else {

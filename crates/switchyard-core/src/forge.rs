@@ -540,7 +540,7 @@ pub(crate) fn prune(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     let repo = {
         let inner = core.lock().expect("core lock");
         let Some(repo) = worktrees::repository(&inner, repository_id) else {
-            return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+            return inner.refuse(COMMAND, crate::no_repository(&repository_id));
         };
         if git::remote(Path::new(&repo.path)).is_none() {
             return inner.refuse(COMMAND, "This repository has no remote; nothing is merged on a Forge".into());

@@ -29,7 +29,7 @@ pub(crate) fn replace(
 ) {
     const COMMAND: &str = command_name::REPLACE_SESSION;
     let Some(state) = super::find(inner, id) else {
-        return inner.refuse(COMMAND, format!("There is no session {id}"));
+        return inner.refuse(COMMAND, crate::no_session(&id));
     };
     if !replaceable(state.session.status) {
         let label = status_label(state.session.status);
@@ -123,7 +123,7 @@ pub(crate) fn export(inner: &Inner, id: &str) {
                 Ok(entries) => (archived.session.branch.clone(), entries),
                 Err(e) => return inner.refuse(COMMAND, format!("Could not read the transcript: {e}")),
             },
-            None => return inner.refuse(COMMAND, format!("There is no session {id}")),
+            None => return inner.refuse(COMMAND, crate::no_session(&id)),
         },
     };
     let dir = &inner.runtime.export_dir;

@@ -278,6 +278,16 @@ impl Core {
     }
 }
 
+/// The refusal for a repository id the core does not know.
+pub(crate) fn no_repository(id: &str) -> String {
+    format!("There is no repository {id}")
+}
+
+/// The refusal for a session id the core does not know.
+pub(crate) fn no_session(id: &str) -> String {
+    format!("There is no session {id}")
+}
+
 impl Inner {
     pub(crate) fn emit(&self, event: Event) {
         // A closed channel means nobody is listening; the core carries on regardless.

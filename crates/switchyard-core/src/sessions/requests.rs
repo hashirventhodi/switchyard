@@ -99,7 +99,7 @@ fn asked(detail: &RequestDetail) -> String {
 pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Verdict) {
     const COMMAND: &str = command_name::ANSWER_REQUEST;
     let Some(state) = super::find(inner, id) else {
-        return inner.refuse(COMMAND, format!("There is no session {id}"));
+        return inner.refuse(COMMAND, crate::no_session(&id));
     };
     let Some(&index) = state.requests.get(request_id) else {
         return inner.refuse(COMMAND, format!("There is no request {request_id} in this session"));
@@ -127,7 +127,7 @@ pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Ver
             Err(reason) => return inner.refuse(COMMAND, reason),
         };
         let Some(repo) = policy::repository(inner, &repository_id) else {
-            return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+            return inner.refuse(COMMAND, crate::no_repository(&repository_id));
         };
         if let Err(reason) = policy::add_local(inner, &repo.id, &rule) {
             return inner.refuse(COMMAND, reason);
