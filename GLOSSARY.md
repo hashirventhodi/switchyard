@@ -1,0 +1,122 @@
+# Switchyard
+
+A desktop IDE for running several local AI coding agents in parallel, each in its own git worktree, and getting their work from first prompt to merged branch. One agent per worktree, one queue of things that need a human, git as the source of truth.
+
+## Language
+
+### Core objects
+
+**Repository**:
+A local git checkout that Switchyard knows about, with its base branch, remote, context files and standing instructions.
+_Avoid_: Project, codebase
+
+**Worktree**:
+A git worktree of a Repository on a branch. The durable unit of work: uncommitted files, commits and shells belong to it, never to a Session.
+_Avoid_: Checkout, workspace, branch (a branch is what a worktree is on)
+
+**Primary worktree**:
+The Repository's main checkout. Exactly one per Repository. Never merged or removed; only Explore sessions may run on it.
+_Avoid_: Main worktree, root
+
+**Session**:
+One agent running on one Worktree for a while. Owns its transcript; owns no git state. At most one per Worktree at a time, Explore sessions included.
+_Avoid_: Run, conversation, chat, thread
+
+**Archived session**:
+A Session that was replaced or whose Worktree was removed. Its transcript is kept as the audit trail; it can be read but not resumed.
+_Avoid_: Deleted session, history
+
+**Explore session**:
+A Session whose agent may read but not write: no edits, no Merge. The only kind of Session allowed on a Primary worktree.
+_Avoid_: Plan session, read-only session, companion session
+
+**Task**:
+The reason a Session exists: a ticket from GitHub, Jira or a local file. A Session links to at most one Task.
+_Avoid_: Ticket, issue, story, card
+
+**Terminal**:
+A tab in the dock: either a shell PTY on a Worktree, or the read-only Agent log of a Session.
+_Avoid_: Console, tab
+
+**Agent log**:
+A Session's event stream rendered as terminal-styled text: tool calls and their output. Derived, never stored separately.
+_Avoid_: Agent terminal, agent PTY
+
+**Forge**:
+The hosted git service that owns pull requests and reports when a branch is Merged. GitHub is the first.
+_Avoid_: Remote (that is the git remote), provider, host
+
+### Permissions
+
+**Permission request**:
+Something the agent wants that its Permission mode does not let it do unasked. Exactly five kinds: command, file write, network, MCP tool, question. Every kind puts the Session into Waiting.
+_Avoid_: Prompt (that is what the user types), approval, perm
+
+**Classifier denial**:
+In Full auto, an action the CLI's own safety classifier refused. Recorded and counted on the Session; never a Permission request.
+
+**Grant**:
+A standing decision that a command pattern, network domain or MCP tool may run without asking, scoped to a Repository. Created by answering a Permission request with "Always allow" or written in Policy. File writes are never granted.
+_Avoid_: Allow-list entry, whitelist, always-allow
+
+**Policy**:
+The layered set of Grants and denials that answers a permission request: organisation policy, then the Repository's committed policy, then the user's local Grants for that Repository. A denial at a higher layer wins.
+_Avoid_: Settings, config, rules
+
+**Run once**:
+Approving a single permission request without creating a Grant.
+_Avoid_: Session allow, temporary grant
+
+**Interpreter prefix**:
+A command that runs other commands (`bash -c`, `sh -c`, `eval`, `xargs`, `env`, `npx`). Never matched by a wildcard Grant; needs an explicit one.
+
+**Permission mode**:
+How much a Session asks before acting: Ask first, Auto edit, or Full auto. Set per Session; the Repository's Policy sets the default and the ceiling.
+_Avoid_: Approval mode, autonomy level, YOLO
+
+### Shipping
+
+**Open pull request**:
+Pushing a Worktree's branch and opening (or enqueueing) a pull request on the Forge, then tracking it until Merged. The only way work leaves a Worktree for a Repository with a remote.
+_Avoid_: Merge, ship, land, submit
+
+**Local merge**:
+Merging a Worktree's branch into base in the Primary worktree. Available only for Repositories with no remote.
+
+**Merged**:
+The Forge reports the branch is in base. Triggers worktree cleanup and moves the Task to Done, whether or not the pull request was opened from Switchyard.
+
+### Review
+
+**Decision**:
+Accept or Reject on a changed file or one of its hunks. File decisions override hunk decisions. Discarded on commit.
+
+**Hunk feedback**:
+Rejected hunks and comments sent to the agent as structured review. Switchyard never reverts a hunk itself; a file with any rejected hunk is not committable until the agent revises it or the user accepts the whole file.
+_Avoid_: Partial revert, hunk staging
+
+### Session status
+
+Exactly five statuses, shown everywhere with the same colour and label.
+
+**Running**:
+The agent is working and needs nothing from the user.
+
+**Waiting** (shown as "Needs you"):
+The agent is blocked on the user: a permission request, a question, or a finished turn awaiting the next prompt.
+_Avoid_: Blocked, pending, idle (for a finished turn)
+
+**Idle** (shown as "Paused"):
+The user stopped the Session. Resumable. The only status a user puts a Session into.
+_Avoid_: Stopped, suspended, waiting (for a user stop)
+
+**Done** (shown as "Finished"):
+The agent declared its work complete. Says nothing about whether the branch can be merged.
+_Avoid_: Ready to merge, complete, success
+
+**Failed** (shown as "Error"):
+The agent process exited or its last command failed.
+_Avoid_: Crashed, broken
+
+**Ready to merge**:
+A property of a Worktree, not a Session status: clean tree, ahead of its base, not behind it. Derived from git, never stored.
