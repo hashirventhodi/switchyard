@@ -10,6 +10,7 @@ pub mod agents;
 pub mod compat;
 mod git;
 mod repo_policy;
+mod review;
 mod sessions;
 pub mod sidecar;
 mod spend;
@@ -70,6 +71,7 @@ pub(crate) struct Inner {
     runtime: Runtime,
     sessions: Sessions,
     compat: Compat,
+    review: review::Decisions,
 }
 
 #[derive(Debug)]
@@ -88,7 +90,7 @@ impl Core {
         let store = Store::open(data_dir).map_err(|e| CoreError(format!("cannot open store: {e}")))?;
         let compat = Compat::open(data_dir);
         let inner =
-            Inner { data_dir: data_dir.to_path_buf(), events, store, runtime, sessions: Sessions::default(), compat };
+            Inner { data_dir: data_dir.to_path_buf(), events, store, runtime, sessions: Sessions::default(), compat, review: Default::default() };
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
     }
 
@@ -111,6 +113,11 @@ impl Core {
             Command::RemoveWorktree { worktree_path } => worktrees::remove(&mut inner, &worktree_path),
             Command::RefreshWorktrees => worktrees::refresh(&inner),
             Command::CheckAgents => compat::check(&mut inner),
+            Command::ReadChanges { worktree_path } => review::read(&mut inner, &worktree_path),
+            Command::DecideFile { worktree_path, path, decision } => {
+                review::decide(&mut inner, &worktree_path, &path, decision)
+            }
+            Command::CommitAccepted { worktree_path, message } => review::commit(&mut inner, &worktree_path, &message),
         }
     }
 }

@@ -127,3 +127,46 @@ fn worktree_lifecycle_commands_and_events_use_camel_case() {
         json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3}})
     );
 }
+
+#[test]
+fn review_commands_and_events_use_camel_case() {
+    use switchyard_schema::{ChangedFile, Decision, DiffLine, FileStatus, Hunk, LineKind};
+    let command: Command = serde_json::from_value(
+        json!({"type": "decideFile", "worktreePath": "/wt/x", "path": "a.rs", "decision": "accept"}),
+    )
+    .unwrap();
+    assert_eq!(
+        command,
+        Command::DecideFile { worktree_path: "/wt/x".into(), path: "a.rs".into(), decision: Some(Decision::Accept) }
+    );
+    let command: Command =
+        serde_json::from_value(json!({"type": "commitAccepted", "worktreePath": "/wt/x", "message": "m"})).unwrap();
+    assert_eq!(command, Command::CommitAccepted { worktree_path: "/wt/x".into(), message: "m".into() });
+
+    let event = Event::ChangesRead {
+        worktree_path: "/wt/x".into(),
+        files: vec![ChangedFile {
+            path: "b.rs".into(),
+            old_path: Some("a.rs".into()),
+            status: FileStatus::Renamed,
+            added: 1,
+            removed: 0,
+            binary: false,
+            decision: None,
+            hunks: vec![Hunk {
+                id: "00ff".into(),
+                header: "@@ -1 +1,2 @@".into(),
+                lines: vec![DiffLine { kind: LineKind::Added, old: None, new: Some(2), text: "x".into() }],
+            }],
+        }],
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"type": "changesRead", "worktreePath": "/wt/x", "files": [{
+            "path": "b.rs", "oldPath": "a.rs", "status": "renamed", "added": 1, "removed": 0,
+            "binary": false, "decision": null,
+            "hunks": [{"id": "00ff", "header": "@@ -1 +1,2 @@",
+                       "lines": [{"kind": "added", "old": null, "new": 2, "text": "x"}]}]
+        }]})
+    );
+}

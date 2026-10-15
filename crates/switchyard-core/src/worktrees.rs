@@ -138,6 +138,14 @@ pub(crate) fn refresh(inner: &Inner) {
     }
 }
 
+/// Re-read one known worktree's facts from git and emit them.
+pub(crate) fn refresh_one(inner: &Inner, worktree_path: &str) {
+    let Some((repo, wt)) = inner.find_worktree(worktree_path) else { return };
+    let dir = Path::new(&repo.path);
+    let Some(primary) = git::worktrees(dir).ok().and_then(|l| l.into_iter().next()) else { return };
+    emit_facts(inner, &wt.path, &git::base_branch(dir, &primary));
+}
+
 /// Emit what git says about the worktree at `path` relative to `base`. A worktree git
 /// cannot read (deleted behind our back, say) gets no facts.
 fn emit_facts(inner: &Inner, path: &Path, base: &str) {
