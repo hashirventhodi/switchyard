@@ -392,7 +392,8 @@ export function reduce(state: State, event: Event): State {
     case "fileDecided": {
       const list = state.changes[event.worktreePath];
       if (!list) return state;
-      const next = list.map((f) => (f.path === event.path ? { ...f, decision: event.decision } : f));
+      // A fresh decision is pinned to the current content: never stale.
+      const next = list.map((f) => (f.path === event.path ? { ...f, decision: event.decision, stale: false } : f));
       return { ...state, changes: { ...state.changes, [event.worktreePath]: next } };
     }
     case "hunkReviewed": {
@@ -410,7 +411,8 @@ export function reduce(state: State, event: Event): State {
     }
     case "committed": {
       const n = event.files.length;
-      const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})`;
+      const skipped = event.skippedStale.length ? `; skipped ${event.skippedStale.join(", ")}: changed since you decided` : "";
+      const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})${skipped}`;
       const noted = worktreeActivity(state, event.worktreePath, `committed ${n} file${n === 1 ? "" : "s"} (${event.commit})`);
       return resultToast(noted, text, "ok");
     }

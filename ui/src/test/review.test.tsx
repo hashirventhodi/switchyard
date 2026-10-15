@@ -32,7 +32,7 @@ const base: Event[] = [
 ];
 
 function changed(path: string, status: ChangedFile["status"], extra: Partial<ChangedFile> = {}): ChangedFile {
-  return { path, oldPath: null, status, added: 1, removed: 0, binary: false, decision: null, hunks: [], ...extra };
+  return { path, oldPath: null, status, added: 1, removed: 0, binary: false, decision: null, stale: false, hunks: [], staleHunks: [], ...extra };
 }
 
 const readme = changed("README.md", "modified", {
@@ -238,7 +238,7 @@ test("a commit toasts its result and the re-read changes carry no decisions", ()
   act(() => emit({ type: "changesRead", worktreePath: WT, files: [{ ...readme, decision: "accept" }, changed("b.ts", "modified")] }));
   act(() =>
     emit(
-      { type: "committed", worktreePath: WT, branch: "fix/readme", commit: "abc1234", files: ["README.md"] },
+      { type: "committed", worktreePath: WT, branch: "fix/readme", commit: "abc1234", files: ["README.md"], skippedStale: [] },
       { type: "changesRead", worktreePath: WT, files: [changed("b.ts", "modified")] },
     ),
   );

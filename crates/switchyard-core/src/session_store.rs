@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS review_hunks (
     decision      TEXT,
     comment       TEXT,
     sent          INTEGER NOT NULL,
+    path          TEXT NOT NULL DEFAULT '',
+    header        TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (worktree_path, hunk_id)
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -93,6 +95,14 @@ pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
         .exists([])?;
     if !has_cache_writes {
         db.execute_batch("ALTER TABLE session_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0")?;
+    }
+    // Stores made before a hunk review named its file and hunk (for Stale decisions).
+    let has_hunk_path = db.prepare("SELECT 1 FROM pragma_table_info('review_hunks') WHERE name = 'path'")?.exists([])?;
+    if !has_hunk_path {
+        db.execute_batch(
+            "ALTER TABLE review_hunks ADD COLUMN path TEXT NOT NULL DEFAULT '';
+             ALTER TABLE review_hunks ADD COLUMN header TEXT NOT NULL DEFAULT '';",
+        )?;
     }
     Ok(())
 }
@@ -297,7 +307,7 @@ pub(crate) fn take_processes(db: &Connection) -> rusqlite::Result<Vec<Recorded>>
     Ok(list)
 }
 
-/// One worktree's review decisions: path -> (decision, fingerprint of the diff it was taken on).
+/// One worktree's review decisions: path -> (decision, content hash of the file it was taken on).
 pub(crate) type WorktreeDecisions = std::collections::HashMap<String, (switchyard_schema::Decision, u64)>;
 
 /// Replace the stored decisions of the worktree at `worktree_path` with `decisions`.
@@ -339,8 +349,17 @@ pub(crate) fn save_hunk_reviews(db: &Connection, worktree_path: &str, reviews: &
         db.execute("DELETE FROM review_hunks WHERE worktree_path = ?1", params![worktree_path])?;
         for (hunk_id, review) in reviews {
             db.execute(
-                "INSERT INTO review_hunks (worktree_path, hunk_id, decision, comment, sent) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![worktree_path, hunk_id, review.decision.as_ref().map(json), review.comment, review.sent],
+                "INSERT INTO review_hunks (worktree_path, hunk_id, decision, comment, sent, path, header) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    worktree_path,
+                    hunk_id,
+                    review.decision.as_ref().map(json),
+                    review.comment,
+                    review.sent,
+                    review.path,
+                    review.header
+                ],
             )?;
         }
         Ok(())
@@ -349,7 +368,7 @@ pub(crate) fn save_hunk_reviews(db: &Connection, worktree_path: &str, reviews: &
 
 /// Every stored hunk review, by worktree path.
 pub(crate) fn hunk_reviews(db: &Connection) -> rusqlite::Result<std::collections::HashMap<String, WorktreeHunkReviews>> {
-    let mut stmt = db.prepare("SELECT worktree_path, hunk_id, decision, comment, sent FROM review_hunks")?;
+    let mut stmt = db.prepare("SELECT worktree_path, hunk_id, decision, comment, sent, path, header FROM review_hunks")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -357,11 +376,13 @@ pub(crate) fn hunk_reviews(db: &Connection) -> rusqlite::Result<std::collections
             r.get::<_, Option<String>>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, bool>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
         ))
     })?;
     let mut out: std::collections::HashMap<String, WorktreeHunkReviews> = Default::default();
     for row in rows {
-        let (worktree, hunk_id, decision, comment, sent) = row?;
+        let (worktree, hunk_id, decision, comment, sent, path, header) = row?;
         let decision = match decision {
             Some(d) => match serde_json::from_str(&d) {
                 Ok(d) => Some(d),
@@ -369,7 +390,7 @@ pub(crate) fn hunk_reviews(db: &Connection) -> rusqlite::Result<std::collections
             },
             None => None,
         };
-        out.entry(worktree).or_default().insert(hunk_id, crate::review::HunkReview { decision, comment, sent });
+        out.entry(worktree).or_default().insert(hunk_id, crate::review::HunkReview { path, header, decision, comment, sent });
     }
     Ok(out)
 }

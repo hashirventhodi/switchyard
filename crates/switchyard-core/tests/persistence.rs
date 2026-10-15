@@ -623,7 +623,8 @@ fn a_twenty_thousand_entry_session_reloads_in_under_a_second() {
 
 // ---- review decisions ----
 
-fn decision_after_read(core: &mut Harness, worktree: &Path, file: &str) -> Option<Decision> {
+/// The file's decision after a fresh read, when it counts (a Stale decision does not).
+fn counting_decision(core: &mut Harness, worktree: &Path, file: &str) -> Option<Decision> {
     let events = core.send(Command::ReadChanges { worktree_path: path(worktree) });
     let files = events
         .into_iter()
@@ -632,7 +633,7 @@ fn decision_after_read(core: &mut Harness, worktree: &Path, file: &str) -> Optio
             _ => None,
         })
         .expect("changes read");
-    files.into_iter().find(|f| f.path == file).and_then(|f| f.decision)
+    files.into_iter().find(|f| f.path == file).and_then(|f| f.decision.filter(|_| !f.stale))
 }
 
 fn decide(core: &mut Harness, worktree: &Path, file: &str, decision: Decision) {
@@ -649,12 +650,12 @@ fn review_decisions_survive_a_relaunch() {
 
     let mut core = core.relaunch();
 
-    assert_eq!(decision_after_read(&mut core, &worktree, "README"), Some(Decision::Accept));
-    assert_eq!(decision_after_read(&mut core, &worktree, "NOTES"), Some(Decision::Reject));
+    assert_eq!(counting_decision(&mut core, &worktree, "README"), Some(Decision::Accept));
+    assert_eq!(counting_decision(&mut core, &worktree, "NOTES"), Some(Decision::Reject));
 }
 
 #[test]
-fn a_stored_decision_lapses_when_the_file_changed_while_the_app_was_closed() {
+fn a_stored_decision_goes_stale_when_the_file_changed_while_the_app_was_closed() {
     let (mut core, _repo, worktree) = setup();
     std::fs::write(worktree.join("README"), "changed\n").unwrap();
     decide(&mut core, &worktree, "README", Decision::Accept);
@@ -662,7 +663,7 @@ fn a_stored_decision_lapses_when_the_file_changed_while_the_app_was_closed() {
     let mut core = core.relaunch();
     std::fs::write(worktree.join("README"), "changed again\n").unwrap();
 
-    assert_eq!(decision_after_read(&mut core, &worktree, "README"), None);
+    assert_eq!(counting_decision(&mut core, &worktree, "README"), None);
 }
 
 #[test]
@@ -674,5 +675,5 @@ fn an_undone_decision_stays_undone_after_a_relaunch() {
 
     let mut core = core.relaunch();
 
-    assert_eq!(decision_after_read(&mut core, &worktree, "README"), None);
+    assert_eq!(counting_decision(&mut core, &worktree, "README"), None);
 }

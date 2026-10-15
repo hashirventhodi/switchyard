@@ -45,7 +45,12 @@ commit: string,
 /**
  * Paths committed (for a rename, the new path).
  */
-files: Array<string>, } | { "type": "hunkReviewed", worktreePath: string, path: string, hunkId: string, decision: Decision | null, comment: string | null, sent: boolean, } | { "type": "feedbackSent", worktreePath: string, sessionId: string, 
+files: Array<string>, 
+/**
+ * Accepted files left out because they changed since you decided (their Accept is
+ * a Stale decision): re-confirm them to commit them.
+ */
+skippedStale: Array<string>, } | { "type": "hunkReviewed", worktreePath: string, path: string, hunkId: string, decision: Decision | null, comment: string | null, sent: boolean, } | { "type": "feedbackSent", worktreePath: string, sessionId: string, 
 /**
  * How many hunks the message covered.
  */

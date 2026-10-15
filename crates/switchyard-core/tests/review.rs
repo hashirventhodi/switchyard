@@ -166,15 +166,19 @@ fn deciding_a_file_is_reported_and_shown_on_the_next_read() {
 }
 
 #[test]
-fn a_decision_lapses_when_the_file_changes_again() {
+fn a_decision_goes_stale_when_the_file_changes_again() {
     let (_repo, wt, mut core) = setup();
     std::fs::write(wt.join("lib.txt"), "changed\n").unwrap();
     decide(&mut core, &wt, "lib.txt", Some(Decision::Accept));
 
     std::fs::write(wt.join("lib.txt"), "changed again\n").unwrap();
 
-    assert_eq!(file(&read(&mut core, &wt), "lib.txt").decision, None);
-    assert_eq!(refusal(&commit(&mut core, &wt, "msg")), "Accept at least one file to commit");
+    let lib = file(&read(&mut core, &wt), "lib.txt").clone();
+    assert_eq!((lib.decision, lib.stale), (Some(Decision::Accept), true));
+    assert_eq!(
+        refusal(&commit(&mut core, &wt, "msg")),
+        "lib.txt changed since you decided; re-confirm it before committing"
+    );
 }
 
 #[test]

@@ -47,7 +47,7 @@ function hunk(id: string, header: string, extra: Partial<Hunk> = {}): Hunk {
 }
 
 function changed(path: string, status: ChangedFile["status"], hunks: Hunk[], extra: Partial<ChangedFile> = {}): ChangedFile {
-  return { path, oldPath: null, status, added: hunks.length, removed: hunks.length, binary: false, decision: null, hunks, ...extra };
+  return { path, oldPath: null, status, added: hunks.length, removed: hunks.length, binary: false, decision: null, stale: false, hunks, staleHunks: [], ...extra };
 }
 
 const readme = changed("README.md", "modified", [hunk("h1", "@@ -1,2 +1,2 @@ intro"), hunk("h2", "@@ -9,2 +9,2 @@ outro")]);
