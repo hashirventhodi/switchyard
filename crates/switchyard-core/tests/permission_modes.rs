@@ -5,7 +5,7 @@
 //! unless a grant names them explicitly.
 mod harness;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use adapter_protocol::{
     CliInfo, Command as AgentCommand, Event as AgentEvent, PermissionMode as AgentMode, RequestDetail,
@@ -229,4 +229,60 @@ fn every_mode_maps_to_its_protocol_mode() {
     assert_eq!(protocol_mode(PermissionMode::AskFirst, true), AgentMode::AskFirst);
     assert_eq!(protocol_mode(PermissionMode::AutoEdit, true), AgentMode::AutoEdit);
     assert_eq!(protocol_mode(PermissionMode::FullAuto, false), AgentMode::FullAuto);
+}
+
+fn set_mode(s: &mut Setup, id: &str, mode: PermissionMode) -> Vec<Event> {
+    s.core.send(Command::SetPermissionMode { session_id: id.into(), permission_mode: mode })
+}
+
+#[test]
+fn the_composer_switches_a_running_session_to_another_mode() {
+    let mut s = setup(None);
+    let id = start(&mut s, PermissionMode::FullAuto);
+    s.core.agent_says(0, init(AgentMode::AskFirst, "default"));
+
+    let events = set_mode(&mut s, &id, PermissionMode::AutoEdit);
+
+    assert_eq!(refused(&events), Vec::<String>::new());
+    assert!(events.contains(&Event::SessionModeChanged { session_id: id.clone(), permission_mode: PermissionMode::AutoEdit }));
+    assert_eq!(system_lines(&events), vec!["Permission mode: Auto edit (was Full auto).".to_string()]);
+    assert_eq!(last_facts(&events).mode_warning, None, "the old warning is about the old mode");
+    assert_eq!(
+        s.core.agents.commands(0).last(),
+        Some(&AgentCommand::SetPermissionMode { permission_mode: AgentMode::AutoEdit })
+    );
+    assert_eq!(status_changes(&events), vec![]);
+}
+
+#[test]
+fn the_ceiling_refuses_a_switch_above_it() {
+    let mut s = setup(Some("permissions:\n  ceiling: auto_edit\n"));
+    let id = start(&mut s, PermissionMode::AskFirst);
+    let sent = s.core.agents.commands(0).len();
+
+    let events = set_mode(&mut s, &id, PermissionMode::FullAuto);
+
+    assert_eq!(refused(&events), vec!["This repository's policy allows at most Auto edit".to_string()]);
+    assert_eq!(s.core.agents.commands(0).len(), sent, "nothing reaches the agent");
+    // And at start.
+    let mut s = setup(Some("permissions:\n  ceiling: auto_edit\n"));
+    let path = s.worktree.clone();
+    let events = s.core.start_session_in(&path, PermissionMode::FullAuto, "Ship it.");
+    assert_eq!(refused(&events), vec!["This repository's policy allows at most Auto edit".to_string()]);
+}
+
+#[test]
+fn explore_is_chosen_at_start_and_never_switched_to_or_from() {
+    let mut s = setup(None);
+    let id = start(&mut s, PermissionMode::AskFirst);
+    assert_eq!(
+        refused(&set_mode(&mut s, &id, PermissionMode::Explore)),
+        vec!["Explore is chosen when a session starts: start an Explore session instead".to_string()]
+    );
+    let mut s = setup(None);
+    let id = start(&mut s, PermissionMode::Explore);
+    assert_eq!(
+        refused(&set_mode(&mut s, &id, PermissionMode::AutoEdit)),
+        vec!["An Explore session stays in Explore: start a new session to make changes".to_string()]
+    );
 }

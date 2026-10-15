@@ -120,6 +120,9 @@ impl Core {
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
             Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &session_id, &text),
+            Command::SetPermissionMode { session_id, permission_mode } => {
+                sessions::set_mode(&mut inner, &session_id, permission_mode)
+            }
             Command::OpenShell { worktree_path, cols, rows } => {
                 shells::open(&mut inner, &self.inner, &worktree_path, cols, rows)
             }

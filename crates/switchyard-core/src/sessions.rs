@@ -215,6 +215,51 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
+/// The `setPermissionMode` command: the composer's mode segment. Explore is chosen only
+/// at start (it is the only kind allowed on a primary worktree), and the Repository's
+/// ceiling caps the switch as it caps the start.
+pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
+    const COMMAND: &str = "setPermissionMode";
+    let Some(state) = find(inner, id) else {
+        return inner.refuse(COMMAND, format!("There is no session {id}"));
+    };
+    let (from, repository_id, status) = (state.session.permission_mode, state.session.repository_id.clone(), state.session.status);
+    if from == mode {
+        return;
+    }
+    if from == PermissionMode::Explore {
+        return inner.refuse(COMMAND, "An Explore session stays in Explore: start a new session to make changes".into());
+    }
+    if mode == PermissionMode::Explore {
+        return inner.refuse(COMMAND, "Explore is chosen when a session starts: start an Explore session instead".into());
+    }
+    if status == SessionStatus::Failed {
+        return inner.refuse(COMMAND, "The agent has stopped; start a new session".into());
+    }
+    let Some(repo) = policy::repository(inner, &repository_id) else {
+        return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
+    };
+    if let Err(reason) = policy::admit_mode(&repo, mode) {
+        return inner.refuse(COMMAND, reason);
+    }
+    let expected = agents::protocol_mode(mode, policy::sandboxed(&repo));
+    let Some(state) = find(inner, id) else { return };
+    state.session.permission_mode = mode;
+    state.expected_mode = expected;
+    // A warning about the old mode no longer holds; the CLI does not re-report its mode.
+    let cleared = state.facts.mode_warning.take().is_some();
+    let mut events = vec![Event::SessionModeChanged { session_id: id.into(), permission_mode: mode }];
+    if cleared {
+        events.push(facts(state));
+    }
+    let text = format!("Permission mode: {} (was {}).", policy::mode_label(mode), policy::mode_label(from));
+    events.push(append(state, Entry::System { text }));
+    for event in events {
+        inner.emit(event);
+    }
+    send_to_agent(inner, id, AgentCommand::SetPermissionMode { permission_mode: expected });
+}
+
 /// The worktree path and status of session `id`, if it exists.
 pub(crate) fn worktree_and_status(inner: &Inner, id: &str) -> Option<(String, SessionStatus)> {
     let state = inner.sessions.list.iter().find(|s| s.session.id == id)?;

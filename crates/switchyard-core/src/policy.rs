@@ -225,7 +225,7 @@ pub(crate) fn sandboxed(repo: &StoredRepository) -> bool {
     repo_policy::load(Path::new(&repo.path)).is_ok_and(|file| file.permissions.sandbox)
 }
 
-fn mode_label(mode: PermissionMode) -> &'static str {
+pub(crate) fn mode_label(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Explore => "Explore",
         PermissionMode::AskFirst => "Ask first",

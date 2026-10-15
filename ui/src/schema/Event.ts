@@ -2,6 +2,7 @@
 import type { AgentSetup } from "./AgentSetup";
 import type { Commit } from "./Commit";
 import type { Entry } from "./Entry";
+import type { PermissionMode } from "./PermissionMode";
 import type { Policy } from "./Policy";
 import type { Repository } from "./Repository";
 import type { Session } from "./Session";
@@ -15,7 +16,7 @@ import type { WorktreeFacts } from "./WorktreeFacts";
 /**
  * Something the core reports. The renderer derives all of its state from these.
  */
-export type Event = { "type": "attached" } | { "type": "repositoryAdded", repository: Repository, } | { "type": "worktreeAdded", repositoryId: string, worktree: Worktree, } | { "type": "commandRefused", command: string, reason: string, } | { "type": "sessionStarted", session: Session, } | { "type": "sessionStatusChanged", sessionId: string, status: SessionStatus, } | { "type": "sessionFactsChanged", sessionId: string, facts: SessionFacts, } | { "type": "spendRecorded", sessionId: string, 
+export type Event = { "type": "attached" } | { "type": "repositoryAdded", repository: Repository, } | { "type": "worktreeAdded", repositoryId: string, worktree: Worktree, } | { "type": "commandRefused", command: string, reason: string, } | { "type": "sessionStarted", session: Session, } | { "type": "sessionStatusChanged", sessionId: string, status: SessionStatus, } | { "type": "sessionModeChanged", sessionId: string, permissionMode: PermissionMode, } | { "type": "sessionFactsChanged", sessionId: string, facts: SessionFacts, } | { "type": "spendRecorded", sessionId: string, 
 /**
  * Milliseconds since the Unix epoch.
  */

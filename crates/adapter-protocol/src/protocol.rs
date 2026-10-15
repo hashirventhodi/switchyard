@@ -130,6 +130,10 @@ pub enum Command {
         verdict: Verdict,
     },
     Interrupt,
+    /// Switch the running CLI to another Permission mode (the composer's mode segment).
+    SetPermissionMode {
+        permission_mode: PermissionMode,
+    },
     Resume {
         external_session_id: String,
     },
