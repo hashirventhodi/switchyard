@@ -9,7 +9,9 @@ export default defineConfig({
   server: { port: 1420, strictPort: true },
   build: { outDir: "dist", emptyOutDir: true, target: "safari15" },
   test: {
-    root: "ui",
+    // Renderer tests under ui/ (jsdom); sidecar tests opt into node with a file comment.
+    root: ".",
+    include: ["ui/src/**/*.test.{ts,tsx}", "sidecar/test/**/*.test.ts"],
     environment: "jsdom",
   },
 });

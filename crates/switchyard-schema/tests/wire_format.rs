@@ -29,3 +29,45 @@ fn events_serialize_with_camel_case_fields() {
         })
     );
 }
+
+#[test]
+fn session_commands_and_transcript_entries_use_camel_case() {
+    use switchyard_schema::{AgentKind, Entry, PermissionMode, ToolState};
+    let command: Command = serde_json::from_value(json!({
+        "type": "startSession",
+        "worktreePath": "/wt/a",
+        "agent": "claudeCode",
+        "permissionMode": "askFirst",
+        "prompt": "Fix it"
+    }))
+    .unwrap();
+    assert_eq!(
+        command,
+        Command::StartSession {
+            worktree_path: "/wt/a".into(),
+            agent: AgentKind::ClaudeCode,
+            permission_mode: PermissionMode::AskFirst,
+            prompt: "Fix it".into(),
+        }
+    );
+    let event = Event::TranscriptEntry {
+        session_id: "session-1".into(),
+        index: 3,
+        entry: Entry::Tool {
+            call_id: "t1".into(),
+            tool: "Bash".into(),
+            summary: "ls".into(),
+            state: ToolState::Ok,
+            output: Some("a".into()),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({
+            "type": "transcriptEntry",
+            "sessionId": "session-1",
+            "index": 3,
+            "entry": {"type": "tool", "callId": "t1", "tool": "Bash", "summary": "ls", "state": "ok", "output": "a"}
+        })
+    );
+}

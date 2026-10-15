@@ -8,6 +8,9 @@ description = "Switchyard core: processes, git, policy, store, session state mac
 
 [dependencies]
 switchyard-schema.workspace = true
+adapter-protocol = { path = "../adapter-protocol" }
+serde.workspace = true
+serde_json.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]

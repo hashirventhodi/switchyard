@@ -1,0 +1,50 @@
+// Adapter protocol v0.1 wire types (the Rust types in crates/adapter-protocol/src/protocol.rs
+// are the reference; see its README). Events and commands are tagged by `type`, snake_case.
+
+export const PROTOCOL_RANGE = "^0.1";
+
+export type PermissionMode = "explore" | "ask_first" | "auto_edit" | "full_auto" | "bypass";
+
+export type RequestDetail =
+  | { kind: "command"; command: string; cwd: string | null }
+  | { kind: "file_write"; path: string; diff: string | null }
+  | { kind: "network"; domain: string; url: string | null }
+  | { kind: "mcp_tool"; server: string; tool: string; input: unknown }
+  | { kind: "question"; question: string; options: string[] };
+
+export type ProtocolEvent =
+  | {
+      type: "session_init";
+      external_session_id: string;
+      permission_mode: PermissionMode;
+      cli_permission_mode: string;
+      cli: { name: string; version: string };
+      model: string | null;
+    }
+  | { type: "agent_text"; text: string }
+  | { type: "tool_call_started"; call_id: string; tool: string; input: unknown }
+  | { type: "tool_call_finished"; call_id: string; ok: boolean; output: string | null }
+  | { type: "permission_request"; request_id: string; request: RequestDetail; reason: string | null }
+  | { type: "turn_complete" }
+  | { type: "done"; summary: string | null }
+  | { type: "error"; message: string; fatal: boolean }
+  | {
+      type: "token_usage";
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cost_usd: number | null;
+    }
+  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null };
+
+export type Verdict =
+  | { decision: "allow_once" }
+  | { decision: "allow_always" }
+  | { decision: "deny"; message?: string | null }
+  | { decision: "answer"; text: string };
+
+export type ProtocolCommand =
+  | { type: "send_text"; text: string }
+  | { type: "answer_request"; request_id: string; verdict: Verdict }
+  | { type: "interrupt" }
+  | { type: "resume"; external_session_id: string };
