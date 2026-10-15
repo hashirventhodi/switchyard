@@ -117,6 +117,28 @@ pub fn dirty_count(dir: &Path) -> Result<u32, GitError> {
     Ok(out.lines().filter(|l| !l.trim().is_empty()).count() as u32)
 }
 
+/// Files a merge of `base` into HEAD would conflict on, by a dry-run merge
+/// (`git merge-tree --write-tree`): it writes objects only, never the working tree, the
+/// index or any ref.
+pub fn conflicting_files(dir: &Path, base: &str) -> Result<Vec<String>, GitError> {
+    let out = Command::new("git")
+        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", base])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    // Exit 0: merges cleanly. Exit 1: conflicts, listed after the tree id. Else: an error.
+    match out.status.code() {
+        Some(0) => Ok(Vec::new()),
+        Some(1) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut files: Vec<String> = stdout.lines().skip(1).filter(|l| !l.is_empty()).map(str::to_owned).collect();
+            files.dedup();
+            Ok(files)
+        }
+        _ => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
+    }
+}
+
 /// (ahead, behind): commits HEAD has that `base` lacks, and the other way round.
 pub fn ahead_behind(dir: &Path, base: &str) -> Result<(u32, u32), GitError> {
     let out = git(dir, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;

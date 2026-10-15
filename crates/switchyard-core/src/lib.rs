@@ -9,6 +9,7 @@
 pub mod agents;
 pub mod compat;
 mod git;
+mod rebase;
 mod repo_policy;
 mod sessions;
 pub mod sidecar;
@@ -111,6 +112,9 @@ impl Core {
             Command::RemoveWorktree { worktree_path } => worktrees::remove(&mut inner, &worktree_path),
             Command::RefreshWorktrees => worktrees::refresh(&inner),
             Command::CheckAgents => compat::check(&mut inner),
+            Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
+            Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &session_id),
+            Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
         }
     }
 }

@@ -47,8 +47,8 @@ test("the Worktrees view asks git for fresh facts and shows a card per worktree"
   expect(sent).toContainEqual({ type: "refreshWorktrees" });
   act(() =>
     emit(
-      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/fix", facts: { ahead: 2, behind: 0, dirty: 3 } },
-      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/feat", facts: { ahead: 0, behind: 4, dirty: 0 } },
+      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/fix", facts: { ahead: 2, behind: 0, dirty: 3, conflicts: [] } },
+      { type: "worktreeFactsChanged", worktreePath: "/wt/acme/feat", facts: { ahead: 0, behind: 4, dirty: 0, conflicts: [] } },
     ),
   );
 
