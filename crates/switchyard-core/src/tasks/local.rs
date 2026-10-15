@@ -80,7 +80,7 @@ impl TaskSource for LocalTasks {
         Ok(self.read()?.tasks.iter().map(source_task).collect())
     }
 
-    fn move_to(&mut self, key: &str, column: TaskColumn) -> Result<(), String> {
+    fn move_to(&mut self, key: &str, column: TaskColumn, _pull_request: Option<&str>) -> Result<(), String> {
         let mut file = self.read()?;
         let Some(task) = file.tasks.iter_mut().find(|t| t.key == key) else {
             return Err(format!("there is no local task {key}"));

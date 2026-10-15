@@ -320,6 +320,15 @@ pub enum Command {
         #[ts(rename = "repositoryId")]
         repository_id: String,
     },
+    /// Pull the Repository's GitHub Issues through the Forge onto the board (replacing what
+    /// the last sync saw), then answer as [`Command::ReadTasks`]. Never writes to GitHub.
+    /// When `gh` is missing or signed out the board keeps what it had and the refusal names
+    /// the setup state.
+    SyncTasks {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
     /// Add a local Task to the Repository's To do column. `checklist` lists its sub-steps.
     /// Answered with [`Event::TaskCreated`] and [`Event::TasksChanged`].
     CreateTask {

@@ -5,6 +5,9 @@
 //! the head commit) and answers `pr list --head <branch>` from what it holds. Tests change
 //! what GitHub reports with `set_state`, `set_checks`, `set_review` and `set_prs`.
 //!
+//! `issue list` prints what `set_issues` holds; `issue close` only logs (tests read the
+//! calls and change the issues themselves).
+//!
 //! Until `install` is called there is no `gh` at all (the CLI is missing).
 
 use std::path::PathBuf;
@@ -49,6 +52,14 @@ case "$1 $2" in
     ;;
   "pr list")
     if [ -f "$file" ]; then cat "$file"; else echo "[]"; fi
+    ;;
+  "issue list")
+    if [ -f "$state/signed-out" ]; then echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4; fi
+    if [ -f "$state/issues.json" ]; then cat "$state/issues.json"; else echo "[]"; fi
+    ;;
+  "issue close")
+    if [ -f "$state/close-fails" ]; then cat "$state/close-fails" >&2; exit 1; fi
+    echo "Closed issue #$3"
     ;;
   *)
     echo "fake gh: unknown command $*" >&2
@@ -107,7 +118,22 @@ impl FakeGh {
 
     /// Invocations whose first two arguments are `verb` (e.g. `["pr", "list"]`).
     pub fn calls_of(&self, verb: [&str; 2]) -> usize {
-        self.calls().iter().filter(|c| c.len() >= 2 && c[0] == verb[0] && c[1] == verb[1]).count()
+        self.calls_with(verb).len()
+    }
+
+    /// The invocations whose first two arguments are `verb`, whole.
+    pub fn calls_with(&self, verb: [&str; 2]) -> Vec<Vec<String>> {
+        self.calls().into_iter().filter(|c| c.len() >= 2 && c[0] == verb[0] && c[1] == verb[1]).collect()
+    }
+
+    /// What `issue list` prints from now on (GitHub's JSON, newest first).
+    pub fn set_issues(&self, issues: Value) {
+        std::fs::write(self.state().join("issues.json"), issues.to_string()).unwrap();
+    }
+
+    /// `issue close` fails with `message` on stderr.
+    pub fn fail_close(&self, message: &str) {
+        std::fs::write(self.state().join("close-fails"), message).unwrap();
     }
 
     fn file(&self, branch: &str) -> PathBuf {
@@ -144,6 +170,19 @@ impl FakeGh {
     pub fn set_review(&self, branch: &str, decision: &str) {
         self.edit_newest(branch, "reviewDecision", json!(decision));
     }
+}
+
+/// An issue as `gh issue list --json` prints it.
+pub fn gh_issue(number: u32, title: &str, body: &str, state: &str, labels: &[&str]) -> Value {
+    let labels: Vec<Value> = labels.iter().map(|l| json!({ "name": l, "description": "", "color": "ededed" })).collect();
+    json!({
+        "number": number,
+        "title": title,
+        "body": body,
+        "state": state,
+        "url": format!("https://github.com/acme/acme/issues/{number}"),
+        "labels": labels,
+    })
 }
 
 /// A pull request as `gh pr list --json` prints it.
