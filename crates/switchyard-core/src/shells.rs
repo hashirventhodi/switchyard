@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex, Weak};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use switchyard_schema::{Event, Shell};
 
+use crate::processes::{self, Recorded};
+use crate::session_store;
 use crate::Inner;
 
 /// Recent output kept per shell, replayed on attach so a reloaded renderer keeps its screen.
@@ -66,6 +68,8 @@ struct ShellState {
     input: Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     scrollback: String,
+    /// The shell process, recorded in the store so a relaunch after a crash kills it.
+    process: Option<Recorded>,
 }
 
 pub(crate) fn open(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &str, cols: u16, rows: u16) {
@@ -81,6 +85,10 @@ pub(crate) fn open(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &
     };
     inner.shells.next_id += 1;
     let killer = child.clone_killer();
+    let process = processes::record(&*inner.runtime.processes, child.process_id());
+    if let Some(process) = &process {
+        let _ = session_store::record_process(inner.store.db(), process, &format!("shell {id} in {worktree_path}"));
+    }
 
     let (input, inbox) = channel::<Vec<u8>>();
     std::thread::spawn(move || {
@@ -98,7 +106,7 @@ pub(crate) fn open(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &
 
     let shell = Shell { id, worktree_path: worktree_path.into() };
     inner.emit(Event::ShellOpened { shell: shell.clone() });
-    inner.shells.list.push(ShellState { shell, master, input, killer, scrollback: String::new() });
+    inner.shells.list.push(ShellState { shell, master, input, killer, scrollback: String::new(), process });
 }
 
 pub(crate) fn write(inner: &mut Inner, id: &str, data: &str) {
@@ -145,8 +153,25 @@ fn kill_where(inner: &mut Inner, matches: impl Fn(&Shell) -> bool) {
     inner.shells.list = kept;
     for mut state in closing {
         let _ = state.killer.kill();
+        forget(inner, &state);
         // The reader thread finds the shell gone and stays quiet: this is the one close event.
         inner.emit(Event::ShellClosed { shell_id: state.shell.id.clone(), exit_code: None });
+    }
+}
+
+/// The shell is gone: nothing to kill after a crash.
+fn forget(inner: &Inner, state: &ShellState) {
+    if let Some(process) = &state.process {
+        let _ = session_store::forget_process(inner.store.db(), process.pid);
+    }
+}
+
+/// On open: kill every shell a previous run left behind (same pid, same start time). Shells
+/// are never adopted; the dock starts empty.
+pub(crate) fn kill_orphans(inner: &Inner) {
+    let Ok(recorded) = session_store::take_processes(inner.store.db()) else { return };
+    for process in recorded {
+        processes::kill_if_same(&*inner.runtime.processes, &process);
     }
 }
 
@@ -211,7 +236,8 @@ fn read_until_exit(
     let Some(core) = core.upgrade() else { return };
     let mut inner = core.lock().expect("core lock");
     if let Some(at) = inner.shells.list.iter().position(|s| s.shell.id == id) {
-        inner.shells.list.remove(at);
+        let state = inner.shells.list.remove(at);
+        forget(&inner, &state);
         inner.emit(Event::ShellClosed { shell_id: id, exit_code });
     }
 }

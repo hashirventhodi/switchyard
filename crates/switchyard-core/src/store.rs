@@ -1,5 +1,6 @@
 //! The core's SQLite store. Holds only what git cannot tell us: which repositories the
-//! user added, and the user's local Grants for each. Worktrees and branches are never stored; they are re-read from git.
+//! user added, and the user's local Grants for each (sessions are in `session_store`).
+//! Worktrees and branches are never stored; they are re-read from git.
 
 use std::path::Path;
 
@@ -44,12 +45,20 @@ fn repo_id(rowid: i64) -> String {
 impl Store {
     pub fn open(data_dir: &Path) -> rusqlite::Result<Store> {
         let db = Connection::open(data_dir.join("switchyard.db"))?;
+        // Sessions write on every agent event: WAL keeps those writes cheap and crash-safe.
+        db.pragma_update(None, "journal_mode", "WAL")?;
+        db.pragma_update(None, "synchronous", "NORMAL")?;
         let version: usize = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
             db.execute_batch(sql)?;
             db.pragma_update(None, "user_version", i + 1)?;
         }
+        crate::session_store::init(&db)?;
         Ok(Store { db })
+    }
+
+    pub(crate) fn db(&self) -> &Connection {
+        &self.db
     }
 
     pub fn repository_by_path(&self, path: &str) -> rusqlite::Result<Option<StoredRepository>> {

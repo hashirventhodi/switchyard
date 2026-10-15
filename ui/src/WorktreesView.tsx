@@ -6,7 +6,7 @@ import type { NewSessionPreset } from "./NewSession";
 import type { Command } from "./schema/Command";
 import type { Worktree } from "./schema/Worktree";
 import { sessionOn, type RepositoryView, type State } from "./state";
-import { AGENT_LABEL, Status } from "./status";
+import { AGENT_LABEL, STATUS_LABEL, Status } from "./status";
 
 export function WorktreesView(props: {
   state: State;
@@ -101,7 +101,10 @@ function WorktreeCard(props: {
       {occupant && <div className="title">{AGENT_LABEL[occupant.agent]}</div>}
       {confirming ? (
         <div className="act confirm" role="group" aria-label={`Remove ${branch}?`}>
-          <span>Remove {branch}? The branch is kept.</span>
+          <span>
+            Remove {branch}? The branch is kept.
+            {occupant && ` Its ${STATUS_LABEL[occupant.status]} session is archived.`}
+          </span>
           <button
             className="btn sm danger"
             onClick={() => {

@@ -75,23 +75,33 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
     });
 
   const prompts = new Pushable<SDKUserMessage>();
-  const q = query({
-    prompt: prompts,
-    options: {
-      cwd: config.cwd,
-      // Always passed: when omitted the CLI picks its own default mode.
-      permissionMode: CLI_MODE[config.permission_mode] as Options["permissionMode"],
-      pathToClaudeCodeExecutable: config.claude_path ?? undefined,
-      // Grants are Switchyard's data, passed per spawn as flags; never written into the
-      // CLI's settings files (ADR-0004).
-      allowedTools: config.allowed_tools ?? [],
-      disallowedTools: config.disallowed_tools ?? [],
-      // Everything that would prompt comes to canUseTool and from there to the user's queue.
-      permissionPrompts: "host",
-      canUseTool,
-      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
-    } as Options,
-  });
+  // The query starts with the first command: a resume (the CLI reloads that conversation)
+  // or the first prompt. A session that never gets a command never starts the CLI.
+  let q = null as Query | null;
+  let started: (q: Query | null) => void = () => {};
+  const ready = new Promise<Query | null>((resolve) => (started = resolve));
+  const start = (resume?: string) => {
+    q = query({
+      prompt: prompts,
+      options: {
+        cwd: config.cwd,
+        // Always passed: when omitted the CLI picks its own default mode.
+        permissionMode: CLI_MODE[config.permission_mode] as Options["permissionMode"],
+        pathToClaudeCodeExecutable: config.claude_path ?? undefined,
+        // Grants are Switchyard's data, passed per spawn as flags; never written into the
+        // CLI's settings files (ADR-0004).
+        allowedTools: config.allowed_tools ?? [],
+        disallowedTools: config.disallowed_tools ?? [],
+        // Everything that would prompt comes to canUseTool and from there to the user's queue.
+        permissionPrompts: "host",
+        canUseTool,
+        resume,
+        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
+      } as Options,
+    });
+    started(q);
+    return q;
+  };
 
   const commandLoop = (async () => {
     for await (const line of commands) {
@@ -107,8 +117,13 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       }
       recorder?.command(command, ops);
       for (const op of ops) {
-        if (op.op === "push_user_message") prompts.push(op.message as SDKUserMessage);
-        else if (op.op === "interrupt") await q.interrupt();
+        if (op.op === "resume") {
+          if (q) emit({ type: "error", message: "resume must come before any prompt", fatal: false });
+          else start(op.session_id);
+        } else if (op.op === "push_user_message") {
+          q ?? start();
+          prompts.push(op.message as SDKUserMessage);
+        } else if (op.op === "interrupt") await q?.interrupt();
         else if (op.op === "resolve_permission") {
           waiting.get(op.request_id)?.(op.result);
           waiting.delete(op.request_id);
@@ -116,11 +131,14 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       }
     }
     prompts.end();
+    started(null);
   })();
   commandLoop.catch((e) => emit({ type: "error", message: `command failed: ${(e as Error).message}`, fatal: false }));
 
+  const running = await ready;
+  if (!running) return;
   try {
-    for await (const message of q) ingest(JSON.stringify(message));
+    for await (const message of running) ingest(JSON.stringify(message));
     ingest(JSON.stringify({ type: "switchyard", subtype: "query_end" }));
   } catch (e) {
     ingest(JSON.stringify({ type: "switchyard", subtype: "query_error", message: (e as Error)?.message ?? String(e) }));

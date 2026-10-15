@@ -43,6 +43,8 @@ export function SessionView(props: SessionViewProps) {
   const composer = useRef<HTMLTextAreaElement>(null);
   const active = session.status === "running" || session.status === "waiting";
   const stop = () => send({ type: "stopSession", sessionId: session.id });
+  // Paused and Finished sessions continue where they left off (never on their own).
+  const resumable = session.status === "idle" || session.status === "done";
   // Esc's last layer: interrupt the agent of the session on screen.
   useAction("session.interrupt", () => (active ? stop() : false));
   const name = session.branch ?? session.worktreePath;
@@ -68,6 +70,18 @@ export function SessionView(props: SessionViewProps) {
             Stop <kbd>Esc</kbd>
           </button>
         )}
+        {resumable && (
+          <button className="btn sm primary" onClick={() => send({ type: "resumeSession", sessionId: session.id })}>
+            Resume
+          </button>
+        )}
+        <button
+          className="btn sm ghost"
+          title="Write the transcript as JSONL, one entry per line"
+          onClick={() => send({ type: "exportTranscript", sessionId: session.id })}
+        >
+          Export transcript
+        </button>
         {onToggleReview && (
           <button
             className="btn ghost sm hide-sm"
@@ -264,7 +278,7 @@ function Composer(props: {
     ? "Reply to the agent…"
     : session.status === "running"
       ? "The agent is working…"
-      : "Paused. Resume arrives later.";
+      : "Paused. Resume to continue.";
   return (
     <div className="composer">
       <textarea

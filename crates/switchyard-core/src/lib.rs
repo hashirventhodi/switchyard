@@ -9,9 +9,11 @@
 pub mod agents;
 pub mod compat;
 mod git;
+pub mod processes;
 mod rebase;
 mod policy;
 mod repo_policy;
+mod session_store;
 mod review;
 mod sessions;
 mod shells;
@@ -28,6 +30,7 @@ use switchyard_schema::{Command, Event, Repository, Worktree};
 
 use agents::{AgentLauncher, NoAgents};
 use compat::{AgentProbe, Compat, NoProbe};
+use processes::{ProcessTable, SystemProcesses};
 use sessions::Sessions;
 use shells::{ShellProgram, Shells};
 use store::{Store, StoredRepository};
@@ -43,12 +46,29 @@ pub struct Runtime {
     pub worktree_root: PathBuf,
     /// Detects installed agent CLIs and asks adapters for their manifests.
     pub probe: Arc<dyn AgentProbe>,
+    /// The machine's processes: start times of recorded pids, and killing orphans.
+    pub processes: Arc<dyn ProcessTable>,
+    /// Where "Export transcript" writes its JSONL files.
+    pub export_dir: PathBuf,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        Runtime { agents: Arc::new(NoAgents), now_ms: system_now_ms, probe: Arc::new(NoProbe), worktree_root: default_worktree_root() }
+        Runtime {
+            agents: Arc::new(NoAgents),
+            now_ms: system_now_ms,
+            probe: Arc::new(NoProbe),
+            worktree_root: default_worktree_root(),
+            processes: Arc::new(SystemProcesses),
+            export_dir: default_export_dir(),
+        }
     }
+}
+
+/// `~/Downloads`, where exported transcripts go.
+pub fn default_export_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    home.join("Downloads")
 }
 
 /// `~/.switchyard/worktrees`: short, ASCII, and outside every repository.
@@ -94,7 +114,7 @@ impl Core {
             .map_err(|e| CoreError(format!("cannot create {}: {e}", data_dir.display())))?;
         let store = Store::open(data_dir).map_err(|e| CoreError(format!("cannot open store: {e}")))?;
         let compat = Compat::open(data_dir);
-        let inner = Inner {
+        let mut inner = Inner {
             data_dir: data_dir.to_path_buf(),
             events,
             store,
@@ -104,6 +124,10 @@ impl Core {
             compat,
             review: Default::default(),
         };
+        // Reload sessions and recover from a quit or crash before anything else happens.
+        sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
+        shells::kill_orphans(&inner);
+        review::load(&mut inner);
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
     }
 
@@ -122,7 +146,7 @@ impl Core {
                 sessions::start(&mut inner, &self.inner, &worktree_path, agent, permission_mode, &prompt)
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
-            Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &session_id, &text),
+            Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &self.inner, &session_id, &text),
             Command::OpenShell { worktree_path, cols, rows } => {
                 shells::open(&mut inner, &self.inner, &worktree_path, cols, rows)
             }
@@ -142,6 +166,13 @@ impl Core {
                 sessions::answer_request(&mut inner, &session_id, &request_id, verdict)
             }
             Command::CheckAgents => compat::check(&mut inner),
+            Command::ResumeSession { session_id } => sessions::resume(&mut inner, &self.inner, &session_id),
+            Command::ReplaceSession { session_id, agent, permission_mode, prompt } => {
+                sessions::replace(&mut inner, &self.inner, &session_id, agent, permission_mode, &prompt)
+            }
+            Command::ReadArchivedSession { session_id } => sessions::read_archived(&inner, &session_id),
+            Command::ExportTranscript { session_id } => sessions::export(&inner, &session_id),
+            Command::UpdateSettings { settings } => sessions::update_settings(&mut inner, settings),
             Command::ReadChanges { worktree_path } => review::read(&mut inner, &worktree_path),
             Command::DecideFile { worktree_path, path, decision } => {
                 review::decide(&mut inner, &worktree_path, &path, decision)
@@ -153,13 +184,14 @@ impl Core {
             Command::CommentHunk { worktree_path, path, hunk_id, comment } => {
                 review::comment_hunk(&mut inner, &worktree_path, &path, &hunk_id, comment.as_deref())
             }
-            Command::SendFeedback { worktree_path } => review::send_feedback(&mut inner, &worktree_path),
+            Command::SendFeedback { worktree_path } => review::send_feedback(&mut inner, &self.inner, &worktree_path),
             Command::ReadPolicy { repository_id } => policy::read(&inner, &repository_id),
             Command::RevokeGrant { repository_id, grant_id } => policy::revoke(&inner, &repository_id, &grant_id),
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
-            Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &session_id),
+            Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &self.inner, &session_id),
             Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
         }
+        sessions::flush(&mut inner);
     }
 }
 

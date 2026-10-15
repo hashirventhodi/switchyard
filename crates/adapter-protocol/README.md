@@ -50,6 +50,8 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `interrupt` | (none) |
 | `resume` | `external_session_id` |
 
+`resume` is only ever the first command a freshly started adapter receives: the host relaunched it for a Session whose process is gone (after a crash or quit) and the CLI must reload that conversation by its own session id (from `session_init`) so the agent keeps its context. A `send_text` follows it.
+
 A `verdict` is tagged by `decision`: `allow_once` (Run once), `allow_always` (Grant), `deny` with `message`, or `answer` with `text` (for `question` requests).
 
 ## Adapters

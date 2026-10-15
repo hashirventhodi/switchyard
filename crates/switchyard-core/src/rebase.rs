@@ -3,6 +3,7 @@
 //! (see `worktrees`). Git is the source of truth; nothing here is stored.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use switchyard_schema::{Commit, Event, SessionStatus};
 
@@ -67,7 +68,7 @@ pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
 
 /// One message asking the agent to rebase on base and resolve conflicts itself, delivered
 /// as the user's next prompt (the agent sees it in its context, as if typed).
-pub(crate) fn ask_agent(inner: &mut Inner, session_id: &str) {
+pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id: &str) {
     const COMMAND: &str = "askAgentToRebase";
     let Some((worktree_path, status)) = sessions::worktree_and_status(inner, session_id) else {
         return inner.refuse(COMMAND, format!("There is no session {session_id}"));
@@ -94,7 +95,7 @@ pub(crate) fn ask_agent(inner: &mut Inner, session_id: &str) {
     if !conflicts.is_empty() {
         text.push_str(&format!(" Expect conflicts in: {}.", conflicts.join(", ")));
     }
-    sessions::send_prompt(inner, session_id, &text);
+    sessions::send_prompt(inner, core, session_id, &text);
 }
 
 /// The most commits History shows; a branch with more is a branch to split.

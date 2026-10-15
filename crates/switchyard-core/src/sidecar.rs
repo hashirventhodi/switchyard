@@ -11,6 +11,7 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -48,6 +49,9 @@ impl AgentLauncher for SidecarLauncher {
             .arg("--config")
             .arg(config.to_string())
             .current_dir(&spec.cwd)
+            // Its own process group: after a crash, killing the recorded sidecar takes the CLI
+            // it started with it.
+            .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -57,6 +61,7 @@ impl AgentLauncher for SidecarLauncher {
         let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
+        let pid = child.id();
         let child = Arc::new(Mutex::new(child));
 
         // Writes go through a thread so the core never blocks on a full pipe.
@@ -101,18 +106,23 @@ impl AgentLauncher for SidecarLauncher {
             sink(AgentOutput::Exited { code, stderr });
         });
 
-        Ok(Box::new(SidecarHandle { commands, child }))
+        Ok(Box::new(SidecarHandle { commands, child, pid }))
     }
 }
 
 struct SidecarHandle {
     commands: Sender<adapter_protocol::Command>,
     child: Arc<Mutex<Child>>,
+    pid: u32,
 }
 
 impl AgentHandle for SidecarHandle {
     fn send(&mut self, command: adapter_protocol::Command) -> Result<(), String> {
         self.commands.send(command).map_err(|_| "the agent process has exited".to_string())
+    }
+
+    fn pid(&self) -> Option<u32> {
+        Some(self.pid)
     }
 }
 

@@ -343,3 +343,26 @@ fn no_core_code_path_calls_checkout_or_apply_on_the_working_tree() {
     }
     assert!(offenders.is_empty(), "{offenders:#?}");
 }
+
+#[test]
+fn hunk_reviews_survive_a_relaunch() {
+    let (_repo, wt, mut core) = setup();
+    let lib = hunks(&mut core, &wt, "lib.txt");
+    decide_hunk(&mut core, &wt, "lib.txt", &lib[0], Some(Decision::Reject));
+    comment(&mut core, &wt, "lib.txt", &lib[0], Some("use a constant"));
+    decide_hunk(&mut core, &wt, "lib.txt", &lib[1], Some(Decision::Accept));
+    let notes = hunks(&mut core, &wt, "notes.txt");
+    comment(&mut core, &wt, "notes.txt", &notes[0], Some("why uppercase?"));
+    comment(&mut core, &wt, "notes.txt", &notes[0], None);
+
+    let mut core = core.relaunch();
+
+    let lib = hunks(&mut core, &wt, "lib.txt");
+    assert_eq!(lib[0].decision, Some(Decision::Reject));
+    assert_eq!(lib[0].comment.as_deref(), Some("use a constant"));
+    assert!(!lib[0].sent);
+    assert_eq!(lib[1].decision, Some(Decision::Accept));
+    assert_eq!(lib[1].comment, None);
+    let notes = hunks(&mut core, &wt, "notes.txt");
+    assert_eq!((notes[0].decision, notes[0].comment.clone()), (None, None));
+}

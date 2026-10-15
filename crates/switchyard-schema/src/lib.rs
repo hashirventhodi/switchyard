@@ -205,6 +205,41 @@ pub enum Command {
         request_id: String,
         verdict: Verdict,
     },
+    /// Resume a Paused (or Finished) Session: the agent continues with its context. When
+    /// its process is gone (after a relaunch, say) the agent is relaunched through its CLI's
+    /// own resume-by-id. Nothing ever resumes on its own.
+    ResumeSession {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+    },
+    /// "Stop and replace": archive a Paused, Finished or Error Session and start a new one
+    /// on its worktree. A Running or Needs you Session is never replaced.
+    ReplaceSession {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        agent: AgentKind,
+        #[serde(rename = "permissionMode")]
+        #[ts(rename = "permissionMode")]
+        permission_mode: PermissionMode,
+        prompt: String,
+    },
+    /// Read an archived Session's transcript. Answered with [`Event::ArchivedTranscript`].
+    ReadArchivedSession {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+    },
+    /// Write a Session's transcript (live or archived) as JSONL, one entry per line, to the
+    /// export folder. Answered with [`Event::TranscriptExported`].
+    ExportTranscript {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+    },
+    /// Change the user settings. Answered with [`Event::SettingsChanged`].
+    UpdateSettings { settings: Settings },
     /// Read a Repository's Policy (its committed `.switchyard/policy.yml` and the user's
     /// local Grants for it) again. The core answers with [`Event::PolicyChanged`].
     ReadPolicy {
@@ -351,6 +386,34 @@ pub enum Event {
         worktree_path: String,
         facts: WorktreeFacts,
     },
+    /// A Session was archived (replaced, or its worktree removed), or an archived Session
+    /// is replayed on attach. It is no longer a live Session.
+    SessionArchived { archived: ArchivedSession },
+    /// Retention removed an archived Session for good.
+    ArchivedSessionPruned {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+    },
+    /// An archived Session's full transcript, as asked for.
+    ArchivedTranscript {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        entries: Vec<Entry>,
+    },
+    /// A transcript was written to `path`.
+    TranscriptExported {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        path: String,
+    },
+    /// The user settings (on attach and after a change). Replaces earlier settings.
+    SettingsChanged { settings: Settings },
     /// A worktree's uncommitted changes as git reports them now. Replaces earlier ones.
     ChangesRead {
         #[serde(rename = "worktreePath")]
@@ -836,4 +899,36 @@ pub enum ToolState {
     Running,
     Ok,
     Failed,
+}
+
+/// A Session kept as the audit trail after it was replaced or its worktree removed. Belongs
+/// to its Repository (keyed by branch and session id); readable, never resumed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ArchivedSession {
+    /// The Session as it was when archived.
+    pub session: Session,
+    /// Milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub archived_at_ms: u64,
+    /// Transcript entries.
+    pub entries: u32,
+}
+
+/// User settings kept by the core.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Settings {
+    /// Archived Sessions kept per Repository (the newest).
+    pub archive_keep_per_repository: u32,
+    /// Archived Sessions older than this many days are pruned.
+    pub archive_keep_days: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { archive_keep_per_repository: 50, archive_keep_days: 30 }
+    }
 }

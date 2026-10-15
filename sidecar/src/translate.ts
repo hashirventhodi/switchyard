@@ -17,6 +17,8 @@
 //   {"op":"interrupt"}                                   await query.interrupt()
 //   {"op":"resolve_permission","request_id","result":PermissionResult}
 //                                                        settle that canUseTool call
+//   {"op":"resume","session_id"}                         start the query on that CLI session
+//                                                        (options.resume); first op only
 
 import {
   PROTOCOL_RANGE,
@@ -58,7 +60,8 @@ function switchyardMode(cliMode: string): PermissionMode {
 export type DriverOp =
   | { op: "push_user_message"; message: { type: "user"; message: { role: "user"; content: string }; parent_tool_use_id: null } }
   | { op: "interrupt" }
-  | { op: "resolve_permission"; request_id: string; result: PermissionResult };
+  | { op: "resolve_permission"; request_id: string; result: PermissionResult }
+  | { op: "resume"; session_id: string };
 
 /** The Agent SDK's answer to canUseTool. Never carries `updatedPermissions`: grants are
  * Switchyard data and are never written into the CLI's settings (ADR-0004). */
@@ -129,7 +132,8 @@ export class ClaudeTranslator {
         if (this.abandoned.delete(command.request_id)) return [];
         return [this.answer(command.request_id, command.verdict)];
       case "resume":
-        throw new AdapterError("resume is not supported yet");
+        // The CLI reloads the conversation itself (`--resume <id>`), so the agent keeps its context.
+        return [{ op: "resume", session_id: command.external_session_id }];
     }
   }
 

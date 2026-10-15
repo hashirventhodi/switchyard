@@ -29,6 +29,8 @@ interface Choice {
   path: string;
   label: string;
   disabled: boolean;
+  /** The Paused, Finished or Error session starting here would stop and replace (archive). */
+  replaces?: { id: string; status: string };
 }
 
 export function NewSession(props: {
@@ -48,14 +50,20 @@ export function NewSession(props: {
     r.worktrees.map((w) => {
       const name = `${r.name} / ${w.branch ?? "(detached)"}`;
       const occupant = sessionOn(state, w.path);
-      if (occupant) return { path: w.path, label: `${name} (${STATUS_LABEL[occupant.status]})`, disabled: true };
+      const label = STATUS_LABEL[occupant?.status ?? "idle"];
+      // An agent at work is never replaced; a Paused, Finished or Error one may be (archived).
+      if (occupant && (occupant.status === "running" || occupant.status === "waiting"))
+        return { path: w.path, label: `${name} (${label})`, disabled: true };
+      const replaces = occupant ? { id: occupant.id, status: label } : undefined;
+      const suffix = occupant ? ` (${label}: stop and replace)` : "";
       // Only Explore sessions may run on a primary worktree.
-      if (w.primary) return { path: w.path, label: `${name} (primary: Explore only)`, disabled: mode !== "explore" };
-      return { path: w.path, label: name, disabled: false };
+      if (w.primary)
+        return { path: w.path, label: `${name} (primary: Explore only)${suffix}`, disabled: mode !== "explore", replaces };
+      return { path: w.path, label: name + suffix, disabled: false, replaces };
     }),
   );
   const [worktree, setWorktree] = useState(
-    () => preset.worktreePath ?? choices.find((c) => !c.disabled)?.path ?? "",
+    () => preset.worktreePath ?? choices.find((c) => !c.disabled && !c.replaces)?.path ?? choices.find((c) => !c.disabled)?.path ?? "",
   );
   const [repositoryId, setRepositoryId] = useState(preset.repositoryId ?? state.repositories[0]?.id ?? "");
   const [branch, setBranch] = useState("");
@@ -65,6 +73,7 @@ export function NewSession(props: {
   const repository = state.repositories.find((r) => r.id === repositoryId);
   const shownBranch = branchTouched ? branch : slugBranch(prompt, preset.branchKind);
   const chosen = choices.find((c) => c.path === worktree);
+  const replacing = where === "existing" ? chosen?.replaces : undefined;
   const canStart =
     !blocked &&
     !!prompt.trim() && (where === "new" ? !!repository && !!shownBranch.trim() : !!chosen && !chosen.disabled);
@@ -75,7 +84,9 @@ export function NewSession(props: {
     onStart(
       where === "new"
         ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: mode, prompt }
-        : { type: "startSession", worktreePath: worktree, agent, permissionMode: mode, prompt },
+        : replacing
+          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: mode, prompt }
+          : { type: "startSession", worktreePath: worktree, agent, permissionMode: mode, prompt },
     );
     onClose();
   };
@@ -120,7 +131,7 @@ export function NewSession(props: {
             <label className={where === "existing" ? "on" : ""}>
               <input type="radio" name="where" checked={where === "existing"} onChange={() => setWhere("existing")} />
               <b>Use existing</b>
-              <small>{choices.filter((c) => !c.disabled).length} free</small>
+              <small>{choices.filter((c) => !c.disabled && !c.replaces).length} free</small>
             </label>
           </fieldset>
           {where === "new" ? (
@@ -163,6 +174,11 @@ export function NewSession(props: {
                   ))}
                 </select>
               </label>
+              {replacing && (
+                <span className="hint" role="note">
+                  The {replacing.status} session there stops and is archived; its transcript stays readable in Context.
+                </span>
+              )}
               {choices.every((c) => c.disabled) && (
                 <span className="hint">No free worktree. Create a new one from base instead.</span>
               )}
@@ -205,8 +221,8 @@ export function NewSession(props: {
           <button type="button" className="btn ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={!canStart}>
-            Start session
+          <button type="submit" className={`btn ${replacing ? "danger" : "primary"}`} disabled={!canStart}>
+            {replacing ? "Stop and replace" : "Start session"}
           </button>
         </div>
       </form>

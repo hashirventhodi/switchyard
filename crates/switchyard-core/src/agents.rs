@@ -37,6 +37,12 @@ pub type AgentSink = Arc<dyn Fn(AgentOutput) + Send + Sync>;
 
 pub trait AgentHandle: Send {
     fn send(&mut self, command: adapter_protocol::Command) -> Result<(), String>;
+
+    /// The agent's process id, recorded (with its start time) so that a relaunch after a
+    /// crash can kill the orphan. `None` when there is no process of its own.
+    fn pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 pub trait AgentLauncher: Send + Sync {

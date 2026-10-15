@@ -1,20 +1,20 @@
 //! Review: a worktree's uncommitted changes, file decisions, and committing accepted files
-//! whole. Switchyard never reverts anything and never stages part of a file. Decisions
-//! live in memory keyed by worktree + path, pinned to the diff they were taken on, and are
-//! discarded on commit. Hunks carry their own decisions and comments (Hunk feedback, see
-//! `feedback`).
+//! whole. Switchyard never reverts anything and never stages part of a file. Decisions are
+//! keyed by worktree + path, pinned to the diff they were taken on, written through to the
+//! store (so they survive a relaunch) and discarded on commit. Hunks carry their own
+//! decisions and comments (Hunk feedback, see `feedback`), stored the same way.
 
 mod diff;
 mod feedback;
 
-pub(crate) use feedback::{comment_hunk, decide_hunk, send_feedback};
+pub(crate) use feedback::{comment_hunk, decide_hunk, send_feedback, HunkReview};
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use switchyard_schema::{ChangedFile, Decision, Event, FileStatus};
 
-use crate::{git, worktrees, Inner};
+use crate::{git, session_store, worktrees, Inner};
 
 #[derive(Default)]
 pub(crate) struct Decisions {
@@ -37,6 +37,31 @@ fn committable(file: &ChangedFile) -> bool {
 /// revises the hunk or the user accepts the whole file.
 fn blocked(file: &ChangedFile) -> bool {
     file.decision.is_none() && file.hunks.iter().any(|h| h.decision == Some(Decision::Reject))
+}
+
+/// Load the stored decisions (when the core opens).
+pub(crate) fn load(inner: &mut Inner) {
+    if let Ok(stored) = session_store::decisions(inner.store.db()) {
+        inner.review.by_worktree = stored;
+    }
+    if let Ok(stored) = session_store::hunk_reviews(inner.store.db()) {
+        inner.review.hunks = stored;
+    }
+}
+
+/// Write the worktree's file decisions and hunk reviews through to the store.
+pub(super) fn save(inner: &Inner, worktree_path: &str) {
+    let decided = inner.review.by_worktree.get(worktree_path).cloned().unwrap_or_default();
+    let _ = session_store::save_decisions(inner.store.db(), worktree_path, &decided);
+    let reviews = inner.review.hunks.get(worktree_path).cloned().unwrap_or_default();
+    let _ = session_store::save_hunk_reviews(inner.store.db(), worktree_path, &reviews);
+}
+
+/// Forget every decision on a worktree that is gone.
+pub(crate) fn forget(inner: &mut Inner, worktree_path: &str) {
+    inner.review.by_worktree.remove(worktree_path);
+    inner.review.hunks.remove(worktree_path);
+    save(inner, worktree_path);
 }
 
 /// Read the worktree's changes from git, with the decisions that still apply.
@@ -63,11 +88,15 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
     }
     let decided = inner.review.by_worktree.entry(worktree_path.to_string()).or_default();
     // A decision on a diff that has since changed (or a file no longer changed) is stale.
+    let before = decided.len();
     decided.retain(|path, (_, fp)| parsed.iter().any(|p| &p.file.path == path && p.fingerprint == *fp));
+    let mut lapsed = decided.len() != before;
     let reviews = inner.review.hunks.entry(worktree_path.to_string()).or_default();
     // A hunk the agent revised (or dropped) has a new id: its review no longer applies.
+    let before = reviews.len();
     reviews.retain(|id, _| parsed.iter().any(|p| p.file.hunks.iter().any(|h| &h.id == id)));
-    Ok(parsed
+    lapsed |= reviews.len() != before;
+    let list = parsed
         .into_iter()
         .map(|mut p| {
             p.file.decision = decided.get(&p.file.path).map(|(d, _)| *d);
@@ -78,7 +107,11 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
             }
             (p.file, p.fingerprint)
         })
-        .collect())
+        .collect();
+    if lapsed {
+        save(inner, worktree_path);
+    }
+    Ok(list)
 }
 
 /// The base branch's name and the files a dry-run merge of it into the worktree conflicts
@@ -158,6 +191,7 @@ pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decisio
         Some(d) => decided.insert(path.to_string(), (d, fingerprint)),
         None => decided.remove(path),
     };
+    save(inner, worktree_path);
     inner.emit(Event::FileDecided { worktree_path: worktree_path.into(), path: path.into(), decision });
     if decision == Some(Decision::Accept) {
         // Accepting the whole file overrides its hunk rejections.
@@ -211,8 +245,7 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
         Ok(c) => c,
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("Could not commit: {e}")),
     };
-    inner.review.by_worktree.remove(worktree_path);
-    inner.review.hunks.remove(worktree_path);
+    forget(inner, worktree_path);
     inner.emit(Event::Committed {
         worktree_path: worktree_path.into(),
         branch: worktree.branch,

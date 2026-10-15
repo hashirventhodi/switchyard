@@ -57,6 +57,17 @@ recording, never an edited one, and an updated supported range in
    NOTES.md if you said yes). Repeat once answering Skip: the card reads "Skipped…".
 6. Optional: record it with `SWITCHYARD_RECORD_DIR` (above) as `permission-relay-live`.
 
+## Manual crash-recovery and resume check (real CLI, model calls)
+
+1. `pnpm tauri dev`, start a session with a prompt that takes a while ("Run the tests, then
+   summarise the failures"). While it is Running, kill the app (`kill -9` the
+   `switchyard` process; the sidecar and `claude` keep running).
+2. `pnpm tauri dev` again: the session comes back Paused with a system line; `ps` shows the
+   old `claude-sidecar.mjs` / `claude` processes are gone; no agent started by itself.
+3. Press Resume: a new sidecar starts and the agent continues with its earlier context (ask
+   it "what were you doing?"). Optional: record it with `SWITCHYARD_RECORD_DIR` as
+   `resumed-session-live` and compare with the synthesised `resumed-session` fixture.
+
 ## Manual compat check (real CLI, no model call)
 
 1. `pnpm tauri dev` with `claude` on PATH in the supported range: the Dashboard shows no Setup

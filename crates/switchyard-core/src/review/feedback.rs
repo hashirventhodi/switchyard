@@ -5,18 +5,19 @@
 //! the whole file.
 
 use std::fmt::Write as _;
+use std::sync::{Arc, Mutex};
 
 use switchyard_schema::{ChangedFile, Decision, Event, Hunk, LineKind, SessionStatus};
 
-use super::{changes, conflict, known};
+use super::{changes, conflict, known, save};
 use crate::{sessions, Inner};
 
 /// One hunk's review. `sent`: the rejection and comment as they stand reached the agent.
 #[derive(Clone, Default)]
 pub(crate) struct HunkReview {
-    decision: Option<Decision>,
-    comment: Option<String>,
-    sent: bool,
+    pub(crate) decision: Option<Decision>,
+    pub(crate) comment: Option<String>,
+    pub(crate) sent: bool,
 }
 
 impl HunkReview {
@@ -62,6 +63,7 @@ fn update(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, cha
     if review.decision.is_none() && review.comment.is_none() {
         reviews.remove(hunk_id);
     }
+    save(inner, worktree_path);
     inner.emit(Event::HunkReviewed {
         worktree_path: worktree_path.into(),
         path: path.into(),
@@ -119,7 +121,7 @@ pub(super) fn clear_rejections(inner: &mut Inner, worktree_path: &str, file: &Ch
 /// The most diff lines quoted per hunk; the agent can read the rest from the file.
 const QUOTED_LINES: usize = 12;
 
-pub(crate) fn send_feedback(inner: &mut Inner, worktree_path: &str) {
+pub(crate) fn send_feedback(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &str) {
     const COMMAND: &str = "sendFeedback";
     if known(inner, COMMAND, worktree_path).is_none() {
         return;
@@ -150,7 +152,12 @@ pub(crate) fn send_feedback(inner: &mut Inner, worktree_path: &str) {
     if let Some(reason) = reason {
         return inner.refuse(COMMAND, reason.into());
     }
-    sessions::send_prompt(inner, &session_id, &message(&items));
+    sessions::send_prompt(inner, core, &session_id, &message(&items));
+    // Relaunching an agent whose process is gone can still fail (and is refused): only a
+    // message the agent is now working on counts as sent.
+    if sessions::occupant(inner, worktree_path) != Some(SessionStatus::Running) {
+        return;
+    }
     let count = items.len() as u32;
     let sent: Vec<(String, String)> = items.iter().map(|(f, h)| (f.path.clone(), h.id.clone())).collect();
     for (path, hunk_id) in sent {
