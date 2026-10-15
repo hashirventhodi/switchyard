@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use switchyard_schema::{AgentKind, Event, PermissionMode, Worktree, WorktreeFacts};
+use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
 use crate::{git, repo_policy, sessions, Inner};
@@ -96,8 +96,9 @@ pub(crate) fn start_session_on_new(
     }
 }
 
-/// Remove a worktree that is not primary, has no session and no uncommitted files. The
-/// branch stays. Shells on the worktree close with it (once the dock owns shells, close
+/// Remove a worktree that is not primary, has no session at work and no uncommitted files.
+/// A Paused, Finished or Error session on it is archived (its transcript outlives the
+/// worktree). The branch stays. Shells on the worktree close with it (once the dock owns shells, close
 /// them here, after git succeeds).
 pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     const COMMAND: &str = "removeWorktree";
@@ -109,8 +110,10 @@ pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
         return inner.refuse(COMMAND, format!("{name} is the primary worktree; it is never removed"));
     }
     if let Some(status) = sessions::occupant(inner, worktree_path) {
-        let label = sessions::status_label(status);
-        return inner.refuse(COMMAND, format!("{name} has a {label} session; it cannot be removed while a session is on it"));
+        if matches!(status, SessionStatus::Running | SessionStatus::Waiting) {
+            let label = sessions::status_label(status);
+            return inner.refuse(COMMAND, format!("{name} has a {label} session; stop it before removing the worktree"));
+        }
     }
     match git::dirty_count(&worktree.path) {
         Ok(0) => {}
@@ -121,6 +124,8 @@ pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     if let Err(git::GitError(e)) = git::remove_worktree(Path::new(&repo.path), &worktree.path) {
         return inner.refuse(COMMAND, format!("Could not remove {name}: {e}"));
     }
+    // Checked above: whatever session is left there is not at work.
+    let _ = sessions::archive_occupant(inner, worktree_path);
     inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
 }
 

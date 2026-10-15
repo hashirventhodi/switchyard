@@ -127,3 +127,50 @@ fn worktree_lifecycle_commands_and_events_use_camel_case() {
         json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3}})
     );
 }
+
+#[test]
+fn persistence_commands_and_events_use_camel_case() {
+    use switchyard_schema::{AgentKind, ArchivedSession, PermissionMode, Session, SessionStatus, Settings};
+    let replace: Command = serde_json::from_value(json!({
+        "type": "replaceSession", "sessionId": "session-1", "agent": "claudeCode",
+        "permissionMode": "autoEdit", "prompt": "again"
+    }))
+    .unwrap();
+    assert_eq!(
+        replace,
+        Command::ReplaceSession {
+            session_id: "session-1".into(),
+            agent: AgentKind::ClaudeCode,
+            permission_mode: PermissionMode::AutoEdit,
+            prompt: "again".into()
+        }
+    );
+    let update: Command = serde_json::from_value(json!({
+        "type": "updateSettings", "settings": {"archiveKeepPerRepository": 10, "archiveKeepDays": 7}
+    }))
+    .unwrap();
+    assert_eq!(update, Command::UpdateSettings { settings: Settings { archive_keep_per_repository: 10, archive_keep_days: 7 } });
+    let resume: Command = serde_json::from_value(json!({"type": "resumeSession", "sessionId": "session-1"})).unwrap();
+    assert_eq!(resume, Command::ResumeSession { session_id: "session-1".into() });
+
+    let session = Session {
+        id: "session-1".into(),
+        repository_id: "repo-1".into(),
+        worktree_path: "/wt".into(),
+        branch: Some("fix/a".into()),
+        agent: AgentKind::ClaudeCode,
+        permission_mode: PermissionMode::AskFirst,
+        status: SessionStatus::Idle,
+        started_at_ms: 5,
+    };
+    let event = Event::SessionArchived { archived: ArchivedSession { session, archived_at_ms: 9, entries: 3 } };
+    let value = serde_json::to_value(event).unwrap();
+    assert_eq!(value["type"], "sessionArchived");
+    assert_eq!(value["archived"]["archivedAtMs"], 9);
+    assert_eq!(value["archived"]["session"]["id"], "session-1");
+    let pruned = Event::ArchivedSessionPruned { repository_id: "repo-1".into(), session_id: "session-1".into() };
+    assert_eq!(
+        serde_json::to_value(pruned).unwrap(),
+        json!({"type": "archivedSessionPruned", "repositoryId": "repo-1", "sessionId": "session-1"})
+    );
+}

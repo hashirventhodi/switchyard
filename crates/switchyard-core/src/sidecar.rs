@@ -53,6 +53,7 @@ impl AgentLauncher for SidecarLauncher {
         let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
+        let pid = child.id();
         let child = Arc::new(Mutex::new(child));
 
         // Writes go through a thread so the core never blocks on a full pipe.
@@ -97,18 +98,23 @@ impl AgentLauncher for SidecarLauncher {
             sink(AgentOutput::Exited { code, stderr });
         });
 
-        Ok(Box::new(SidecarHandle { commands, child }))
+        Ok(Box::new(SidecarHandle { commands, child, pid }))
     }
 }
 
 struct SidecarHandle {
     commands: Sender<adapter_protocol::Command>,
     child: Arc<Mutex<Child>>,
+    pid: u32,
 }
 
 impl AgentHandle for SidecarHandle {
     fn send(&mut self, command: adapter_protocol::Command) -> Result<(), String> {
         self.commands.send(command).map_err(|_| "the agent process has exited".to_string())
+    }
+
+    fn pid(&self) -> Option<u32> {
+        Some(self.pid)
     }
 }
 

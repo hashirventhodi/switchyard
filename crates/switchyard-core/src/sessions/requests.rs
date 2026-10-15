@@ -102,6 +102,7 @@ fn settle(state: &mut SessionState, request_id: &str, to: RequestState, given: O
     let Entry::Request { state: request_state, answer, .. } = &mut state.transcript[index] else { return None };
     *request_state = to;
     *answer = given;
+    super::replaced(state, index);
     Some(Event::TranscriptEntry {
         session_id: state.session.id.clone(),
         index: index as u32,

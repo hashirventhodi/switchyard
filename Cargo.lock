@@ -3089,6 +3089,7 @@ name = "switchyard-core"
 version = "0.1.0"
 dependencies = [
  "adapter-protocol",
+ "flate2",
  "rusqlite",
  "semver",
  "serde",
