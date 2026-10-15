@@ -43,8 +43,9 @@ interface Prefs {
   dockCollapsed: boolean;
   sidebarCollapsed: boolean;
   theme: "dark" | "light" | null;
+  reviewHidden: boolean;
 }
-const defaultPrefs: Prefs = { view: "dashboard", dockCollapsed: false, sidebarCollapsed: false, theme: null };
+const defaultPrefs: Prefs = { view: "dashboard", dockCollapsed: false, sidebarCollapsed: false, theme: null, reviewHidden: false };
 function loadPrefs(): Prefs {
   try {
     return { ...defaultPrefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
@@ -167,6 +168,11 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
   useHandler(registry, "session.new", () => openNewSession({}));
   useHandler(registry, "sidebar.toggle", toggleSidebar);
   useHandler(registry, "dock.toggle", toggleDock);
+  const toggleReview = useCallback(
+    () => updatePrefs({ reviewHidden: !prefs.reviewHidden }),
+    [prefs.reviewHidden, updatePrefs],
+  );
+  useHandler(registry, "review.togglePane", toggleReview);
   useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
   useHandler(registry, "view.session", () => updatePrefs({ view: "session" }));
   useHandler(registry, "view.worktrees", () => updatePrefs({ view: "worktrees" }));
@@ -341,7 +347,15 @@ export function App({ core, pickFolder, actions, openLink = (url) => window.open
 
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
-            <SessionView key={shownSession.id} session={shownSession} send={core.send} />
+            <SessionView
+              key={shownSession.id}
+              session={shownSession}
+              send={core.send}
+              changes={state.changes[shownSession.worktreePath]}
+              facts={state.worktreeFacts[shownSession.worktreePath]}
+              reviewHidden={prefs.reviewHidden}
+              onToggleReview={toggleReview}
+            />
           ) : prefs.view === "worktrees" ? (
             <WorktreesView
               state={state}

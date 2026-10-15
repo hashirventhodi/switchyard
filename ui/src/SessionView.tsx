@@ -1,22 +1,52 @@
 // The Session view: header with status and Stop, the summary strip, the virtualised
 // transcript and the composer.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAction } from "./actions";
 import { at } from "./chunked";
-import { matches } from "./keymap";
+import { keysLabel, matches } from "./keymap";
+import { ReviewPane } from "./ReviewPane";
+import type { ChangedFile } from "./schema/ChangedFile";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
+import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView as Session } from "./state";
 import { sessionCost } from "./spend";
 import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, Status } from "./status";
 import { VirtualList } from "./VirtualList";
 
-export function SessionView({ session, send }: { session: Session; send: (command: Command) => void }) {
+export interface SessionViewProps {
+  session: Session;
+  send: (command: Command) => void;
+  /** The worktree's uncommitted changes, once the core has read them. */
+  changes?: ChangedFile[];
+  facts?: WorktreeFacts;
+  /** The review pane is hidden (⌘⇧D); a UI preference the App keeps. */
+  reviewHidden?: boolean;
+  onToggleReview?: () => void;
+}
+
+export function SessionView(props: SessionViewProps) {
+  const { session, send, changes, facts, reviewHidden = false, onToggleReview } = props;
   const active = session.status === "running" || session.status === "waiting";
   const stop = () => send({ type: "stopSession", sessionId: session.id });
   // Esc's last layer: interrupt the agent of the session on screen.
   useAction("session.interrupt", () => (active ? stop() : false));
   const name = session.branch ?? session.worktreePath;
+  // Expand: the review pane takes the full width. Below 860 px the panes swap instead.
+  const [expanded, setExpanded] = useState(false);
+  const [showChanges, setShowChanges] = useState(false);
+  const [draft, setDraft] = useState<{ text: string; seq: number }>({ text: "", seq: 0 });
+  const ask = (text: string) => {
+    setExpanded(false);
+    setShowChanges(false);
+    setDraft((d) => ({ text, seq: d.seq + 1 }));
+  };
+  const workbench = [
+    "workbench",
+    reviewHidden ? "changes-hidden" : "",
+    expanded && !reviewHidden ? "focus-changes" : "",
+    showChanges ? "show-changes" : "",
+  ].join(" ");
 
   return (
     <section className="session" role="region" aria-label={`Session ${name}`}>
@@ -28,15 +58,44 @@ export function SessionView({ session, send }: { session: Session; send: (comman
           <h1>{name}</h1>
         </div>
         <Status status={session.status} />
+        {!reviewHidden && (
+          <button className="btn sm mobile-only" onClick={() => setShowChanges((v) => !v)}>
+            {showChanges ? "Agent" : "Changes"}
+          </button>
+        )}
         {active && (
           <button className="btn sm" title="Stop the agent (Esc)" onClick={stop}>
             Stop <kbd>Esc</kbd>
           </button>
         )}
+        {onToggleReview && (
+          <button
+            className="btn ghost sm hide-sm"
+            title={`Toggle review pane (${keysLabel("review.togglePane")})`}
+            onClick={onToggleReview}
+          >
+            {reviewHidden ? "Show changes" : "Hide changes"}
+          </button>
+        )}
       </div>
-      <SummaryStrip session={session} />
-      <Transcript session={session} />
-      <Composer session={session} send={send} />
+      <div className={workbench}>
+        <div className="pane agent-pane">
+          <SummaryStrip session={session} />
+          <Transcript session={session} />
+          <Composer session={session} send={send} draft={draft} />
+        </div>
+        {!reviewHidden && (
+          <ReviewPane
+            session={session}
+            files={changes}
+            facts={facts}
+            send={send}
+            expanded={expanded}
+            onToggleExpand={() => setExpanded((e) => !e)}
+            onAsk={ask}
+          />
+        )}
+      </div>
     </section>
   );
 }
@@ -163,8 +222,16 @@ function EntryRow(props: { entry: Entry; agent: string; toggled: boolean; onTogg
   }
 }
 
-function Composer({ session, send }: { session: Session; send: (command: Command) => void }) {
+function Composer(props: { session: Session; send: (command: Command) => void; draft: { text: string; seq: number } }) {
+  const { session, send, draft } = props;
   const [text, setText] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  // Something else (Ask agent in review) drafted a message: put it here for the user to send.
+  useEffect(() => {
+    if (draft.seq === 0) return;
+    setText(draft.text);
+    ref.current?.focus();
+  }, [draft]);
   const ready = session.status === "waiting" || session.status === "done" || session.status === "failed";
   const submit = () => {
     if (!ready || !text.trim()) return;
@@ -179,6 +246,7 @@ function Composer({ session, send }: { session: Session; send: (command: Command
   return (
     <div className="composer">
       <textarea
+        ref={ref}
         aria-label="Message the agent"
         rows={2}
         value={text}
