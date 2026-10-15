@@ -112,6 +112,28 @@ pub enum Command {
     /// Detect the installed agent CLIs again (after installing or updating one). The core
     /// answers with [`Event::AgentsChecked`].
     CheckAgents,
+    /// Rebase a clean, non-primary worktree's branch on its Repository's base. Refused while
+    /// its Session is Running. A rebase that stops on conflicts is aborted, leaving the
+    /// branch as it was, and refused with the conflicting files named.
+    RebaseWorktree {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
+    /// Send the Session's agent one message asking it to rebase its branch on base and
+    /// resolve the conflicts itself. The Session goes Running.
+    AskAgentToRebase {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+    },
+    /// Read the commits a worktree's branch has above its base. The core answers with
+    /// [`Event::WorktreeHistory`].
+    ReadHistory {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// Answer a Session's pending Permission request. Every surface (toast, inbox, request
     /// card) sends this; the first answer wins and any later one is refused.
     AnswerRequest {
@@ -245,6 +267,39 @@ pub enum Event {
         worktree_path: String,
         facts: WorktreeFacts,
     },
+    /// A worktree's branch was rebased on `base` without conflicts.
+    WorktreeRebased {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        base: String,
+    },
+    /// The commits on a worktree's branch that its base lacks, newest first. Replaces
+    /// earlier history for that path.
+    WorktreeHistory {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        /// The base branch the commits sit above.
+        base: String,
+        commits: Vec<Commit>,
+    },
+}
+
+/// One commit on a worktree's branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Commit {
+    pub hash: String,
+    /// Abbreviated hash, as git abbreviates it.
+    pub short: String,
+    /// The first line of the message.
+    pub subject: String,
+    pub author: String,
+    /// Commit time, milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub at_ms: u64,
 }
 
 /// A worktree's state relative to its Repository's base branch, read from git.
@@ -258,6 +313,9 @@ pub struct WorktreeFacts {
     pub behind: u32,
     /// Uncommitted files: modified, staged, deleted or untracked.
     pub dirty: u32,
+    /// Files a merge of the base branch into this branch would conflict on, from a dry-run
+    /// merge that never touches the working tree or the index. Empty when not behind.
+    pub conflicts: Vec<String>,
 }
 
 /// A shell terminal in the dock: a PTY running the user's shell in a worktree. Shells

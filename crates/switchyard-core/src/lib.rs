@@ -9,6 +9,7 @@
 pub mod agents;
 pub mod compat;
 mod git;
+mod rebase;
 mod repo_policy;
 mod sessions;
 mod shells;
@@ -137,6 +138,9 @@ impl Core {
                 sessions::answer_request(&mut inner, &session_id, &request_id, verdict)
             }
             Command::CheckAgents => compat::check(&mut inner),
+            Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
+            Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &session_id),
+            Command::ReadHistory { worktree_path } => rebase::history(&inner, &worktree_path),
         }
     }
 }

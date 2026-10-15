@@ -15,6 +15,7 @@ import { xtermTerminal, type CreateTerminal } from "./terminal";
 import { NewSession, type NewSessionPreset } from "./NewSession";
 import { SessionView } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
+import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
@@ -146,6 +147,13 @@ export function App({
       unsubscribe();
       shells.dispose();
     };
+  }, [core]);
+
+  // Git is the source of truth and moves outside Switchyard: re-read on returning to the app.
+  useEffect(() => {
+    const onFocus = () => core.send({ type: "refreshWorktrees" });
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [core]);
 
   // Bumped to make the session view scroll to its pending request (⌘J, inbox, toast).
@@ -424,13 +432,22 @@ export function App({
 
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
-            <SessionView
-              key={shownSession.id}
-              session={shownSession}
-              send={core.send}
-              pending={state.requests[shownSession.id] ?? NONE}
-              revealRequest={reveal}
-            />
+            <div className="workbench">
+              <SessionView
+                key={shownSession.id}
+                session={shownSession}
+                send={core.send}
+                pending={state.requests[shownSession.id] ?? NONE}
+                revealRequest={reveal}
+                branchState={
+                  <BehindBadge
+                    facts={branchOf(state, shownSession.worktreePath).facts}
+                    base={branchOf(state, shownSession.worktreePath).repository?.baseBranch}
+                  />
+                }
+              />
+              <BranchPane key={`pane-${shownSession.id}`} state={state} session={shownSession} send={core.send} />
+            </div>
           ) : prefs.view === "worktrees" ? (
             <WorktreesView
               state={state}
@@ -598,13 +615,17 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                   {branch}
                   <span className="meta">
                     {AGENT_SHORT[occupant.agent]} · <Status status={occupant.status} variant="dot" />
+                    <BehindBadge facts={state.worktreeFacts[w.path]} />
                   </span>
                 </button>
               ) : (
                 <>
                   <span className="dot" />
                   {branch}
-                  <span className="meta">free</span>
+                  <span className="meta">
+                    free
+                    <BehindBadge facts={state.worktreeFacts[w.path]} />
+                  </span>
                 </>
               )}
             </li>

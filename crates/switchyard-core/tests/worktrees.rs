@@ -161,7 +161,7 @@ fn worktree_facts_count_commits_ahead_and_behind_base_and_uncommitted_files() {
     let repository = added_repository(&core.add_repository(&repo.path));
     let events = create(&mut core, &repository.id, "feat/login");
     let path = PathBuf::from(added_worktree(&events).path);
-    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 0, behind: 0, dirty: 0 });
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 0, behind: 0, dirty: 0, conflicts: vec![] });
 
     std::fs::write(path.join("login.rs"), "fn login() {}\n").unwrap();
     harness::git(&path, &["add", "login.rs"]);
@@ -174,8 +174,8 @@ fn worktree_facts_count_commits_ahead_and_behind_base_and_uncommitted_files() {
 
     let events = core.send(Command::RefreshWorktrees);
 
-    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 2 });
-    assert_eq!(facts_of(&events, &repo.path), WorktreeFacts { ahead: 0, behind: 0, dirty: 0 });
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 2, conflicts: vec![] });
+    assert_eq!(facts_of(&events, &repo.path), WorktreeFacts { ahead: 0, behind: 0, dirty: 0, conflicts: vec![] });
 }
 
 fn remove(core: &mut Harness, path: &Path) -> Vec<Event> {
