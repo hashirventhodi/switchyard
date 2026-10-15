@@ -12,7 +12,7 @@ import type { Entry } from "./schema/Entry";
 import type { Verdict } from "./schema/Verdict";
 import type { PendingRequest, SessionView as Session } from "./state";
 import { sessionCost } from "./spend";
-import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, ModeWarning, Status, withinCeiling } from "./status";
+import { AGENT_COLOR, AGENT_LABEL, AGENT_SHORT, MODE_LABEL, ModeWarning, Status, withinCeiling } from "./status";
 import { VirtualList } from "./VirtualList";
 
 export interface SessionViewProps {
@@ -57,7 +57,7 @@ export function SessionView(props: SessionViewProps) {
   return (
     <section className="session" role="region" aria-label={`Session ${name}`}>
       <div className="lane-head">
-        <span className="av" style={{ background: "var(--ag-claude)" }}>
+        <span className="av" style={{ background: AGENT_COLOR[session.agent] }}>
           {AGENT_SHORT[session.agent]}
         </span>
         <div className="title">
@@ -222,6 +222,7 @@ function Transcript(props: {
         <EntryRow
           entry={at(transcript, i)!}
           agent={AGENT_SHORT[session.agent]}
+          agentColor={AGENT_COLOR[session.agent]}
           answer={answer}
           answerInChat={answerInChat}
           toggled={toggled.has(i)}
@@ -247,12 +248,13 @@ function isOpen(entry: Entry & { type: "tool" }, toggled: boolean): boolean {
 function EntryRow(props: {
   entry: Entry;
   agent: string;
+  agentColor: string;
   answer: (requestId: string, verdict: Verdict) => void;
   answerInChat: () => void;
   toggled: boolean;
   onToggle: () => void;
 }) {
-  const { entry, agent, answer, answerInChat, toggled, onToggle } = props;
+  const { entry, agent, agentColor, answer, answerInChat, toggled, onToggle } = props;
   switch (entry.type) {
     case "request":
       return (
@@ -262,7 +264,7 @@ function EntryRow(props: {
     case "agent":
       return (
         <div className={`msg ${entry.type}`} data-entry={entry.type}>
-          <div className="av" style={entry.type === "agent" ? { background: "var(--ag-claude)" } : undefined}>
+          <div className="av" style={entry.type === "agent" ? { background: agentColor } : undefined}>
             {entry.type === "agent" ? agent : "You"}
           </div>
           <div className="text">{entry.text}</div>

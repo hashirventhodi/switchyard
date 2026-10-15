@@ -46,7 +46,9 @@
 
 /* ---------- dock tabs (see dock.css) ---------- */
 .dtab{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:var(--radius);color:var(--fg-1);font-size:12px;white-space:nowrap}
-.dtab .av{width:18px;height:18px;border-radius:5px;font-size:9px;background:var(--ag-claude)}
+.dtab .av{width:18px;height:18px;border-radius:5px;font-size:9px}
+.agent-chip{display:inline-flex;align-items:center;gap:5px}
+.agent-chip i{width:8px;height:8px;border-radius:2px;display:inline-block;flex:none}
 .dtab .nm{font-family:var(--font-mono)}
 
 /* ---------- new session modal ---------- */
