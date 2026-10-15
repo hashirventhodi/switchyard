@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 
 use switchyard_core::compat::SystemProbe;
+use switchyard_core::forge::GhForge;
 use switchyard_core::sidecar::SidecarLauncher;
 use switchyard_core::processes::SystemProcesses;
 use switchyard_core::secrets::SystemSecrets;
@@ -18,6 +19,8 @@ use tauri::{App, Emitter, Manager, State};
 
 const CORE_EVENT: &str = "core://event";
 const SIDECAR: &str = "claude-sidecar.mjs";
+/// One Forge poll tick; a pull request with no news is polled every 1, 2, 4 then 8 ticks.
+const FORGE_POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[tauri::command]
 fn dispatch(command: Command, core: State<'_, Mutex<Core>>) {
@@ -75,6 +78,8 @@ fn main() {
                 processes: Arc::new(SystemProcesses),
                 export_dir: default_export_dir(),
                 secrets: Arc::new(SystemSecrets),
+                forge: Arc::new(GhForge::find()),
+                forge_poll_every: Some(FORGE_POLL_EVERY),
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Mutex::new(core));

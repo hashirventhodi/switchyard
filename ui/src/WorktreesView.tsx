@@ -6,6 +6,8 @@ import type { NewSessionPreset } from "./NewSession";
 import type { Command } from "./schema/Command";
 import type { Worktree } from "./schema/Worktree";
 import { sessionOn, type RepositoryView, type State } from "./state";
+import { PrBadge, PruneMerged, ShipActions } from "./PullRequest";
+import type { OpenLink } from "./Setup";
 import { AGENT_LABEL, STATUS_LABEL, Status } from "./status";
 
 export function WorktreesView(props: {
@@ -16,6 +18,8 @@ export function WorktreesView(props: {
   onNewWorktree: () => void;
   /** Opens a shell tab in the dock on a worktree. */
   onOpenShell: (worktreePath: string) => void;
+  /** Opens a pull request in the browser. */
+  openLink?: OpenLink;
 }) {
   const { state, send, onNewWorktree } = props;
   // Git is the source of truth: re-read facts whenever the view opens.
@@ -40,6 +44,8 @@ export function WorktreesView(props: {
             <span className="meta">
               {r.worktrees.length} worktree{r.worktrees.length === 1 ? "" : "s"}
             </span>
+            <span className="spacer" />
+            <PruneMerged state={state} repositoryId={r.id} send={send} />
           </div>
           <div className="wtg">
             {r.worktrees.map((w) => (
@@ -60,8 +66,10 @@ function WorktreeCard(props: {
   onOpenSession: (id: string) => void;
   onNewSession: (preset: NewSessionPreset) => void;
   onOpenShell: (worktreePath: string) => void;
+  openLink?: OpenLink;
 }) {
   const { repository, worktree: w, state, send, onOpenSession, onNewSession, onOpenShell } = props;
+  const openLink = props.openLink ?? ((url: string) => window.open(url, "_blank"));
   const [confirming, setConfirming] = useState(false);
   useAction("confirm.cancel", () => setConfirming(false), confirming);
   const occupant = sessionOn(state, w.path);
@@ -98,6 +106,7 @@ function WorktreeCard(props: {
           </>
         )}
       </div>
+      <PrBadge state={state} worktreePath={w.path} />
       {occupant && <div className="title">{AGENT_LABEL[occupant.agent]}</div>}
       {confirming ? (
         <div className="act confirm" role="group" aria-label={`Remove ${branch}?`}>
@@ -142,6 +151,7 @@ function WorktreeCard(props: {
               Start agent here
             </button>
           )}
+          <ShipActions state={state} worktreePath={w.path} send={send} openLink={openLink} />
           {!w.primary && !!facts?.behind && (
             <button className="btn sm" onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}>
               Rebase on {repository.baseBranch}

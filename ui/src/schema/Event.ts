@@ -5,8 +5,10 @@ import type { ChangedFile } from "./ChangedFile";
 import type { Commit } from "./Commit";
 import type { Decision } from "./Decision";
 import type { Entry } from "./Entry";
+import type { ForgeSetup } from "./ForgeSetup";
 import type { PermissionMode } from "./PermissionMode";
 import type { Policy } from "./Policy";
+import type { PullRequest } from "./PullRequest";
 import type { Repository } from "./Repository";
 import type { Secret } from "./Secret";
 import type { Session } from "./Session";
@@ -41,4 +43,8 @@ hunks: number, } | { "type": "worktreeRebased", worktreePath: string, base: stri
 /**
  * The base branch the commits sit above.
  */
-base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, };
+base: string, commits: Array<Commit>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
+/**
+ * The pull request's number; `null` for a Local merge.
+ */
+pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, };

@@ -267,6 +267,34 @@ pub enum Command {
         #[ts(rename = "grantId")]
         grant_id: String,
     },
+    /// Detect the Forge's CLI (`gh`) and its sign-in again. Answered with
+    /// [`Event::ForgeChecked`].
+    CheckForge,
+    /// Push a worktree's branch and open a pull request against its Repository's base on
+    /// the Forge. Refused when the worktree has uncommitted files, is behind its base, or
+    /// the Forge's CLI is missing or signed out. Answered with [`Event::PullRequestOpened`]
+    /// and [`Event::PullRequestChanged`]; the pull request is then polled until it closes
+    /// or is Merged.
+    OpenPullRequest {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
+    /// Remove every free (no session at work), clean, Merged worktree of a Repository, as
+    /// the Merged cleanup does. Answered with [`Event::MergedPruned`].
+    PruneMerged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
+    /// Merge a worktree's branch into base in the Primary worktree, then clean the worktree
+    /// up. Only for a Repository with no remote (ADR-0003). Answered with
+    /// [`Event::BranchMerged`].
+    LocalMerge {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// List a Repository's secrets by name, with grant flags and where each value would
     /// come from. Answered with [`Event::SecretsChanged`].
     ReadSecrets {
@@ -556,6 +584,55 @@ pub enum Event {
         repository_id: String,
         policy: Policy,
     },
+    /// Whether pull requests can be opened: the Forge's CLI is installed and signed in.
+    /// Sent on attach and after [`Command::CheckForge`] (or when opening a pull request
+    /// detects a change); replaces the earlier result.
+    ForgeChecked { forge: ForgeSetup },
+    /// The pull request for a worktree's branch as the Forge reports it now (`null`: there
+    /// is none). Replaces the earlier one for that path.
+    PullRequestChanged {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        #[serde(rename = "pullRequest")]
+        #[ts(rename = "pullRequest")]
+        pull_request: Option<PullRequest>,
+    },
+    /// A pull request was opened from Switchyard for the worktree's branch.
+    PullRequestOpened {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        #[serde(rename = "pullRequest")]
+        #[ts(rename = "pullRequest")]
+        pull_request: PullRequest,
+    },
+    /// A worktree's branch is in base: the Forge reported its pull request Merged, or a
+    /// Local merge finished. `removed` says whether the worktree was cleaned up (removed,
+    /// its shells closed, its Session archived); when not, `kept` says why.
+    BranchMerged {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        branch: String,
+        base: String,
+        /// The pull request's number; `null` for a Local merge.
+        #[serde(rename = "pullRequest")]
+        #[ts(rename = "pullRequest")]
+        pull_request: Option<u32>,
+        removed: bool,
+        kept: Option<String>,
+    },
+    /// "Prune merged" finished: the branches whose worktrees were removed.
+    MergedPruned {
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        branches: Vec<String>,
+    },
     /// A Repository's secrets as they stand: sent after [`Command::ReadSecrets`] and after
     /// every change to them. Names and flags only, never values.
     SecretsChanged {
@@ -602,6 +679,84 @@ pub enum SecretSource {
     Environment,
     /// Neither has it: a granted secret is then simply absent from the environment.
     Missing,
+}
+
+/// Whether the Forge can be used from this machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ForgeSetup {
+    /// Display name, e.g. "GitHub".
+    pub name: String,
+    pub state: ForgeSetupState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ForgeSetupState {
+    /// Installed and signed in.
+    Ready { version: String },
+    /// The CLI is not installed.
+    Missing {
+        #[serde(rename = "installHint")]
+        #[ts(rename = "installHint")]
+        install_hint: String,
+        link: Link,
+    },
+    /// Installed but not signed in (or its sign-in no longer works).
+    SignedOut {
+        #[serde(rename = "loginHint")]
+        #[ts(rename = "loginHint")]
+        login_hint: String,
+    },
+}
+
+/// A pull request on the Forge, as last polled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullRequest {
+    pub number: u32,
+    pub url: String,
+    pub state: PullRequestState,
+    pub draft: bool,
+    pub checks: ChecksState,
+    pub review: ReviewState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PullRequestState {
+    Open,
+    /// Closed without merging.
+    Closed,
+    /// The Forge reports the branch is in base.
+    Merged,
+}
+
+/// The pull request's checks, summed up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ChecksState {
+    /// No checks reported.
+    None,
+    Running,
+    Failing,
+    Passing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ReviewState {
+    /// No review decision (none required, or none given yet).
+    None,
+    Required,
+    ChangesRequested,
+    Approved,
 }
 
 /// What may run without asking in a Repository, resolved across layers (organisation,
@@ -839,6 +994,11 @@ pub struct Repository {
     /// Absolute path of the primary worktree.
     pub path: String,
     pub base_branch: String,
+    /// The git remote branches are pushed to (`origin` when there is one), or absent when
+    /// the Repository has no remote: then Local merge replaces Open pull request.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub remote: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

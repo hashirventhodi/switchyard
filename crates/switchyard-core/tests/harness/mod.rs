@@ -25,9 +25,13 @@ use adapter_protocol::AdapterManifest;
 use switchyard_core::agents::{AgentHandle, AgentLauncher, AgentOutput, AgentSink, LaunchSpec};
 use switchyard_core::compat::AgentProbe;
 use switchyard_core::processes::ProcessTable;
+use switchyard_core::forge::GhForge;
 use switchyard_core::{Core, Runtime};
 use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Repository};
 use tempfile::TempDir;
+
+pub mod gh;
+pub use gh::FakeGh;
 
 /// The fixed wall clock every harness core sees.
 pub const NOW_MS: u64 = 1_760_000_000_000;
@@ -42,6 +46,8 @@ pub struct Harness {
     pub processes: FakeProcesses,
     /// The OS keychain and Switchyard's environment, as secrets see them: survives `relaunch`.
     pub secrets: FakeSecrets,
+    /// The `gh` the core runs as its Forge CLI (missing until `gh.install()`).
+    pub gh: FakeGh,
 }
 
 impl Harness {
@@ -65,9 +71,12 @@ impl Harness {
             processes: Arc::new(processes.clone()),
             export_dir: export_dir_in(&data_dir),
             secrets: Arc::new(secrets.clone()),
+            forge: Arc::new(GhForge { program: fake_gh_in(&data_dir).program() }),
+            forge_poll_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
-        Harness { core, events, data_dir, agents: FakeAgents::default(), probe, processes, secrets }
+        let gh = fake_gh_in(&data_dir);
+        Harness { core, events, data_dir, agents: FakeAgents::default(), probe, processes, gh, secrets }
     }
 
     /// The Switchyard worktree root this core creates worktrees under (canonical path).
@@ -105,9 +114,12 @@ impl Harness {
             processes: Arc::new(processes.clone()),
             export_dir: export_dir_in(&data_dir),
             secrets: Arc::new(secrets.clone()),
+            forge: Arc::new(GhForge { program: fake_gh_in(&data_dir).program() }),
+            forge_poll_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
-        Harness { core, events, data_dir, agents, probe, processes, secrets }
+        let gh = fake_gh_in(&data_dir);
+        Harness { core, events, data_dir, agents, probe, processes, gh, secrets }
     }
 
     /// Quit and reopen: a new core on the same data directory. Agent processes the old core
@@ -148,6 +160,12 @@ impl Harness {
     /// Dispatch without collecting events: for real agent processes, collect with `wait_for`.
     pub fn dispatch(&mut self, command: Command) {
         self.core.dispatch(command);
+    }
+
+    /// One tick of the Forge poller (the app ticks every few seconds); returns the events.
+    pub fn poll_forge(&mut self) -> Vec<Event> {
+        self.core.poll_forge();
+        self.drain()
     }
 
     pub fn drain(&mut self) -> Vec<Event> {
@@ -210,6 +228,10 @@ fn worktree_root_in(data_dir: &TempDir) -> PathBuf {
 
 fn export_dir_in(data_dir: &TempDir) -> PathBuf {
     data_dir.path().join("exports")
+}
+
+fn fake_gh_in(data_dir: &TempDir) -> FakeGh {
+    FakeGh::in_dir(data_dir.path().join("fake-gh"))
 }
 
 /// Fake agent transport: records launches and commands; events are delivered by the test.

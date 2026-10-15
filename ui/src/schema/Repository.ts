@@ -8,4 +8,9 @@ name: string,
 /**
  * Absolute path of the primary worktree.
  */
-path: string, baseBranch: string, };
+path: string, baseBranch: string, 
+/**
+ * The git remote branches are pushed to (`origin` when there is one), or absent when
+ * the Repository has no remote: then Local merge replaces Open pull request.
+ */
+remote?: string | null, };
