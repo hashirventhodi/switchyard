@@ -7,6 +7,7 @@
 //! launcher's threads and leaves as events on the same channel.
 
 pub mod agents;
+pub mod compat;
 mod git;
 mod sessions;
 pub mod sidecar;
@@ -19,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use switchyard_schema::{Command, Event, Repository, Worktree};
 
 use agents::{AgentLauncher, NoAgents};
+use compat::{AgentProbe, Compat, NoProbe};
 use sessions::Sessions;
 use store::{Store, StoredRepository};
 
@@ -27,11 +29,13 @@ pub struct Runtime {
     pub agents: Arc<dyn AgentLauncher>,
     /// Wall clock, milliseconds since the Unix epoch.
     pub now_ms: fn() -> u64,
+    /// Detects installed agent CLIs and asks adapters for their manifests.
+    pub probe: Arc<dyn AgentProbe>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        Runtime { agents: Arc::new(NoAgents), now_ms: system_now_ms }
+        Runtime { agents: Arc::new(NoAgents), now_ms: system_now_ms, probe: Arc::new(NoProbe) }
     }
 }
 
@@ -51,6 +55,7 @@ pub(crate) struct Inner {
     store: Store,
     runtime: Runtime,
     sessions: Sessions,
+    compat: Compat,
 }
 
 #[derive(Debug)]
@@ -67,7 +72,8 @@ impl Core {
         std::fs::create_dir_all(data_dir)
             .map_err(|e| CoreError(format!("cannot create {}: {e}", data_dir.display())))?;
         let store = Store::open(data_dir).map_err(|e| CoreError(format!("cannot open store: {e}")))?;
-        let inner = Inner { events, store, runtime, sessions: Sessions::default() };
+        let compat = Compat::open(data_dir);
+        let inner = Inner { events, store, runtime, sessions: Sessions::default(), compat };
         Ok(Core { inner: Arc::new(Mutex::new(inner)) })
     }
 
@@ -81,6 +87,7 @@ impl Core {
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
             Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &session_id, &text),
+            Command::CheckAgents => compat::check(&mut inner),
         }
     }
 }
@@ -97,6 +104,7 @@ impl Inner {
 
     fn attach(&mut self) {
         self.emit(Event::Attached);
+        compat::replay(self);
         let stored = match self.store.repositories() {
             Ok(list) => list,
             Err(e) => return self.refuse("attach", format!("cannot read the store: {e}")),

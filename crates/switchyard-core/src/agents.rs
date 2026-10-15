@@ -21,6 +21,8 @@ pub struct LaunchSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AgentOutput {
     Event(adapter_protocol::Event),
+    /// The agent wrote a line that is not a protocol event (kept verbatim for the compat log).
+    Unreadable { line: String },
     /// The agent process ended. `stderr` is its last output there, for the transcript.
     Exited { code: Option<i32>, stderr: String },
 }

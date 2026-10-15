@@ -12,6 +12,7 @@ use switchyard_schema::{
 };
 
 use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
+use crate::compat::{self, FailureClass};
 use crate::Inner;
 
 #[derive(Default)]
@@ -104,11 +105,18 @@ pub(crate) fn start(
         };
         return inner.refuse(COMMAND, reason);
     }
+    // Before the first session, not mid-session: an unsupported CLI never starts (#13).
+    if let Err(reason) = compat::admit(inner, agent) {
+        return inner.refuse(COMMAND, reason);
+    }
     let id = format!("session-{}", inner.sessions.next_id + 1);
     let spec = LaunchSpec { agent, cwd: worktree.path.clone(), permission_mode };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
         Ok(handle) => handle,
-        Err(reason) => return inner.refuse(COMMAND, format!("Could not start {}: {reason}", agent_name(agent))),
+        Err(reason) => {
+            compat::record(inner, agent, FailureClass::SpawnFailure, None, &reason);
+            return inner.refuse(COMMAND, format!("Could not start {}: {reason}", agent_name(agent)));
+        }
     };
     inner.sessions.next_id += 1;
     let session = Session {
@@ -193,6 +201,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else { return };
     let mut out = Vec::new();
     let mut cause = None;
+    let mut failure = None;
     match output {
         AgentOutput::Event(event) => match event {
             AgentEvent::SessionInit { cli_permission_mode, cli, model, .. } => {
@@ -243,12 +252,20 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}") }))
             }
         },
+        AgentOutput::Unreadable { line } => {
+            failure = Some((compat::classify_unreadable(&line), format!("unreadable adapter output: {line}")));
+            out.push(append(state, Entry::System { text: format!("Agent error: the adapter wrote an unreadable line: {line}") }));
+        }
         AgentOutput::Exited { code, stderr } => {
             let code = code.map_or("a signal".to_string(), |c| format!("code {c}"));
             let mut text = format!("The agent process exited ({code}).");
             if !stderr.trim().is_empty() {
                 text.push('\n');
                 text.push_str(stderr.trim());
+            }
+            // Ending before the CLI even initialised is the adapter failing to start.
+            if state.facts.cli_version.is_none() {
+                failure = Some((FailureClass::SpawnFailure, format!("exited before session_init: {text}")));
             }
             out.push(append(state, Entry::System { text }));
             cause = Some(Cause::AgentFailed);
@@ -257,8 +274,12 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     if let Some(event) = cause.and_then(|c| change_status(state, &c)) {
         out.push(event);
     }
+    let (agent, cli_version) = (state.session.agent, state.facts.cli_version.clone());
     for event in out {
         inner.emit(event);
+    }
+    if let Some((class, detail)) = failure {
+        compat::record(inner, agent, class, cli_version.as_deref(), &detail);
     }
 }
 

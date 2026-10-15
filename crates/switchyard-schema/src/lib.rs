@@ -44,6 +44,9 @@ pub enum Command {
         session_id: String,
         text: String,
     },
+    /// Detect the installed agent CLIs again (after installing or updating one). The core
+    /// answers with [`Event::AgentsChecked`].
+    CheckAgents,
 }
 
 /// Something the core reports. The renderer derives all of its state from these.
@@ -89,6 +92,51 @@ pub enum Event {
         index: u32,
         entry: Entry,
     },
+    /// Whether each agent this build knows can start a Session: its CLI is installed, its
+    /// version is inside the range this build was recorded against, and its adapter speaks
+    /// this build's protocol. Sent on attach and after [`Command::CheckAgents`]; replaces
+    /// earlier results.
+    AgentsChecked { agents: Vec<AgentSetup> },
+}
+
+/// One agent's readiness, as detected on this machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentSetup {
+    pub agent: AgentKind,
+    /// Display name, e.g. "Claude Code".
+    pub name: String,
+    pub state: AgentSetupState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum AgentSetupState {
+    /// Installed, in range: New session may start it.
+    Ready { version: String },
+    /// The CLI is not installed. Shown as a setup state on the Dashboard.
+    Missing {
+        /// What to run to install it.
+        #[serde(rename = "installHint")]
+        #[ts(rename = "installHint")]
+        install_hint: String,
+        link: Link,
+    },
+    /// Installed but not usable with this build (version outside the recorded range, or an
+    /// adapter that cannot start or speaks another protocol). New session is blocked for
+    /// this agent; `message` says why and `link` where to get an update.
+    Unsupported { version: Option<String>, message: String, link: Option<Link> },
+}
+
+/// A web page the user may open in their browser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Link {
+    pub label: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -115,7 +163,7 @@ pub struct Worktree {
     pub primary: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum AgentKind {
