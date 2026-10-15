@@ -1,0 +1,114 @@
+//! How the core runs agents. A [`AgentLauncher`] starts one agent process for a Session
+//! and hands back an [`AgentHandle`] that takes adapter-protocol commands; everything the
+//! agent reports comes back through the [`AgentSink`] as protocol events, on whatever
+//! thread the launcher reads them on. The core never parses CLI output itself (ADR-0002):
+//! launchers speak the adapter protocol (the Claude Code sidecar does so natively).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use adapter_protocol::PermissionMode as ProtocolMode;
+use switchyard_schema::{AgentKind, PermissionMode};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchSpec {
+    pub agent: AgentKind,
+    /// The worktree the agent runs in.
+    pub cwd: PathBuf,
+    /// The mode the user asked for; the launcher maps it onto the CLI's own
+    /// ([`protocol_mode`]).
+    pub permission_mode: PermissionMode,
+    /// The repository's policy declares a sandbox: Full auto runs as the CLI's
+    /// bypass-everything mode, and only then.
+    pub sandboxed: bool,
+    /// The resolved Grants, translated into the CLI's own allow rules (Claude Code
+    /// `--allowedTools`), so it stops asking for what is already granted.
+    pub allowed_tools: Vec<String>,
+    /// The resolved denials, as the CLI's deny rules (`--disallowedTools`).
+    pub disallowed_tools: Vec<String>,
+    /// The repository's MCP servers (`.mcp.json`), and only those: the launcher passes
+    /// them through the CLI's per-invocation flags (strict for Claude Code, so no
+    /// user-level server leaks in) and never writes a CLI config file.
+    pub mcp_servers: Vec<crate::mcp::McpServer>,
+    /// The repository's granted secrets to set, and every other known secret name to strip
+    /// from the inherited environment. Launchers apply it to the agent process
+    /// ([`SpawnEnv::apply`]); the CLI's own children (MCP servers) inherit the result.
+    ///
+    /// [`SpawnEnv::apply`]: crate::secrets::SpawnEnv::apply
+    pub env: crate::secrets::SpawnEnv,
+}
+
+/// The protocol mode a launcher asks its CLI for: Full auto bypasses every check only in
+/// a repository whose policy declares a sandbox.
+pub fn protocol_mode(mode: PermissionMode, sandboxed: bool) -> ProtocolMode {
+    match mode {
+        PermissionMode::Explore => ProtocolMode::Explore,
+        PermissionMode::AskFirst => ProtocolMode::AskFirst,
+        PermissionMode::AutoEdit => ProtocolMode::AutoEdit,
+        PermissionMode::FullAuto if sandboxed => ProtocolMode::Bypass,
+        PermissionMode::FullAuto => ProtocolMode::FullAuto,
+    }
+}
+
+/// A protocol mode as the user reads it.
+pub fn mode_label(mode: ProtocolMode) -> &'static str {
+    match mode {
+        ProtocolMode::Explore => "Explore",
+        ProtocolMode::AskFirst => "Ask first",
+        ProtocolMode::AutoEdit => "Auto edit",
+        ProtocolMode::FullAuto => "Full auto",
+        ProtocolMode::Bypass => "Full auto (sandbox bypass)",
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentOutput {
+    Event(adapter_protocol::Event),
+    /// The agent wrote a line that is not a protocol event (kept verbatim for the compat log).
+    Unreadable { line: String },
+    /// The agent process ended. `stderr` is its last output there, for the transcript.
+    Exited { code: Option<i32>, stderr: String },
+}
+
+/// Where a launched agent delivers its output. May be called from any thread.
+pub type AgentSink = Arc<dyn Fn(AgentOutput) + Send + Sync>;
+
+pub trait AgentHandle: Send {
+    fn send(&mut self, command: adapter_protocol::Command) -> Result<(), String>;
+
+    /// The agent's process id, recorded (with its start time) so that a relaunch after a
+    /// crash can kill the orphan. `None` when there is no process of its own.
+    fn pid(&self) -> Option<u32> {
+        None
+    }
+}
+
+pub trait AgentLauncher: Send + Sync {
+    /// Start an agent. An `Err` is shown to the user as the reason the session did not start.
+    fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String>;
+}
+
+/// Launches each agent kind with its own launcher (the app's: the Claude Code sidecar and
+/// `codex app-server`).
+pub struct ByAgent {
+    pub claude_code: Arc<dyn AgentLauncher>,
+    pub codex: Arc<dyn AgentLauncher>,
+}
+
+impl AgentLauncher for ByAgent {
+    fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String> {
+        match spec.agent {
+            AgentKind::ClaudeCode => self.claude_code.launch(spec, sink),
+            AgentKind::Codex => self.codex.launch(spec, sink),
+        }
+    }
+}
+
+/// The launcher used when none is configured: every launch is refused.
+pub struct NoAgents;
+
+impl AgentLauncher for NoAgents {
+    fn launch(&self, _: LaunchSpec, _: AgentSink) -> Result<Box<dyn AgentHandle>, String> {
+        Err("no agent runtime is configured".into())
+    }
+}

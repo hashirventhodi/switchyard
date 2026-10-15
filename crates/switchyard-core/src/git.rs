@@ -1,0 +1,430 @@
+//! Reads repository facts from git by running the `git` CLI. Git is the source of truth:
+//! nothing here is cached.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitWorktree {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub primary: bool,
+}
+
+#[derive(Debug)]
+pub struct GitError(pub String);
+
+fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    }
+}
+
+/// The repository directory shared by every worktree of the repository whose worktree is
+/// rooted at `dir`, read from `dir/.git` without running git: the primary's `.git`
+/// directory, or what a linked worktree's `.git` file points at (through its `commondir`).
+/// `None` when `dir` is not the root of a worktree.
+pub fn common_dir(dir: &Path) -> Option<PathBuf> {
+    let dot_git = dir.join(".git");
+    if dot_git.is_dir() {
+        return dot_git.canonicalize().ok();
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = dir.join(text.trim().strip_prefix("gitdir:")?.trim());
+    match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => gitdir.join(common.trim()).canonicalize().ok(),
+        Err(_) => gitdir.canonicalize().ok(),
+    }
+}
+
+/// True when `dir` is inside a git repository (any of its worktrees).
+pub fn is_inside_repository(dir: &Path) -> bool {
+    git(dir, &["rev-parse", "--git-dir"]).is_ok()
+}
+
+/// Every worktree `git worktree list` reports for the repository containing `dir`,
+/// primary first. Bare entries are skipped.
+pub fn worktrees(dir: &Path) -> Result<Vec<GitWorktree>, GitError> {
+    let out = git(dir, &["worktree", "list", "--porcelain"])?;
+    let mut list = Vec::new();
+    for block in out.split("\n\n").filter(|b| !b.trim().is_empty()) {
+        let mut path = None;
+        let mut branch = None;
+        let mut bare = false;
+        for line in block.lines() {
+            if let Some(p) = line.strip_prefix("worktree ") {
+                path = Some(PathBuf::from(p));
+            } else if let Some(b) = line.strip_prefix("branch ") {
+                branch = Some(b.strip_prefix("refs/heads/").unwrap_or(b).to_string());
+            } else if line == "bare" {
+                bare = true;
+            }
+        }
+        if let (Some(path), false) = (path, bare) {
+            let primary = list.is_empty();
+            list.push(GitWorktree { path, branch, primary });
+        }
+    }
+    Ok(list)
+}
+
+/// The branch work is based on: the remote's default branch when `origin/HEAD` is set,
+/// otherwise `main` or `master` if present, otherwise the primary worktree's branch.
+pub fn base_branch(dir: &Path, primary: &GitWorktree) -> String {
+    if let Ok(remote_head) = git(dir, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
+        let remote_head = remote_head.trim();
+        if let Some(branch) = remote_head.strip_prefix("origin/") {
+            return branch.to_string();
+        }
+    }
+    for candidate in ["main", "master"] {
+        let refname = format!("refs/heads/{candidate}");
+        if git(dir, &["show-ref", "--verify", "--quiet", &refname]).is_ok() {
+            return candidate.to_string();
+        }
+    }
+    primary.branch.clone().unwrap_or_else(|| "HEAD".to_string())
+}
+
+/// The commit-ish that stands for `base` in this repository: the local branch when it
+/// exists, otherwise `origin/<base>`, otherwise `base` as given (HEAD, say).
+pub fn base_ref(dir: &Path, base: &str) -> String {
+    let local = format!("refs/heads/{base}");
+    let remote = format!("refs/remotes/origin/{base}");
+    if git(dir, &["show-ref", "--verify", "--quiet", &local]).is_ok() {
+        base.to_string()
+    } else if git(dir, &["show-ref", "--verify", "--quiet", &remote]).is_ok() {
+        format!("origin/{base}")
+    } else {
+        base.to_string()
+    }
+}
+
+/// True when `name` is acceptable as a new branch name.
+pub fn is_valid_branch_name(dir: &Path, name: &str) -> bool {
+    git(dir, &["check-ref-format", "--branch", name]).is_ok()
+}
+
+pub fn branch_exists(dir: &Path, name: &str) -> bool {
+    git(dir, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{name}")]).is_ok()
+}
+
+/// `git worktree add -b <branch> <path> <start>`, run in the repository at `dir`.
+pub fn add_worktree(dir: &Path, branch: &str, path: &Path, start: &str) -> Result<(), GitError> {
+    let path = path.to_str().ok_or_else(|| GitError(format!("{} is not valid UTF-8", path.display())))?;
+    git(dir, &["worktree", "add", "-q", "-b", branch, path, start]).map(|_| ())
+}
+
+/// `git worktree remove <path>`: git itself refuses a worktree with local changes.
+pub fn remove_worktree(dir: &Path, path: &Path) -> Result<(), GitError> {
+    let path = path.to_str().ok_or_else(|| GitError(format!("{} is not valid UTF-8", path.display())))?;
+    git(dir, &["worktree", "remove", path]).map(|_| ())
+}
+
+/// Files with uncommitted changes in the worktree at `dir`, untracked files included.
+pub fn dirty_count(dir: &Path) -> Result<u32, GitError> {
+    let out = git(dir, &["status", "--porcelain", "--untracked-files=all"])?;
+    Ok(out.lines().filter(|l| !l.trim().is_empty()).count() as u32)
+}
+
+/// Files a merge of `base` into HEAD would conflict on, by a dry-run merge
+/// (`git merge-tree --write-tree`): it writes objects only, never the working tree, the
+/// index or any ref.
+pub fn conflicting_files(dir: &Path, base: &str) -> Result<Vec<String>, GitError> {
+    Ok(dry_run_merge(dir, base)?.map(|(_, files)| files).unwrap_or_default())
+}
+
+/// The dry-run merge of `base` into HEAD (see [`conflicting_files`]): `None` when it merges
+/// cleanly, otherwise the merged tree's id (conflicted files hold conflict markers there,
+/// HEAD's side first) and the conflicting files.
+pub fn dry_run_merge(dir: &Path, base: &str) -> Result<Option<(String, Vec<String>)>, GitError> {
+    let out = Command::new("git")
+        .args(["-c", "merge.conflictStyle=merge", "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", base])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    // Exit 0: merges cleanly. Exit 1: conflicts, listed after the tree id. Else: an error.
+    match out.status.code() {
+        Some(0) => Ok(None),
+        Some(1) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut lines = stdout.lines();
+            let tree = lines.next().unwrap_or_default().trim().to_string();
+            let mut files: Vec<String> = lines.filter(|l| !l.is_empty()).map(str::to_owned).collect();
+            files.dedup();
+            Ok(Some((tree, files)))
+        }
+        _ => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
+    }
+}
+
+/// The text of `path` in the tree `tree` (objects only; nothing is written).
+pub fn blob_text(dir: &Path, tree: &str, path: &str) -> Result<String, GitError> {
+    git(dir, &["cat-file", "blob", &format!("{tree}:{path}")])
+}
+
+/// True while a rebase is stopped in the worktree at `dir` (its conflict markers then put
+/// base's side first and the branch's second).
+pub fn rebase_in_progress(dir: &Path) -> bool {
+    ["rebase-merge", "rebase-apply"].iter().any(|name| {
+        git(dir, &["rev-parse", "--path-format=absolute", "--git-path", name])
+            .is_ok_and(|p| Path::new(p.trim()).exists())
+    })
+}
+
+/// Tell git a conflicted file is resolved, as `git add <path>` does: its working-tree
+/// content (now free of conflict markers) becomes the index entry. Nothing else is staged.
+pub fn mark_resolved(dir: &Path, path: &str) -> Result<(), GitError> {
+    git(dir, &["add", "--", path]).map(|_| ())
+}
+
+/// One commit as `log` reads it.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub hash: String,
+    pub short: String,
+    pub subject: String,
+    pub author: String,
+    /// Committer time, seconds since the Unix epoch.
+    pub time: u64,
+}
+
+/// Commits on HEAD that `base` lacks, newest first, capped at `limit`.
+pub fn log_above(dir: &Path, base: &str, limit: usize) -> Result<Vec<LogEntry>, GitError> {
+    let max = format!("--max-count={limit}");
+    let out = git(dir, &["log", &max, "--format=%H%x1f%h%x1f%an%x1f%ct%x1f%s", &format!("{base}..HEAD")])?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.splitn(5, '\u{1f}');
+            Some(LogEntry {
+                hash: f.next()?.into(),
+                short: f.next()?.into(),
+                author: f.next()?.into(),
+                time: f.next()?.parse().unwrap_or(0),
+                subject: f.next().unwrap_or_default().into(),
+            })
+        })
+        .collect())
+}
+
+/// How a rebase (or a continued one) ended.
+#[derive(Debug)]
+pub enum Rebase {
+    Done,
+    /// It stopped, on conflicts in these files: left stopped (never aborted), so they are
+    /// real conflicts in the tree to resolve, after which the rebase is continued.
+    Stopped { conflicts: Vec<String> },
+}
+
+/// `git rebase <onto>` in the worktree at `dir`, never interactive and never stashing.
+/// A rebase that stops on conflicts is left stopped.
+pub fn rebase(dir: &Path, onto: &str) -> Result<Rebase, GitError> {
+    run_rebase(dir, &["-c", "rebase.autoStash=false", "rebase", "--no-autosquash", onto])
+}
+
+/// `git rebase --continue` after the conflicts it stopped on were resolved.
+pub fn continue_rebase(dir: &Path) -> Result<Rebase, GitError> {
+    run_rebase(dir, &["rebase", "--continue"])
+}
+
+/// The branch a stopped rebase in `dir` is rebasing (git detaches HEAD meanwhile).
+pub fn rebasing_branch(dir: &Path) -> Option<String> {
+    ["rebase-merge/head-name", "rebase-apply/head-name"].iter().find_map(|name| {
+        let path = git(dir, &["rev-parse", "--path-format=absolute", "--git-path", name]).ok()?;
+        let head = std::fs::read_to_string(path.trim()).ok()?;
+        let head = head.trim();
+        Some(head.strip_prefix("refs/heads/").unwrap_or(head).to_string())
+    })
+}
+
+/// Files git holds unmerged in the worktree at `dir`.
+pub fn unmerged_files(dir: &Path) -> Vec<String> {
+    let out = git(dir, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
+    out.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect()
+}
+
+fn run_rebase(dir: &Path, args: &[&str]) -> Result<Rebase, GitError> {
+    let out = Command::new("git")
+        .args(args)
+        .env("GIT_EDITOR", "true")
+        .env("GIT_SEQUENCE_EDITOR", "true")
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() && !rebase_in_progress(dir) {
+        return Ok(Rebase::Done);
+    }
+    if rebase_in_progress(dir) {
+        return Ok(Rebase::Stopped { conflicts: unmerged_files(dir) });
+    }
+    // It never started (say, git refused it): nothing is in progress.
+    Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+}
+
+/// (ahead, behind): commits HEAD has that `base` lacks, and the other way round.
+pub fn ahead_behind(dir: &Path, base: &str) -> Result<(u32, u32), GitError> {
+    let out = git(dir, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
+    let mut counts = out.split_whitespace().map(|n| n.parse::<u32>().unwrap_or(0));
+    let behind = counts.next().unwrap_or(0);
+    let ahead = counts.next().unwrap_or(0);
+    Ok((ahead, behind))
+}
+
+/// Run git in `dir` with extra environment and no optional index writes.
+fn git_with(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Result<String, GitError> {
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(dir).env("GIT_OPTIONAL_LOCKS", "0");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    }
+}
+
+fn nul_list(out: &str) -> Vec<String> {
+    out.split('\0').filter(|p| !p.is_empty()).map(str::to_owned).collect()
+}
+
+/// The worktree's patch against its index, untracked files shown as added (and paired
+/// with deleted files as renames). The real index is never written: untracked files are
+/// marked intent-to-add in a throwaway copy of it.
+pub fn diff_against_index(dir: &Path) -> Result<String, GitError> {
+    const DIFF: &[&str] = &[
+        "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+        "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--full-index", "-M",
+        "--src-prefix=a/", "--dst-prefix=b/",
+    ];
+    let untracked = nul_list(&git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?);
+    if untracked.is_empty() {
+        return git_with(dir, DIFF, &[]);
+    }
+    let scratch = Scratch::new()?;
+    let index = scratch.0.join("index");
+    let real = PathBuf::from(git(dir, &["rev-parse", "--path-format=absolute", "--git-path", "index"])?.trim());
+    if real.exists() {
+        std::fs::copy(&real, &index).map_err(|e| GitError(format!("cannot copy the index: {e}")))?;
+    }
+    let list = scratch.0.join("paths");
+    std::fs::write(&list, untracked.join("\0")).map_err(|e| GitError(e.to_string()))?;
+    let list_arg = format!("--pathspec-from-file={}", list.display());
+    git_with(dir, &["add", "-N", "--pathspec-file-nul", &list_arg], &[("GIT_INDEX_FILE", &index)])?;
+    git_with(dir, DIFF, &[("GIT_INDEX_FILE", &index)])
+}
+
+/// Paths git holds unmerged (a conflict stopped a merge or rebase here).
+pub fn unmerged_paths(dir: &Path) -> Result<Vec<String>, GitError> {
+    let out = git(dir, &["-c", "core.quotePath=false", "diff", "--name-only", "-z", "--diff-filter=U"])?;
+    let mut list = nul_list(&out);
+    list.dedup();
+    Ok(list)
+}
+
+/// Paths whose index entry differs from HEAD (staged changes).
+pub fn staged_paths(dir: &Path) -> Result<Vec<String>, GitError> {
+    // A repository without commits has nothing to compare against: everything staged.
+    if git(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err() {
+        return Ok(nul_list(&git(dir, &["ls-files", "-z"])?));
+    }
+    Ok(nul_list(&git(dir, &["-c", "core.quotePath=false", "diff", "--cached", "--name-only", "-z", "--no-renames"])?))
+}
+
+/// Stage `paths` whole (additions, edits and deletions) and commit exactly them. Other
+/// staged paths stay staged and are not committed. Returns the abbreviated commit id. On
+/// failure the paths are unstaged again; the working tree is never touched.
+pub fn commit_paths(dir: &Path, paths: &[String], message: &str) -> Result<String, GitError> {
+    let scratch = Scratch::new()?;
+    let list = scratch.0.join("paths");
+    std::fs::write(&list, paths.join("\0")).map_err(|e| GitError(e.to_string()))?;
+    let list_arg = format!("--pathspec-from-file={}", list.display());
+    let msg = scratch.0.join("message");
+    std::fs::write(&msg, message).map_err(|e| GitError(e.to_string()))?;
+    let msg_arg = format!("--file={}", msg.display());
+    git(dir, &["add", "-A", "--pathspec-file-nul", &list_arg])?;
+    let committed =
+        git(dir, &["commit", "-q", "--only", "--cleanup=strip", &msg_arg, "--pathspec-file-nul", &list_arg]);
+    if let Err(e) = committed {
+        let _ = git(dir, &["reset", "-q", "--pathspec-file-nul", &list_arg]);
+        return Err(e);
+    }
+    Ok(git(dir, &["rev-parse", "--short", "HEAD"])?.trim().to_string())
+}
+
+/// The remote branches are pushed to: `origin` when there is one, otherwise the first
+/// remote git lists, or `None` when the repository has no remote.
+pub fn remote(dir: &Path) -> Option<String> {
+    let out = git(dir, &["remote"]).ok()?;
+    let remotes: Vec<&str> = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    remotes.iter().find(|r| **r == "origin").or(remotes.first()).map(|r| r.to_string())
+}
+
+/// `git push --set-upstream <remote> <branch>` from the worktree at `dir`. Never forced.
+/// Given up on after [`PUSH_TIMEOUT`]; never prompts for credentials.
+pub fn push(dir: &Path, remote: &str, branch: &str) -> Result<(), GitError> {
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    let mut cmd = Command::new("git");
+    cmd.args(["push", "--quiet", "--set-upstream", remote, &refspec])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .current_dir(dir);
+    match crate::subprocess::output_within(&mut cmd, PUSH_TIMEOUT) {
+        Ok(Some(out)) if out.status.success() => Ok(()),
+        Ok(Some(out)) => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
+        Ok(None) => Err(GitError(format!("git push did not finish within {}", crate::subprocess::describe(PUSH_TIMEOUT)))),
+        Err(e) => Err(GitError(format!("could not run git: {e}"))),
+    }
+}
+
+/// How long a push may take.
+pub const PUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// True when `ancestor` is `descendant` or one of its ancestors (both must be known here).
+pub fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> bool {
+    git(dir, &["merge-base", "--is-ancestor", ancestor, descendant]).is_ok()
+}
+
+/// Merge `branch` into whatever the worktree at `dir` has checked out, always with a merge
+/// commit. A merge that stops is aborted at once, leaving the tree as it was.
+pub fn merge_branch(dir: &Path, branch: &str, message: &str) -> Result<(), GitError> {
+    let out = Command::new("git")
+        .args(["merge", "--no-ff", "--no-edit", "-m", message, branch])
+        .env("GIT_EDITOR", "true")
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let _ = git(dir, &["merge", "--abort"]);
+    Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+}
+
+/// A private temporary directory, removed when dropped.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Result<Scratch, GitError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let name = format!("switchyard-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+        let dir = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&dir).map_err(|e| GitError(format!("cannot create {}: {e}", dir.display())))?;
+        Ok(Scratch(dir))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}

@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.1.0",
+  "description": "Stop during a shell run: the host interrupts, the CLI aborts the tool and ends the turn without an error. Synthesised from the Agent SDK 0.3.300 message types, not captured from a live run."
+}

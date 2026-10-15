@@ -1,0 +1,6 @@
+{
+  "adapter": "echo",
+  "cli": { "name": "echo-cli", "version": "1.0.0" },
+  "protocol": "0.1.0",
+  "description": "A CLI that reports tokens but never a cost (as Codex does). token_usage carries running totals for the session; the core estimates the cost from the price table."
+}

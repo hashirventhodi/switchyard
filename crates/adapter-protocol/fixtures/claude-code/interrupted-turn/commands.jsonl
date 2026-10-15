@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"send_text","text":"Run the tests."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Run the tests."},"parent_tool_use_id":null}}]}
+{"after_input":3,"command":{"type":"interrupt"},"expect_responses":[{"op":"interrupt"}]}

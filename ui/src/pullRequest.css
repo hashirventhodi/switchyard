@@ -1,0 +1,14 @@
+/* Pull request substate under a status, and the Finished box (#18). */
+.pr-sub{display:inline-block;font-family:var(--font-mono);font-size:11px;color:var(--fg-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.pr-sub.ok{color:var(--ok)}
+.pr-sub.bad{color:var(--bad)}
+.pr-sub.muted{color:var(--fg-2)}
+.lane-head .pr-sub{margin:0 6px}
+.worktree .meta .pr-sub{margin-left:6px}
+.card .pr-sub,.wtc .pr-sub{display:block;margin-top:4px}
+
+.endbox{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 16px;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:var(--radius);background:var(--bg-1);font-size:12.5px}
+.endbox .tx{flex:1;min-width:160px;color:var(--fg-1)}
+.endbox .acts{display:flex;gap:6px;flex-wrap:wrap}
+.endbox.err{border-left-color:var(--bad)}
+.endbox:not(.done):not(.err){border-left-color:var(--line-2)}

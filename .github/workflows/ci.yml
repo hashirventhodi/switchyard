@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Core and schema tests (everything except the Tauri app; the Claude Code conformance test runs the sidecar under Node)
+        run: cargo test --workspace --exclude switchyard-app
+      - name: Core has no Tauri dependency
+        run: |
+          if cargo tree -p switchyard-core -e normal,build | grep -i tauri; then
+            echo "switchyard-core must not depend on Tauri (ADR-0001)"; exit 1
+          fi
+      - name: Generated TypeScript is committed and current
+        run: git diff --exit-code -- ui/src/schema
+
+  renderer:
+    name: Renderer tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  app:
+    name: App build (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the app
+        run: pnpm tauri build --no-bundle

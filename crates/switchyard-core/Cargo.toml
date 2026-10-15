@@ -1,0 +1,24 @@
+[package]
+name = "switchyard-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Switchyard core: processes, git, policy, store, session state machine. Contains no Tauri types."
+
+[dependencies]
+switchyard-schema.workspace = true
+adapter-protocol = { path = "../adapter-protocol" }
+codex-adapter = { path = "../codex-adapter" }
+serde.workspace = true
+serde_json.workspace = true
+semver = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+portable-pty = "0.9"
+serde_yaml = "0.9"
+flate2 = "1"
+keyring = { version = "3", features = ["apple-native"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,1 @@
+{"type": "system", "subtype": "init", "session_id": "full-auto-unavailable", "uuid": "u-full-auto-unavailable", "cwd": "/wt/acme/feat", "permissionMode": "manual", "claude_code_version": "2.1.300", "model": "claude-opus-5-5", "tools": ["Bash", "Read", "Edit"], "mcp_servers": [], "apiKeySource": "none"}

@@ -1,0 +1,3 @@
+{"type": "session_init", "external_session_id": "mcp-servers", "permission_mode": "ask_first", "cli_permission_mode": "default", "cli": {"name": "claude-code", "version": "2.1.300"}, "model": "claude-opus-5-5", "mcp_servers": [{"name": "docs", "state": "connected", "error": null}, {"name": "github", "state": "failed", "error": null}, {"name": "linear", "state": "pending", "error": null}]}
+{"type": "mcp_status", "servers": [{"name": "github", "state": "failed", "error": "spawn npx ENOENT"}]}
+{"type": "mcp_status", "servers": [{"name": "linear", "state": "needs_auth", "error": null}]}

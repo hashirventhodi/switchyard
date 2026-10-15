@@ -1,0 +1,90 @@
+/* The session workbench (transcript | review pane) and the Changes tab. Rules follow the
+   prototype's .workbench, .pane, .changes-body, .file, .diff, .hunkbox, .ln, .commit-box. */
+
+.workbench.changes-hidden,.workbench.focus-changes{grid-template-columns:minmax(0,1fr)}
+.workbench.changes-hidden .changes-pane{display:none}
+.workbench.focus-changes .session{display:none}
+.workbench.focus-changes .changes-pane{border-left:0}
+.workbench.focus-changes .filelist{max-height:260px}
+.pane-head .spacer{flex:1}
+.pane-head .tab{height:26px;padding:0 10px;border-radius:var(--radius);color:var(--fg-2);font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.pane-head .tab.active{color:var(--fg);background:var(--bg-3)}
+.pane-head .tab .n{font-size:10.5px;padding:0 5px;border-radius:8px;background:var(--bg-4);color:var(--fg-1);font-variant-numeric:tabular-nums}
+.mobile-only{display:none}
+
+.changes-body{flex:1;display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0}
+.filelist{overflow:auto;max-height:190px;border-bottom:1px solid var(--line)}
+.group-h{display:flex;align-items:center;justify-content:space-between;padding:6px 10px 3px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-2)}
+.group-h.bad{color:var(--bad)}
+.group-h .n{font-variant-numeric:tabular-nums}
+.file{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:6px;padding:4px 10px 4px 8px;width:100%;text-align:left;font-size:12px}
+.file:hover{background:var(--bg-2)}
+.file.active{background:var(--bg-3)}
+.file:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
+.file .st,.diff-file .st{font-family:var(--font-mono);font-size:11px;font-weight:600;text-align:center}
+.st.M{color:var(--warn)}.st.A{color:var(--ok)}.st.D{color:var(--bad)}.st.R{color:var(--accent)}
+.file .st:not(.M):not(.A):not(.D):not(.R),.diff-file .st:not(.M):not(.A):not(.D):not(.R){color:var(--bad)}
+.file .path{font-family:var(--font-mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.file .path span{direction:ltr;unicode-bidi:bidi-override}
+.file .stat{font-family:var(--font-mono);font-size:11px;font-variant-numeric:tabular-nums}
+.file .stat .a{color:var(--ok)}.file .stat .d{color:var(--bad)}
+.file .dec{font:600 10px var(--font-ui);padding:0 4px;border-radius:3px}
+.file .dec.accept{color:var(--ok);background:var(--ok-soft)}.file .dec.reject{color:var(--bad);background:var(--bad-soft)}
+
+.diff{overflow:auto;font-family:var(--font-mono);font-size:11.5px;line-height:1.55;min-height:0}
+.diff-file{position:sticky;top:0;background:var(--bg-1);border-bottom:1px solid var(--line);padding:5px 10px;display:flex;align-items:center;gap:8px;z-index:1;flex-wrap:wrap}
+.diff-file .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.diff-file .m{font-size:11px;color:var(--fg-2)}
+.diff-file .btn{font-family:var(--font-ui)}
+.diff-file .btn.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)}
+.diff-file .btn.danger{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+.hunkbox{margin:8px 10px;border:1px solid var(--line);border-radius:var(--radius);overflow:auto}
+.hunkbox.accept{border-color:var(--ok)}.hunkbox.reject{border-color:var(--bad);opacity:.6}
+.hunkbox .hh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--bg-2);padding:4px 10px;font:11px var(--font-mono);color:var(--info);border-bottom:1px solid var(--line)}
+.hunkbox .hh .dec{font-weight:600;font-family:var(--font-ui)}
+.hunkbox.accept .hh .dec{color:var(--ok)}.hunkbox.reject .hh .dec{color:var(--bad)}
+.hunkbox .hh .sent{font:10px var(--font-ui);color:var(--fg-2)}
+.hunkbox .hh .r{margin-left:auto;display:flex;gap:2px}
+.hunkbox .hh .r button{font:11px var(--font-ui);padding:1px 7px;border-radius:4px;color:var(--fg-1)}
+.hunkbox .hh .r button:hover{background:var(--bg-3);color:var(--fg)}
+.hunkbox .hh .r button.a{color:var(--ok)}.hunkbox .hh .r button.rj{color:var(--bad)}
+.hunkbox .hh .r button[aria-pressed="true"]{background:var(--bg-3)}
+.hunkbox.reject:has(.hcomment-edit){opacity:1}
+.hcomment{padding:4px 10px;font-size:12px;color:var(--fg-1);background:var(--bg-1);border-bottom:1px solid var(--line);white-space:pre-wrap}
+.hcomment .who{font-weight:600;color:var(--fg-2);font-size:11px}
+.hcomment-edit{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.hcomment-edit textarea{width:100%;box-sizing:border-box;resize:vertical;font:12px var(--font-ui)}
+.hcomment-edit .row{display:flex;justify-content:flex-end;gap:6px}
+.blocked-note{margin:8px 10px 0;padding:4px 8px;font-size:11px;color:var(--bad);background:var(--bad-soft);border-radius:4px}
+.ln{display:grid;grid-template-columns:36px 36px 14px 1fr;white-space:pre;min-width:max-content}
+.ln .g{color:var(--fg-2);text-align:right;padding-right:8px;user-select:none;font-size:10.5px;opacity:.8}
+.ln .s{color:var(--fg-2);user-select:none}
+.ln.added{background:var(--diff-add)}.ln.added .s{color:var(--ok)}
+.ln.removed{background:var(--diff-del)}.ln.removed .s{color:var(--bad)}
+.ln .c{padding-right:16px}
+.diff-empty{padding:30px 16px;color:var(--fg-2);text-align:center;margin:0;font-family:var(--font-ui)}
+
+.commit-box{border-top:1px solid var(--line);padding:10px;background:var(--bg-1);display:flex;flex-direction:column;gap:8px}
+.commit-box textarea{resize:vertical;background:var(--bg);border:1px solid var(--line-2);border-radius:var(--radius);padding:6px 8px;font:12px/1.5 var(--font-mono);color:var(--fg)}
+.commit-box .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.commit-box .row .hint{flex:1;font-size:11px;color:var(--fg-2)}
+.review-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.review-foot .hint{flex:1 1 100%;font-size:11px;color:var(--fg-2);font-variant-numeric:tabular-nums}
+.review-foot .hint .ok{color:var(--ok)}.review-foot .hint .bad{color:var(--bad)}
+.review-foot .btn.primary{margin-left:auto}
+.review-foot .btn:disabled,.commit-box .btn:disabled{opacity:.5;cursor:default}
+
+@media (max-width:860px){
+  .mobile-only{display:inline-flex}
+  .lane-head .hide-sm{display:none}
+  .changes-pane{display:none;border-left:0}
+  .workbench.show-changes .session{display:none}
+  .workbench.show-changes .changes-pane,.workbench.focus-changes .changes-pane{display:flex}
+}
+
+/* Conflict hunks (#21): the branch's lines, then base's highlighted; Keep ours / Keep base. */
+.hunkbox.conflict{border-color:var(--bad)}
+.conf-note{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bad-soft);color:var(--fg);font-size:12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.conf-note b{color:var(--bad)}
+.conf-note .r{margin-left:auto;display:flex;gap:4px}
+.ln.base{background:var(--warn-soft)}.ln.base .s{color:var(--warn)}

@@ -1,0 +1,26 @@
+{
+  "_comment": "The agent CLI versions this build was recorded against (the release manifest's compat ranges). A new CLI version means new recordings under crates/adapter-protocol/fixtures and an updated range here; a test checks the two agree.",
+  "switchyard_releases": "https://github.com/hashirventhodi/switchyard/releases",
+  "agents": [
+    {
+      "agent": "claudeCode",
+      "name": "Claude Code",
+      "cli_name": "claude-code",
+      "executable": "claude",
+      "supported": { "min": "2.1.300", "below": "2.2.0" },
+      "install_hint": "curl -fsSL https://claude.ai/install.sh | bash",
+      "install_url": "https://code.claude.com/docs/en/setup",
+      "update_hint": "claude update"
+    },
+    {
+      "agent": "codex",
+      "name": "Codex",
+      "cli_name": "codex",
+      "executable": "codex",
+      "supported": { "min": "0.144.1", "below": "0.145.0" },
+      "install_hint": "brew install --cask codex",
+      "install_url": "https://developers.openai.com/codex/cli",
+      "update_hint": "brew upgrade --cask codex"
+    }
+  ]
+}

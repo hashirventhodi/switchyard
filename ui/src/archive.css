@@ -1,0 +1,11 @@
+/* Context: archived sessions, retention, and the read-only archived transcript reader. */
+.archive-list{list-style:none;margin:0;padding:0}
+.archive-list li{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"br btn" "meta btn";gap:2px 8px;align-items:center;padding:5px 12px}
+.archive-list li:hover{background:var(--bg-2)}
+.archive-list .br{grid-area:br;font-family:var(--font-mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.archive-list .meta{grid-area:meta;font-size:11px;color:var(--fg-2)}
+.archive-list button{grid-area:btn}
+.retention{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 12px 10px;font-size:11.5px;color:var(--fg-2)}
+.retention input{width:56px;font-family:var(--font-mono);font-size:11.5px;padding:2px 4px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:4px;color:var(--fg)}
+.archive-reader{width:min(820px,100%);height:min(80vh,720px)}
+.archive-reader .transcript{flex:1;min-height:0}
