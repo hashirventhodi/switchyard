@@ -12,6 +12,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex, Weak};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use switchyard_schema::command_name;
 use switchyard_schema::{Event, Shell};
 
 use crate::processes::{self, Recorded};
@@ -73,7 +74,7 @@ struct ShellState {
 }
 
 pub(crate) fn open(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &str, cols: u16, rows: u16) {
-    const COMMAND: &str = "openShell";
+    const COMMAND: &str = command_name::OPEN_SHELL;
     let Some((_, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };
@@ -111,23 +112,23 @@ pub(crate) fn open(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &
 
 pub(crate) fn write(inner: &mut Inner, id: &str, data: &str) {
     let Some(state) = inner.shells.list.iter().find(|s| s.shell.id == id) else {
-        return inner.refuse("writeShell", format!("There is no shell {id}"));
+        return inner.refuse(command_name::WRITE_SHELL, format!("There is no shell {id}"));
     };
     let _ = state.input.send(data.as_bytes().to_vec());
 }
 
 pub(crate) fn resize(inner: &mut Inner, id: &str, cols: u16, rows: u16) {
     let Some(state) = inner.shells.list.iter().find(|s| s.shell.id == id) else {
-        return inner.refuse("resizeShell", format!("There is no shell {id}"));
+        return inner.refuse(command_name::RESIZE_SHELL, format!("There is no shell {id}"));
     };
     if let Err(e) = state.master.resize(size(cols, rows)) {
-        inner.refuse("resizeShell", format!("Could not resize the shell: {e}"));
+        inner.refuse(command_name::RESIZE_SHELL, format!("Could not resize the shell: {e}"));
     }
 }
 
 pub(crate) fn close(inner: &mut Inner, id: &str) {
     if !inner.shells.list.iter().any(|s| s.shell.id == id) {
-        return inner.refuse("closeShell", format!("There is no shell {id}"));
+        return inner.refuse(command_name::CLOSE_SHELL, format!("There is no shell {id}"));
     }
     kill_where(inner, |s| s.id == id);
 }

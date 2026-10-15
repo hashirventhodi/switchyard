@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode};
 use serde_json::Value;
+use switchyard_schema::command_name;
 use switchyard_schema::{
     AgentKind, ArchivedSession, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
     Verdict,
@@ -145,7 +146,7 @@ pub(crate) fn start(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    begin(inner, core, "startSession", worktree_path, agent, permission_mode, prompt, None);
+    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, prompt, None);
 }
 
 /// Start a session on a worktree; when `replacing` names its (Paused, Finished or Error)
@@ -258,7 +259,7 @@ fn begin(
 }
 
 pub(crate) fn stop(inner: &mut Inner, id: &str) {
-    const COMMAND: &str = "stopSession";
+    const COMMAND: &str = command_name::STOP_SESSION;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };
@@ -277,7 +278,7 @@ pub(crate) fn stop(inner: &mut Inner, id: &str) {
 }
 
 pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str, text: &str) {
-    const COMMAND: &str = "sendPrompt";
+    const COMMAND: &str = command_name::SEND_PROMPT;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };
@@ -310,7 +311,7 @@ pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str,
 /// A live agent is simply told to continue; one whose process is gone is relaunched first,
 /// through its CLI's resume-by-id, so it keeps its context.
 pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
-    const COMMAND: &str = "resumeSession";
+    const COMMAND: &str = command_name::RESUME_SESSION;
     let Some(state) = find(inner, id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };
@@ -456,7 +457,7 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
 /// at start (it is the only kind allowed on a primary worktree), and the Repository's
 /// ceiling caps the switch as it caps the start.
 pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
-    const COMMAND: &str = "setPermissionMode";
+    const COMMAND: &str = command_name::SET_PERMISSION_MODE;
     let Some(state) = find(inner, id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };

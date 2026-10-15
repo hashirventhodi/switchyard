@@ -19,6 +19,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
+use switchyard_schema::command_name;
 use switchyard_schema::{
     AgentKind, ChecklistItem, Event, PermissionMode, Task, TaskColumn, TaskKind, TaskSessionTarget, TaskSourceKind,
 };
@@ -232,16 +233,16 @@ fn announce(inner: &Inner, command: &str, repo: &StoredRepository) {
 /// [`Command::ReadTasks`](switchyard_schema::Command::ReadTasks).
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse("readTasks", format!("There is no repository {repository_id}"));
+        return inner.refuse(command_name::READ_TASKS, format!("There is no repository {repository_id}"));
     };
-    announce(inner, "readTasks", &repo);
+    announce(inner, command_name::READ_TASKS, &repo);
 }
 
 /// [`Command::SyncTasks`](switchyard_schema::Command::SyncTasks): read the repository's
 /// issues through the Forge (nothing is written), then announce the board. When the Forge
 /// cannot be used the board stays as last synced and the refusal says why.
 pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
-    const COMMAND: &str = "syncTasks";
+    const COMMAND: &str = command_name::SYNC_TASKS;
     let (repo, dir, forge) = {
         let inner = core.lock().expect("core lock");
         let Some(repo) = worktrees::repository(&inner, repository_id) else {
@@ -270,7 +271,7 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
 
 /// [`Command::CreateTask`](switchyard_schema::Command::CreateTask): a local task in To do.
 pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
-    const COMMAND: &str = "createTask";
+    const COMMAND: &str = command_name::CREATE_TASK;
     let Some(repo) = worktrees::repository(inner, repository_id) else {
         return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
     };
@@ -305,7 +306,7 @@ fn find(inner: &Inner, id: &str) -> Option<(StoredRepository, Task)> {
 
 /// [`Command::TickTask`](switchyard_schema::Command::TickTask): kept in the store only.
 pub(crate) fn tick(inner: &Inner, task_id: &str, item: u32, done: bool) {
-    const COMMAND: &str = "tickTask";
+    const COMMAND: &str = command_name::TICK_TASK;
     let Some((repo, found)) = find(inner, task_id) else {
         return inner.refuse(COMMAND, format!("There is no task {task_id}"));
     };
@@ -330,7 +331,7 @@ fn linked_task(db: &Connection, session_id: &str) -> Option<String> {
 
 /// [`Command::LinkTask`](switchyard_schema::Command::LinkTask).
 pub(crate) fn link(inner: &Inner, session_id: &str, task_id: Option<&str>, relink: bool) {
-    const COMMAND: &str = "linkTask";
+    const COMMAND: &str = command_name::LINK_TASK;
     let Some(session) = sessions::live(inner, session_id) else {
         return inner.refuse(COMMAND, format!("There is no session {session_id}"));
     };
@@ -366,7 +367,7 @@ fn attach(inner: &Inner, command: &str, session_id: &str, repo: &StoredRepositor
     }
     inner.emit(Event::TaskLinked { session_id: session_id.into(), task_id: Some(found.id.clone()) });
     if advance(inner, repo, found, TaskColumn::InProgress, None) {
-        announce(inner, "moveTask", repo);
+        announce(inner, command, repo);
     }
 }
 
@@ -398,7 +399,7 @@ pub(crate) fn start_session(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    const COMMAND: &str = "startTaskSession";
+    const COMMAND: &str = command_name::START_TASK_SESSION;
     let Some((repo, found)) = find(inner, task_id) else {
         return inner.refuse(COMMAND, format!("There is no task {task_id}"));
     };
@@ -439,7 +440,15 @@ fn tasks_on(inner: &Inner, path: &str, branch: &str) -> Vec<(StoredRepository, T
 }
 
 /// Move the tasks of `branch` at `path` to `to`, announcing each changed board once.
-fn advance_all(inner: &Inner, tasks: Vec<(StoredRepository, Task)>, to: TaskColumn, pull_request: Option<&str>) {
+/// `command`: what moved them, to name if the board cannot be read; none for the poller,
+/// which then leaves the board as it was without a word.
+fn advance_all(
+    inner: &Inner,
+    command: Option<&str>,
+    tasks: Vec<(StoredRepository, Task)>,
+    to: TaskColumn,
+    pull_request: Option<&str>,
+) {
     let mut changed: Vec<StoredRepository> = Vec::new();
     for (repo, found) in tasks {
         if advance(inner, &repo, &found, to, pull_request) && !changed.iter().any(|r| r.id == repo.id) {
@@ -447,21 +456,28 @@ fn advance_all(inner: &Inner, tasks: Vec<(StoredRepository, Task)>, to: TaskColu
         }
     }
     for repo in changed {
-        announce(inner, "moveTask", &repo);
+        match command {
+            Some(command) => announce(inner, command, &repo),
+            None => {
+                if let Ok(tasks) = list(inner, &repo) {
+                    inner.emit(Event::TasksChanged { repository_id: repo.id.clone(), tasks, house_rules: house_rules(&repo) });
+                }
+            }
+        }
     }
 }
 
 /// The worktree's pull request is open (opened from Switchyard, or found by the poller):
 /// its tasks move to In review.
-pub(crate) fn pull_request_open(inner: &Inner, path: &str, branch: &str) {
-    advance_all(inner, tasks_on(inner, path, branch), TaskColumn::InReview, None);
+pub(crate) fn pull_request_open(inner: &Inner, command: Option<&str>, path: &str, branch: &str) {
+    advance_all(inner, command, tasks_on(inner, path, branch), TaskColumn::InReview, None);
 }
 
 /// The Forge reports the worktree's branch Merged by `pull_request` (its address), or a
 /// Local merge finished: its tasks move to Done. Call it before the worktree is removed,
 /// so the branch's issue is still found.
-pub(crate) fn merged(inner: &Inner, path: &str, branch: &str, pull_request: Option<&str>) {
-    advance_all(inner, tasks_on(inner, path, branch), TaskColumn::Done, pull_request);
+pub(crate) fn merged(inner: &Inner, command: Option<&str>, path: &str, branch: &str, pull_request: Option<&str>) {
+    advance_all(inner, command, tasks_on(inner, path, branch), TaskColumn::Done, pull_request);
 }
 
 /// On attach: every link of a session the core still knows (live or archived).

@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use switchyard_schema::command_name;
 use switchyard_schema::{ConflictFile, ConflictHunk, ConflictKind, ConflictSide, Event, SessionStatus};
 
 use super::diff::Fnv;
@@ -157,7 +158,7 @@ pub(crate) fn read(inner: &Inner, worktree_path: &str) -> (String, Vec<ConflictF
 }
 
 pub(crate) fn resolve(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, side: ConflictSide) {
-    const COMMAND: &str = "resolveConflict";
+    const COMMAND: &str = command_name::RESOLVE_CONFLICT;
     if inner.find_worktree(worktree_path).is_none() {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     }

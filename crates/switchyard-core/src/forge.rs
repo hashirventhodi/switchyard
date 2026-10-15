@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{
     ChecksState, Event, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState,
     SessionStatus,
@@ -252,7 +253,7 @@ fn uncommitted(n: u32) -> (String, &'static str) {
     (plural(n, "uncommitted file", "uncommitted files"), if n == 1 { "it" } else { "them" })
 }
 
-const OPEN_PULL_REQUEST: &str = "openPullRequest";
+const OPEN_PULL_REQUEST: &str = command_name::OPEN_PULL_REQUEST;
 
 /// What opening a pull request needs, read while holding the core.
 struct Opening {
@@ -284,7 +285,7 @@ pub(crate) fn open_pull_request(core: &Arc<Mutex<Inner>>, worktree_path: &str) {
             inner.forge.tracks.insert(worktree_path.to_string(), Track { pull_request: Some(opened), ..Track::default() });
             inner.emit(Event::PullRequestOpened { worktree_path: worktree_path.into(), pull_request: pull_request.clone() });
             inner.emit(Event::PullRequestChanged { worktree_path: worktree_path.into(), pull_request: Some(pull_request) });
-            tasks::pull_request_open(&inner, worktree_path, &opening.branch);
+            tasks::pull_request_open(&inner, Some(OPEN_PULL_REQUEST), worktree_path, &opening.branch);
         }
         Err(reason) => inner.refuse(OPEN_PULL_REQUEST, reason),
     }
@@ -472,9 +473,9 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
     let pull_request = found.as_ref().map(|f| f.pull_request.clone());
     inner.emit(Event::PullRequestChanged { worktree_path: key.clone(), pull_request: pull_request.clone() });
     match pull_request.map(|p| (p.state, p.number, p.url)) {
-        Some((PullRequestState::Merged, number, url)) => merged(inner, &due, Some((number, &url))),
+        Some((PullRequestState::Merged, number, url)) => merged(inner, None, &due, Some((number, &url))),
         // Opened outside Switchyard, or seen again after a relaunch.
-        Some((PullRequestState::Open, ..)) => tasks::pull_request_open(inner, &key, &due.branch),
+        Some((PullRequestState::Open, ..)) => tasks::pull_request_open(inner, None, &key, &due.branch),
         _ => {}
     }
 }
@@ -508,9 +509,9 @@ fn retry_cleanups(inner: &mut Inner) {
 /// The branch is in base: clean the worktree up if it is free and clean, and say so.
 /// `pull_request`: its number and address (none for a Local merge). The tasks move first,
 /// while the worktree still names its branch's issue.
-fn merged(inner: &mut Inner, due: &Due, pull_request: Option<(u32, &str)>) {
+fn merged(inner: &mut Inner, command: Option<&str>, due: &Due, pull_request: Option<(u32, &str)>) {
     let path = due.path.to_string_lossy().into_owned();
-    tasks::merged(inner, &path, &due.branch, pull_request.map(|p| p.1));
+    tasks::merged(inner, command, &path, &due.branch, pull_request.map(|p| p.1));
     let result = worktrees::try_remove(inner, &path);
     if result.is_err() {
         inner.forge.tracks.entry(path.clone()).or_default().cleanup = Some(Cleanup {
@@ -535,7 +536,7 @@ fn merged(inner: &mut Inner, due: &Due, pull_request: Option<(u32, &str)>) {
 /// every free, clean worktree of the repository and removes the Merged ones. The Forge is
 /// asked without holding the core; who is free and clean is checked again before removing.
 pub(crate) fn prune(core: &Arc<Mutex<Inner>>, repository_id: &str) {
-    const COMMAND: &str = "pruneMerged";
+    const COMMAND: &str = command_name::PRUNE_MERGED;
     let repo = {
         let inner = core.lock().expect("core lock");
         let Some(repo) = worktrees::repository(&inner, repository_id) else {
@@ -575,7 +576,7 @@ pub(crate) fn prune(core: &Arc<Mutex<Inner>>, repository_id: &str) {
             continue;
         }
         let key = path.to_string_lossy().into_owned();
-        tasks::merged(&inner, &key, &branch, Some(&url));
+        tasks::merged(&inner, Some(COMMAND), &key, &branch, Some(&url));
         if worktrees::try_remove(&mut inner, &key).is_ok() {
             branches.push(branch);
         }
@@ -594,7 +595,7 @@ fn is_free_and_clean(inner: &Inner, path: &Path) -> bool {
 /// [`Command::LocalMerge`](switchyard_schema::Command::LocalMerge): only for a repository
 /// with no remote. Merges into base in the Primary worktree, then cleans the worktree up.
 pub(crate) fn local_merge(inner: &mut Inner, worktree_path: &str) {
-    const COMMAND: &str = "localMerge";
+    const COMMAND: &str = command_name::LOCAL_MERGE;
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };
@@ -653,5 +654,5 @@ pub(crate) fn local_merge(inner: &mut Inner, worktree_path: &str) {
         return inner.refuse(COMMAND, format!("Could not merge {branch} into {base}: {e}"));
     }
     let due = Due { repository_id: repo.id, path: worktree.path, branch, base };
-    merged(inner, &due, None);
+    merged(inner, Some(COMMAND), &due, None);
 }

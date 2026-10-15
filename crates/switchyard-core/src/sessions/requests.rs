@@ -5,6 +5,7 @@
 //! surfaces, it is answered at once and noted as a system line.
 
 use adapter_protocol::{Command as AgentCommand, RequestDetail, Verdict as AgentVerdict};
+use switchyard_schema::command_name;
 use switchyard_schema::{AgentKind, Entry, Event, PermissionMode, Request, RequestState, SessionStatus, Verdict};
 
 use super::{append, change_status, send_to_agent, Cause, SessionState};
@@ -96,7 +97,7 @@ fn asked(detail: &RequestDetail) -> String {
 
 /// The `answerRequest` command.
 pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Verdict) {
-    const COMMAND: &str = "answerRequest";
+    const COMMAND: &str = command_name::ANSWER_REQUEST;
     let Some(state) = super::find(inner, id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };

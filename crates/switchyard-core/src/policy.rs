@@ -14,6 +14,7 @@ mod pattern;
 use std::path::Path;
 
 use adapter_protocol::RequestDetail;
+use switchyard_schema::command_name;
 use switchyard_schema::{
     AgentKind, Event, Grant, GrantEffect, GrantRule, PermissionMode, Policy, PolicyLayer,
 };
@@ -291,7 +292,7 @@ pub(crate) fn repository(inner: &Inner, id: &str) -> Option<StoredRepository> {
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     match repository(inner, repository_id) {
         Some(repo) => emit(inner, &repo),
-        None => inner.refuse("readPolicy", format!("There is no repository {repository_id}")),
+        None => inner.refuse(command_name::READ_POLICY, format!("There is no repository {repository_id}")),
     }
 }
 
@@ -306,7 +307,7 @@ pub(crate) fn add_local(inner: &Inner, repository_id: &str, rule: &GrantRule) ->
 
 /// The `revokeGrant` command: local Grants only.
 pub(crate) fn revoke(inner: &Inner, repository_id: &str, grant_id: &str) {
-    const COMMAND: &str = "revokeGrant";
+    const COMMAND: &str = command_name::REVOKE_GRANT;
     let Some(repo) = repository(inner, repository_id) else {
         return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
     };

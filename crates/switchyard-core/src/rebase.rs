@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{Commit, Event, SessionStatus};
 
 use crate::{git, sessions, worktrees, Inner};
@@ -16,7 +17,7 @@ fn base_of(repo: &Path) -> Option<String> {
 }
 
 pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
-    const COMMAND: &str = "rebaseWorktree";
+    const COMMAND: &str = command_name::REBASE_WORKTREE;
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };
@@ -69,7 +70,7 @@ pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
 /// One message asking the agent to rebase on base and resolve conflicts itself, delivered
 /// as the user's next prompt (the agent sees it in its context, as if typed).
 pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id: &str) {
-    const COMMAND: &str = "askAgentToRebase";
+    const COMMAND: &str = command_name::ASK_AGENT_TO_REBASE;
     let Some((worktree_path, status)) = sessions::worktree_and_status(inner, session_id) else {
         return inner.refuse(COMMAND, format!("There is no session {session_id}"));
     };
@@ -102,7 +103,7 @@ pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id:
 const HISTORY_LIMIT: usize = 200;
 
 pub(crate) fn history(inner: &Inner, worktree_path: &str) {
-    const COMMAND: &str = "readHistory";
+    const COMMAND: &str = command_name::READ_HISTORY;
     let Some((repo, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };

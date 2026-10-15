@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rusqlite::{params, Connection};
+use switchyard_schema::command_name;
 use switchyard_schema::{Event, Secret, SecretOrigin, SecretSource};
 
 use crate::store::StoredRepository;
@@ -216,7 +217,7 @@ pub(crate) fn spawn_env(inner: &Inner, repo: &StoredRepository) -> SpawnEnv {
 
 /// The `addSecret` command: a local name, not granted.
 pub(crate) fn add(inner: &mut Inner, repository_id: &str, name: &str) {
-    const COMMAND: &str = "addSecret";
+    const COMMAND: &str = command_name::ADD_SECRET;
     let Some(repo) = policy::repository(inner, repository_id) else {
         return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
     };
@@ -237,7 +238,7 @@ pub(crate) fn add(inner: &mut Inner, repository_id: &str, name: &str) {
 
 /// The `removeSecret` command: a locally added name and its grant. Declared names stay.
 pub(crate) fn remove(inner: &mut Inner, repository_id: &str, name: &str) {
-    const COMMAND: &str = "removeSecret";
+    const COMMAND: &str = command_name::REMOVE_SECRET;
     let Some(repo) = policy::repository(inner, repository_id) else {
         return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
     };
@@ -263,7 +264,7 @@ pub(crate) fn remove(inner: &mut Inner, repository_id: &str, name: &str) {
 
 /// The `setSecretValue` command: into the keychain, never the store. Not echoed back.
 pub(crate) fn set_value(inner: &mut Inner, repository_id: &str, name: &str, value: &str) {
-    const COMMAND: &str = "setSecretValue";
+    const COMMAND: &str = command_name::SET_SECRET_VALUE;
     let Some(repo) = policy::repository(inner, repository_id) else {
         return inner.refuse(COMMAND, format!("There is no repository {repository_id}"));
     };
@@ -281,7 +282,7 @@ pub(crate) fn set_value(inner: &mut Inner, repository_id: &str, name: &str, valu
 
 /// The `grantSecret` and `revokeSecret` commands.
 pub(crate) fn set_grant(inner: &mut Inner, repository_id: &str, name: &str, granted: bool) {
-    let command = if granted { "grantSecret" } else { "revokeSecret" };
+    let command = if granted { command_name::GRANT_SECRET } else { command_name::REVOKE_SECRET };
     let Some(repo) = policy::repository(inner, repository_id) else {
         return inner.refuse(command, format!("There is no repository {repository_id}"));
     };
@@ -309,6 +310,6 @@ fn emit(inner: &Inner, repo: &StoredRepository) {
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     match policy::repository(inner, repository_id) {
         Some(repo) => emit(inner, &repo),
-        None => inner.refuse("readSecrets", format!("There is no repository {repository_id}")),
+        None => inner.refuse(command_name::READ_SECRETS, format!("There is no repository {repository_id}")),
     }
 }

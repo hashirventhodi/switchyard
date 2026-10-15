@@ -7,6 +7,7 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{AgentKind, ArchivedSession, Entry, Event, PermissionMode, SessionStatus, Settings};
 
 use super::{begin, persist, status_label};
@@ -26,7 +27,7 @@ pub(crate) fn replace(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    const COMMAND: &str = "replaceSession";
+    const COMMAND: &str = command_name::REPLACE_SESSION;
     let Some(state) = super::find(inner, id) else {
         return inner.refuse(COMMAND, format!("There is no session {id}"));
     };
@@ -101,7 +102,7 @@ pub(super) fn prune(inner: &mut Inner) {
 
 /// The `readArchivedSession` command.
 pub(crate) fn read_archived(inner: &Inner, id: &str) {
-    const COMMAND: &str = "readArchivedSession";
+    const COMMAND: &str = command_name::READ_ARCHIVED_SESSION;
     if !inner.sessions.archived.iter().any(|a| a.session.id == id) {
         return inner.refuse(COMMAND, format!("There is no archived session {id}"));
     }
@@ -113,7 +114,7 @@ pub(crate) fn read_archived(inner: &Inner, id: &str) {
 
 /// The `exportTranscript` command: one JSON object per transcript entry, one per line.
 pub(crate) fn export(inner: &Inner, id: &str) {
-    const COMMAND: &str = "exportTranscript";
+    const COMMAND: &str = command_name::EXPORT_TRANSCRIPT;
     let live = inner.sessions.list.iter().find(|s| s.session.id == id);
     let (branch, entries) = match live {
         Some(state) => (state.session.branch.clone(), state.transcript.clone()),
@@ -148,7 +149,7 @@ pub(crate) fn export(inner: &Inner, id: &str) {
 
 /// The `updateSettings` command.
 pub(crate) fn update_settings(inner: &mut Inner, settings: Settings) {
-    const COMMAND: &str = "updateSettings";
+    const COMMAND: &str = command_name::UPDATE_SETTINGS;
     if settings.archive_keep_per_repository == 0 || settings.archive_keep_days == 0 {
         return inner.refuse(COMMAND, "Keep at least one archived session for at least one day".into());
     }

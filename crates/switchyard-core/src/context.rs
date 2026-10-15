@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{ContextFile, ContextKind, Event};
 
 use crate::Inner;
@@ -47,7 +48,7 @@ fn read(name: String, path: &Path, kind: ContextKind) -> Option<ContextFile> {
 
 /// [`Command::ReadContext`](switchyard_schema::Command::ReadContext).
 pub(crate) fn read_context(inner: &Inner, worktree_path: &str) {
-    const COMMAND: &str = "readContext";
+    const COMMAND: &str = command_name::READ_CONTEXT;
     let Some((_, worktree)) = inner.find_worktree(worktree_path) else {
         return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
     };

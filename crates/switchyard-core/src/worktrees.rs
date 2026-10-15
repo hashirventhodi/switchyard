@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
@@ -83,7 +84,7 @@ pub(crate) fn start_session_on_new(
     permission_mode: PermissionMode,
     prompt: &str,
 ) {
-    const COMMAND: &str = "startSessionOnNewWorktree";
+    const COMMAND: &str = command_name::START_SESSION_ON_NEW_WORKTREE;
     if prompt.trim().is_empty() {
         return inner.refuse(COMMAND, "Write a prompt for the agent first".into());
     }
@@ -106,7 +107,7 @@ pub(crate) fn start_session_on_new(
 /// worktree). The branch stays. Shells on the worktree close with it, once git has removed it.
 pub(crate) fn remove(inner: &mut Inner, worktree_path: &str) {
     if let Err(reason) = try_remove(inner, worktree_path) {
-        inner.refuse("removeWorktree", reason);
+        inner.refuse(command_name::REMOVE_WORKTREE, reason);
     }
 }
 

@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
+use switchyard_schema::command_name;
 use switchyard_schema::{Command, Event, Repository, Worktree};
 
 use agents::{AgentLauncher, NoAgents};
@@ -210,7 +211,7 @@ impl Core {
             Command::CloseShell { shell_id } => shells::close(&mut inner, &shell_id),
             Command::CloseWorktreeShells { worktree_path } => shells::close_worktree(&mut inner, &worktree_path),
             Command::CreateWorktree { repository_id, branch } => {
-                worktrees::create(&mut inner, "createWorktree", &repository_id, &branch);
+                worktrees::create(&mut inner, command_name::CREATE_WORKTREE, &repository_id, &branch);
             }
             Command::StartSessionOnNewWorktree { repository_id, branch, agent, permission_mode, prompt } => {
                 worktrees::start_session_on_new(&mut inner, &self.inner, &repository_id, &branch, agent, permission_mode, &prompt)
@@ -293,11 +294,11 @@ impl Inner {
         forge::replay_setup(self);
         let stored = match self.store.repositories() {
             Ok(list) => list,
-            Err(e) => return self.refuse("attach", format!("cannot read the store: {e}")),
+            Err(e) => return self.refuse(command_name::ATTACH, format!("cannot read the store: {e}")),
         };
         for repo in stored {
             if let Err(reason) = self.announce(&repo) {
-                self.refuse("attach", reason);
+                self.refuse(command_name::ATTACH, reason);
             }
         }
         sessions::replay(self);
@@ -307,7 +308,7 @@ impl Inner {
     }
 
     fn add_repository(&mut self, path: &str) {
-        const COMMAND: &str = "addRepository";
+        const COMMAND: &str = command_name::ADD_REPOSITORY;
         let dir = Path::new(path);
         if !dir.is_dir() {
             return self.refuse(COMMAND, format!("{path} does not exist or is not a folder"));
