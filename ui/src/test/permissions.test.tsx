@@ -81,7 +81,7 @@ function surfaces() {
   return {
     inbox: within(screen.getByRole("banner")).getByRole("button", { name: /^Needs you/ }).textContent,
     kpi: screen.getByRole("button", { name: /^Needs you: \d+$/ }).querySelector(".v")?.textContent,
-    statusbar: within(screen.getByRole("contentinfo")).getByText(/waiting/).textContent,
+    statusbar: within(screen.getByRole("contentinfo")).getByText(/Needs you/).textContent,
     sidebar: within(screen.getByRole("complementary", { name: "Repositories" })).getByTestId("status").dataset.status,
   };
 }
@@ -92,7 +92,7 @@ test("a request turns every surface amber at once and raises one toast with agen
   act(() => emit(...asks()));
 
   const s = surfaces();
-  expect([s.inbox, s.kpi, s.statusbar, s.sidebar]).toEqual(["Needs you1", "1", "1 waiting", "waiting"]);
+  expect([s.inbox, s.kpi, s.statusbar, s.sidebar]).toEqual(["Needs you1", "1", "1 Needs you", "waiting"]);
   const needsYou = screen.getByRole("region", { name: "Needs you" });
   expect(within(needsYou).getByText("Wants to run: pnpm test")).toBeTruthy();
   expect(toasts()).toHaveLength(1);
@@ -109,7 +109,7 @@ test("Approve on the toast answers the request without changing view; the answer
   expect(currentView()).toBe("Dashboard");
   act(() => emit(...answered()));
   const s = surfaces();
-  expect([s.inbox, s.kpi, s.statusbar, s.sidebar]).toEqual(["Needs you", "0", "0 waiting", "running"]);
+  expect([s.inbox, s.kpi, s.statusbar, s.sidebar]).toEqual(["Needs you", "0", "0 Needs you", "running"]);
   expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
 });
 

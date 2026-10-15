@@ -79,7 +79,7 @@ export function Dashboard(props: {
           <div className="sec">
             <h2>Needs you</h2>
             <span className="sub">
-              {count("waiting")} waiting · {count("failed")} error{count("failed") === 1 ? "" : "s"}
+              {count("waiting")} Needs you · {count("failed")} error{count("failed") === 1 ? "" : "s"}
             </span>
           </div>
           <div className="cols">{attention.map(card)}</div>

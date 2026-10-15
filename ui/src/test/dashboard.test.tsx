@@ -116,6 +116,13 @@ test("the activity feed lists what happened, newest first, with how long ago", (
   expect(lines[2]).toContain("Claude Code · fix/readme: started");
 });
 
+test("the Needs you section counts with the status's own label", () => {
+  const { emit } = launch();
+  act(() => emit({ type: "sessionStatusChanged", sessionId: "session-1", status: "waiting" }));
+  const section = screen.getByRole("region", { name: "Needs you" });
+  expect(section.querySelector(".sec .sub")?.textContent).toBe("1 Needs you · 0 errors");
+});
+
 test("the sidebar counts what needs you, overall and per repository, and opens the queue", () => {
   const { emit } = launch();
   const sidebar = () => screen.getByRole("complementary", { name: "Repositories" });

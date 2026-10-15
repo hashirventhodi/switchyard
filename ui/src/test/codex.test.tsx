@@ -83,7 +83,7 @@ test("statuses and counts follow each session on its own, and both requests are 
   expect(within(card("feat/tests")).getByTestId("status").dataset.status).toBe("waiting");
   expect(within(card("fix/docs")).getByTestId("status").dataset.status).toBe("running");
   expect(statusbar().getByText(/running/).textContent).toBe("1 running");
-  expect(statusbar().getByText(/waiting/).textContent).toBe("1 waiting");
+  expect(statusbar().getByText(/Needs you/).textContent).toBe("1 Needs you");
 
   act(() => emit(...asks("session-1", "req-1", "pnpm lint")));
   expect(screen.getByRole("button", { name: /^Needs you: \d+$/ }).querySelector(".v")?.textContent).toBe("2");

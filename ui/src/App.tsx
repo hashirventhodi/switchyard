@@ -627,7 +627,7 @@ export function App({
           </span>
           <span className="i">
             <i className="dot waiting" />
-            {sessions.filter((s) => s.status === "waiting").length} waiting
+            {sessions.filter((s) => s.status === "waiting").length} Needs you
           </span>
           <div className="r">
             <span className="i hide-sm">{state.repositories.length} repos</span>
