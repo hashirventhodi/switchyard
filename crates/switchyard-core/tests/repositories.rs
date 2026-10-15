@@ -1,7 +1,7 @@
 mod harness;
 
 use harness::{added_repository, Harness, TempRepo};
-use switchyard_schema::{Event, Worktree};
+use switchyard_schema::{Command, Event, Worktree};
 
 #[test]
 fn adding_a_repository_reports_its_base_branch_and_every_worktree() {
@@ -36,6 +36,68 @@ fn adding_a_repository_reports_its_base_branch_and_every_worktree() {
                 },
             },
         ]
+    );
+}
+
+#[test]
+fn on_relaunch_repositories_are_replayed_with_worktrees_re_read_from_git() {
+    let repo = TempRepo::new("acme");
+    let doomed = repo.add_worktree("old/branch");
+    let mut core = Harness::launch();
+    let repository = added_repository(&core.add_repository(&repo.path));
+
+    // While the app is closed, worktrees change behind its back.
+    harness::git(&repo.path, &["worktree", "remove", doomed.to_str().unwrap()]);
+    let fresh = repo.add_worktree("fix/typo");
+    let mut core = core.relaunch();
+
+    let events = core.send(Command::Attach);
+
+    let worktree = |path: &std::path::Path, branch: &str, primary| Event::WorktreeAdded {
+        repository_id: repository.id.clone(),
+        worktree: Worktree {
+            path: path.to_str().unwrap().into(),
+            branch: Some(branch.into()),
+            primary,
+        },
+    };
+    assert_eq!(
+        events,
+        vec![
+            Event::Attached,
+            Event::RepositoryAdded { repository: repository.clone() },
+            worktree(&repo.path, "main", true),
+            worktree(&fresh, "fix/typo", false),
+        ]
+    );
+}
+
+#[test]
+fn attaching_twice_replays_the_same_state() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+
+    let first = core.send(Command::Attach);
+    let second = core.send(Command::Attach);
+
+    assert_eq!(first.len(), 3, "{first:#?}");
+    assert_eq!(first, second);
+}
+
+#[test]
+fn adding_a_repository_twice_is_refused() {
+    let repo = TempRepo::new("acme");
+    let feature = repo.add_worktree("feat/x");
+    let mut core = Harness::launch();
+    core.add_repository(&repo.path);
+
+    // Picking a linked worktree of the same repository counts as the same repository.
+    let events = core.add_repository(&feature);
+
+    assert!(
+        matches!(&events[..], [Event::CommandRefused { reason, .. }] if reason.contains("already added")),
+        "{events:#?}"
     );
 }
 
