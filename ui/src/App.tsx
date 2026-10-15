@@ -155,11 +155,17 @@ export function App({
     };
   }, [core]);
 
-  // Git is the source of truth and moves outside Switchyard: re-read on returning to the app.
+  // The core watches git and pushes every change (ADR-0008); only the Forge is polled. On
+  // returning to the app, poll it now; while hidden, the core polls it at its slowest.
   useEffect(() => {
-    const onFocus = () => core.send({ type: "refreshWorktrees" });
+    const onFocus = () => core.send({ type: "pollForgeNow" });
+    const onVisibility = () => core.send({ type: "windowVisibility", visible: document.visibilityState !== "hidden" });
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [core]);
 
   // Bumped to make the session view scroll to its pending request (⌘J, inbox, toast).

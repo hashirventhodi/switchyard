@@ -400,6 +400,43 @@ fn polling_backs_off_while_nothing_changes_and_speeds_up_on_a_change() {
 }
 
 #[test]
+fn a_hidden_window_polls_every_pull_request_at_the_slowest_cadence() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+    let before = r.core.gh.calls_of(["pr", "list"]);
+    r.core.send(Command::WindowVisibility { visible: false });
+    assert_eq!(r.core.gh.calls_of(["pr", "list"]), before, "hiding polls nothing");
+    // Due on the first tick, then every 8 ticks: never faster, even when something changes.
+    assert_eq!(polled_on(&mut r.core, 24), vec![1, 9, 17]);
+    r.core.gh.set_review("feat/login", "CHANGES_REQUESTED");
+    assert_eq!(polled_on(&mut r.core, 16), vec![1, 9]);
+}
+
+#[test]
+fn poll_forge_now_polls_at_once_and_resets_the_back_off() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+    assert_eq!(polled_on(&mut r.core, 16), vec![1, 3, 7, 15], "backed off to every 8 ticks");
+    let before = r.core.gh.calls_of(["pr", "list"]);
+    r.core.send(Command::PollForgeNow);
+    assert_eq!(r.core.gh.calls_of(["pr", "list"]), before + 1, "polled at once");
+    // Backing off afresh from that poll: 2, 4, 8 ticks apart.
+    assert_eq!(polled_on(&mut r.core, 16), vec![2, 6, 14]);
+}
+
+#[test]
+fn becoming_visible_polls_at_once_and_backs_off_afresh() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+    r.core.send(Command::WindowVisibility { visible: false });
+    assert_eq!(polled_on(&mut r.core, 4), vec![1]);
+    let before = r.core.gh.calls_of(["pr", "list"]);
+    r.core.send(Command::WindowVisibility { visible: true });
+    assert_eq!(r.core.gh.calls_of(["pr", "list"]), before + 1, "polled at once");
+    assert_eq!(polled_on(&mut r.core, 8), vec![2, 6]);
+}
+
+#[test]
 fn a_closed_pull_request_is_still_polled_now_and_then_and_a_reopen_is_seen() {
     let mut r = with_remote();
     open_pr(&mut r.core, &r.wt);
