@@ -196,6 +196,27 @@ fn a_worktree_whose_agent_is_running_is_not_rebased_behind_its_back() {
 }
 
 #[test]
+fn a_worktree_whose_agent_waits_on_a_permission_request_is_not_rebased_mid_turn() {
+    let (repo, mut core, path) = setup();
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+    core.start_session(&path, "Add a login form.");
+    core.agent_says(
+        0,
+        AgentEvent::PermissionRequest {
+            request_id: "req-1".into(),
+            request: adapter_protocol::RequestDetail::Command { command: "pnpm test".into(), cwd: None },
+            reason: None,
+        },
+    );
+    let head_before = head(&path);
+
+    let reason = refused(&rebase(&mut core, &path));
+
+    assert!(reason.contains("request"), "{reason}");
+    assert_eq!(head(&path), head_before);
+}
+
+#[test]
 fn asking_the_agent_to_rebase_sends_one_message_and_the_session_goes_running() {
     let (repo, mut core, path) = setup();
     commit(&path, "README", "hello from the branch\n", "branch edit");

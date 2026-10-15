@@ -37,6 +37,12 @@ pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
             );
         }
     }
+    if sessions::awaits_request(inner, worktree_path) {
+        return inner.refuse(
+            COMMAND,
+            format!("{name}'s agent is waiting on a request mid-turn; answer its request first"),
+        );
+    }
     match git::dirty_count(&worktree.path) {
         Ok(0) => {}
         Ok(1) => return inner.refuse(COMMAND, format!("{name} has 1 uncommitted file; commit or discard it before rebasing")),

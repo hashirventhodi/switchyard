@@ -206,6 +206,12 @@ pub(crate) fn worktree_and_status(inner: &Inner, id: &str) -> Option<(String, Se
     Some((state.session.worktree_path.clone(), state.session.status))
 }
 
+/// True when the session on the worktree at `path` is waiting on a Permission request or
+/// question: mid-turn, so its tree must not move under it.
+pub(crate) fn awaits_request(inner: &Inner, path: &str) -> bool {
+    inner.sessions.list.iter().any(|s| s.session.worktree_path == path && requests::has_pending(s))
+}
+
 /// The status of the session occupying the worktree at `path`, if any.
 pub(crate) fn occupant(inner: &Inner, path: &str) -> Option<SessionStatus> {
     inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.status)
