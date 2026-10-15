@@ -1,0 +1,36 @@
+/* Agent pane beside the review pane (History, Context; Changes joins them). From the prototype. */
+.workbench{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,440px);min-height:0;height:100%}
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+.pane-head{display:flex;align-items:center;gap:6px;height:36px;padding:0 10px 0 14px;border-bottom:1px solid var(--line);background:var(--bg-1);flex:none}
+.pane-head .tabs{display:flex;gap:2px}
+.pane-body{flex:1;min-height:0;overflow:auto}
+.changes-pane{border-left:1px solid var(--line)}
+
+.graph{display:flex;flex-direction:column;gap:0;padding:8px 10px;font-size:11.5px;margin:0;list-style:none}
+.graph .c{display:grid;grid-template-columns:18px 64px minmax(0,1fr) auto;gap:8px;align-items:center;padding:3px 0;color:var(--fg-1)}
+.graph .c .n{width:8px;height:8px;border-radius:50%;background:var(--accent);justify-self:center}
+.graph .c .n.base{background:var(--fg-2)}
+.graph .c .h{font-family:var(--font-mono);color:var(--fg-2);font-size:11px;overflow:hidden;text-overflow:ellipsis}
+.graph .c .m{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.graph .c .m.muted{color:var(--fg-2)}
+.graph .c .m .bad{color:var(--bad)}
+.graph .c .t{font-size:11px;color:var(--fg-2);display:flex;gap:6px}
+
+.ctx{overflow:auto;padding:6px 0 12px;font-size:12px}
+.ctx h4{margin:10px 12px 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-2);font-weight:600;display:flex;justify-content:space-between}
+.ctx .kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:4px 12px;color:var(--fg)}
+.ctx .kv:hover{background:var(--bg-2)}
+.ctx .kv .k{font-family:var(--font-mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ctx .kv .v{font-family:var(--font-mono);font-size:11px;color:var(--fg-2);white-space:nowrap}
+.ctx .kv .v.warn{color:var(--warn)}
+.ctx .kv .v button{font-size:11px;color:var(--accent);margin-left:4px}
+
+/* ↓N behind base: sidebar row, session header. */
+.behind-n{color:var(--warn);font-family:var(--font-mono);font-size:11px;white-space:nowrap;margin-left:6px}
+.lane-head .behind-n{margin-left:0}
+.wtc .row .conflict{color:var(--bad)}
+
+@media (max-width:860px){
+  .workbench{grid-template-columns:1fr}
+  .changes-pane{display:none;border-left:0}
+}

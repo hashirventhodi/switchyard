@@ -87,6 +87,11 @@ function WorktreeCard(props: {
             </span>
             <span>dirty {facts.dirty}</span>
             {facts.behind > 0 && <span className="behind">behind base</span>}
+            {facts.conflicts.length > 0 && (
+              <span className="conflict" title={facts.conflicts.join("\n")}>
+                conflicts with {repository.baseBranch}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -129,6 +134,11 @@ function WorktreeCard(props: {
           ) : (
             <button className="btn sm primary" onClick={() => onNewSession({ worktreePath: w.path })}>
               Start agent here
+            </button>
+          )}
+          {!w.primary && !!facts?.behind && (
+            <button className="btn sm" onClick={() => send({ type: "rebaseWorktree", worktreePath: w.path })}>
+              Rebase on {repository.baseBranch}
             </button>
           )}
           <button className="btn sm ghost" disabled title="Shells arrive with the terminal dock">
