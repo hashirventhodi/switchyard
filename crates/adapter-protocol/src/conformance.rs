@@ -145,6 +145,23 @@ pub struct Mismatch {
     pub actual: Vec<String>,
 }
 
+impl Mismatch {
+    /// A unified diff, one compact JSON value per line, with three lines of context.
+    pub fn diff(&self) -> String {
+        let expected = lines_with_newlines(&self.expected);
+        let actual = lines_with_newlines(&self.actual);
+        similar::TextDiff::from_lines(&expected, &actual)
+            .unified_diff()
+            .context_radius(3)
+            .header("expected", "actual")
+            .to_string()
+    }
+}
+
+fn lines_with_newlines(lines: &[String]) -> String {
+    lines.iter().map(|l| format!("{l}\n")).collect()
+}
+
 impl fmt::Display for ConformanceFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -153,7 +170,8 @@ impl fmt::Display for ConformanceFailure {
             }
             ConformanceFailure::Mismatch(mismatches) => {
                 for m in mismatches {
-                    writeln!(f, "{} differ:\nexpected: {:?}\nactual: {:?}", m.what, m.expected, m.actual)?;
+                    writeln!(f, "{} differ:", m.what)?;
+                    write!(f, "{}", m.diff())?;
                 }
                 Ok(())
             }
