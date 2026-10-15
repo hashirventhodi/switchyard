@@ -273,6 +273,13 @@ export function App({
     showChanges: false,
     draft: { text: "", seq: 0 },
   });
+  // Review changes (the Finished and Paused boxes): the review pane, shown, on Changes.
+  const [reviewSeq, setReviewSeq] = useState(0);
+  const reviewChanges = useCallback(() => {
+    if (prefs.reviewHidden) updatePrefs({ reviewHidden: false });
+    setBench((b) => ({ ...b, showChanges: true }));
+    setReviewSeq((n) => n + 1);
+  }, [prefs.reviewHidden, updatePrefs]);
   useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
   useHandler(registry, "view.session", () => updatePrefs({ view: "session" }));
   useHandler(registry, "view.worktrees", () => updatePrefs({ view: "worktrees" }));
@@ -529,10 +536,12 @@ export function App({
                 onToggleReview={toggleReview}
                 showChanges={bench.showChanges}
                 onToggleChanges={() => setBench((b) => ({ ...b, showChanges: !b.showChanges }))}
+                onReviewChanges={reviewChanges}
+                onOpenTerminal={() => openShell(shownSession.worktreePath)}
               />
               {!prefs.reviewHidden && (
                 <BranchPane
-                  key={`pane-${shownSession.id}`}
+                  key={`pane-${shownSession.id}-${reviewSeq}`}
                   state={state}
                   session={shownSession}
                   send={core.send}

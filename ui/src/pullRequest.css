@@ -9,3 +9,6 @@
 
 .endbox{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 16px;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:var(--radius);background:var(--bg-1);font-size:12.5px}
 .endbox .tx{flex:1;min-width:160px;color:var(--fg-1)}
+.endbox .acts{display:flex;gap:6px;flex-wrap:wrap}
+.endbox.err{border-left-color:var(--bad)}
+.endbox:not(.done):not(.err){border-left-color:var(--line-2)}
