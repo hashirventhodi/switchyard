@@ -139,6 +139,46 @@ pub fn conflicting_files(dir: &Path, base: &str) -> Result<Vec<String>, GitError
     }
 }
 
+/// How a rebase ended.
+#[derive(Debug)]
+pub enum Rebase {
+    Done,
+    /// It stopped on conflicts in these files and was aborted: the branch, working tree
+    /// and index are as they were.
+    Aborted { conflicts: Vec<String> },
+}
+
+/// `git rebase <onto>` in the worktree at `dir`, never interactive and never stashing.
+/// A rebase that stops is aborted at once.
+pub fn rebase(dir: &Path, onto: &str) -> Result<Rebase, GitError> {
+    let out = Command::new("git")
+        .args(["-c", "rebase.autoStash=false", "rebase", "--no-autosquash", onto])
+        .env("GIT_EDITOR", "true")
+        .env("GIT_SEQUENCE_EDITOR", "true")
+        .current_dir(dir)
+        .output()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if out.status.success() {
+        return Ok(Rebase::Done);
+    }
+    let conflicts = git(dir, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
+    let conflicts: Vec<String> = conflicts.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+    // A rebase that never started (say, git refused it) has nothing to abort.
+    let started = git(dir, &["rev-parse", "--git-path", "rebase-merge"])
+        .into_iter()
+        .chain(git(dir, &["rev-parse", "--git-path", "rebase-apply"]))
+        .any(|p| {
+            let p = PathBuf::from(p.trim());
+            (if p.is_absolute() { p } else { dir.join(p) }).exists()
+        });
+    if started {
+        git(dir, &["rebase", "--abort"])?;
+        Ok(Rebase::Aborted { conflicts })
+    } else {
+        Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    }
+}
+
 /// (ahead, behind): commits HEAD has that `base` lacks, and the other way round.
 pub fn ahead_behind(dir: &Path, base: &str) -> Result<(u32, u32), GitError> {
     let out = git(dir, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;

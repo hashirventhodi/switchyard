@@ -87,3 +87,109 @@ fn a_branch_behind_with_disjoint_changes_has_no_conflicts() {
 
     assert_eq!(facts, WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![] });
 }
+
+fn rebase(core: &mut Harness, path: &Path) -> Vec<Event> {
+    core.send(Command::RebaseWorktree { worktree_path: path.to_string_lossy().into_owned() })
+}
+
+fn refused(events: &[Event]) -> String {
+    match events {
+        [Event::CommandRefused { command, reason }] if command == "rebaseWorktree" => reason.clone(),
+        other => panic!("expected one rebaseWorktree refusal, got {other:#?}"),
+    }
+}
+
+fn head(dir: &Path) -> String {
+    let out = std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(dir).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn rebase_in_progress(worktree: &Path) -> bool {
+    ["rebase-merge", "rebase-apply"].iter().any(|d| {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "--git-path", d])
+            .current_dir(worktree)
+            .output()
+            .unwrap();
+        let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        (if p.is_absolute() { p } else { worktree.join(p) }).exists()
+    })
+}
+
+#[test]
+fn a_rebase_without_conflicts_puts_the_branch_on_base_and_clears_behind() {
+    let (repo, mut core, path) = setup();
+    commit(&path, "login.rs", "fn login() {}\n", "add login");
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+
+    let events = rebase(&mut core, &path);
+
+    assert!(
+        events.iter().any(|e| matches!(e, Event::WorktreeRebased { worktree_path, base }
+            if Path::new(worktree_path) == path && base == "main")),
+        "{events:#?}"
+    );
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 0, dirty: 0, conflicts: vec![] });
+    assert!(path.join("NOTES").is_file(), "base's commit is under the branch now");
+    assert!(path.join("login.rs").is_file(), "the branch's commit is kept");
+}
+
+#[test]
+fn a_rebase_that_hits_conflicts_aborts_cleanly_and_names_the_files() {
+    let (repo, mut core, path) = setup();
+    commit(&path, "README", "hello from the branch\n", "branch edit");
+    commit(&repo.path, "README", "hello from main\n", "main edit");
+    let head_before = head(&path);
+    let tree_before = worktree_snapshot(&path);
+
+    let events = rebase(&mut core, &path);
+
+    let reason = events
+        .iter()
+        .find_map(|e| match e {
+            Event::CommandRefused { command, reason } if command == "rebaseWorktree" => Some(reason.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no refusal in {events:#?}"));
+    assert!(reason.contains("README") && reason.contains("aborted"), "{reason}");
+    assert!(!events.iter().any(|e| matches!(e, Event::WorktreeRebased { .. })));
+    assert_eq!(head(&path), head_before);
+    assert_eq!(worktree_snapshot(&path), tree_before);
+    assert!(!rebase_in_progress(&path));
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec!["README".into()] });
+}
+
+#[test]
+fn a_worktree_with_uncommitted_files_is_not_rebased() {
+    let (repo, mut core, path) = setup();
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+    std::fs::write(path.join("draft.rs"), "wip\n").unwrap();
+    let head_before = head(&path);
+
+    let reason = refused(&rebase(&mut core, &path));
+
+    assert!(reason.contains("1 uncommitted file"), "{reason}");
+    assert_eq!(head(&path), head_before);
+}
+
+#[test]
+fn the_primary_worktree_is_not_rebased() {
+    let (repo, mut core, _path) = setup();
+
+    let reason = refused(&rebase(&mut core, &repo.path));
+
+    assert!(reason.contains("primary"), "{reason}");
+}
+
+#[test]
+fn a_worktree_whose_agent_is_running_is_not_rebased_behind_its_back() {
+    let (repo, mut core, path) = setup();
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+    core.start_session(&path, "Add a login form.");
+    let head_before = head(&path);
+
+    let reason = refused(&rebase(&mut core, &path));
+
+    assert!(reason.contains("Running"), "{reason}");
+    assert_eq!(head(&path), head_before);
+}

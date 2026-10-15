@@ -140,7 +140,7 @@ pub(crate) fn refresh(inner: &Inner) {
 
 /// Emit what git says about the worktree at `path` relative to `base`. A worktree git
 /// cannot read (deleted behind our back, say) gets no facts.
-fn emit_facts(inner: &Inner, path: &Path, base: &str) {
+pub(crate) fn emit_facts(inner: &Inner, path: &Path, base: &str) {
     let Ok(dirty) = git::dirty_count(path) else { return };
     let base = git::base_ref(path, base);
     let (ahead, behind) = git::ahead_behind(path, &base).unwrap_or((0, 0));
