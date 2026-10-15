@@ -1,16 +1,13 @@
 // The Session view: header with status and Stop, the summary strip, the virtualised
 // transcript and the composer.
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
 import { RequestCard } from "./RequestCard";
-import { ReviewPane } from "./ReviewPane";
-import type { ChangedFile } from "./schema/ChangedFile";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
 import type { Verdict } from "./schema/Verdict";
-import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { PendingRequest, SessionView as Session } from "./state";
 import { sessionCost } from "./spend";
 import { AGENT_LABEL, AGENT_SHORT, MODE_LABEL, Status } from "./status";
@@ -23,37 +20,32 @@ export interface SessionViewProps {
   pending: PendingRequest[];
   /** Changes when the view should scroll to the first pending request (⌘J, inbox). */
   revealRequest?: number;
-  /** The worktree's uncommitted changes, once the core has read them. */
-  changes?: ChangedFile[];
-  facts?: WorktreeFacts;
-  /** The review pane is hidden (⌘⇧D); a UI preference the App keeps. */
+  /** Where the worktree's branch stands against base (↓N behind), beside the title. */
+  branchState?: ReactNode;
+  /** Text drafted elsewhere (Ask agent in review) for the composer; a new seq replaces it. */
+  draft?: Draft;
+  /** The review pane beside this one is hidden (⌘⇧D). */
   reviewHidden?: boolean;
   onToggleReview?: () => void;
+  /** Below 860 px the review pane replaces this one while shown. */
+  showChanges?: boolean;
+  onToggleChanges?: () => void;
 }
 
+export interface Draft {
+  text: string;
+  seq: number;
+}
+const NO_DRAFT: Draft = { text: "", seq: 0 };
+
 export function SessionView(props: SessionViewProps) {
-  const { session, send, pending, revealRequest, changes, facts, reviewHidden = false, onToggleReview } = props;
+  const { session, send, pending, revealRequest, draft = NO_DRAFT, reviewHidden = false, onToggleReview } = props;
   const composer = useRef<HTMLTextAreaElement>(null);
   const active = session.status === "running" || session.status === "waiting";
   const stop = () => send({ type: "stopSession", sessionId: session.id });
   // Esc's last layer: interrupt the agent of the session on screen.
   useAction("session.interrupt", () => (active ? stop() : false));
   const name = session.branch ?? session.worktreePath;
-  // Expand: the review pane takes the full width. Below 860 px the panes swap instead.
-  const [expanded, setExpanded] = useState(false);
-  const [showChanges, setShowChanges] = useState(false);
-  const [draft, setDraft] = useState<{ text: string; seq: number }>({ text: "", seq: 0 });
-  const ask = (text: string) => {
-    setExpanded(false);
-    setShowChanges(false);
-    setDraft((d) => ({ text, seq: d.seq + 1 }));
-  };
-  const workbench = [
-    "workbench",
-    reviewHidden ? "changes-hidden" : "",
-    expanded && !reviewHidden ? "focus-changes" : "",
-    showChanges ? "show-changes" : "",
-  ].join(" ");
 
   return (
     <section className="session" role="region" aria-label={`Session ${name}`}>
@@ -64,10 +56,11 @@ export function SessionView(props: SessionViewProps) {
         <div className="title">
           <h1>{name}</h1>
         </div>
+        {props.branchState}
         <Status status={session.status} />
-        {!reviewHidden && (
-          <button className="btn sm mobile-only" onClick={() => setShowChanges((v) => !v)}>
-            {showChanges ? "Agent" : "Changes"}
+        {!reviewHidden && props.onToggleChanges && (
+          <button className="btn sm mobile-only" onClick={props.onToggleChanges}>
+            {props.showChanges ? "Agent" : "Changes"}
           </button>
         )}
         {active && (
@@ -85,29 +78,14 @@ export function SessionView(props: SessionViewProps) {
           </button>
         )}
       </div>
-      <div className={workbench}>
-        <div className="pane agent-pane">
-          <SummaryStrip session={session} />
-          <Transcript
-            session={session}
-            answer={(requestId, verdict) => send({ type: "answerRequest", sessionId: session.id, requestId, verdict })}
-            answerInChat={() => composer.current?.focus()}
-            reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
-          />
-          <Composer session={session} send={send} pending={pending} input={composer} draft={draft} />
-        </div>
-        {!reviewHidden && (
-          <ReviewPane
-            session={session}
-            files={changes}
-            facts={facts}
-            send={send}
-            expanded={expanded}
-            onToggleExpand={() => setExpanded((e) => !e)}
-            onAsk={ask}
-          />
-        )}
-      </div>
+      <SummaryStrip session={session} />
+      <Transcript
+        session={session}
+        answer={(requestId, verdict) => send({ type: "answerRequest", sessionId: session.id, requestId, verdict })}
+        answerInChat={() => composer.current?.focus()}
+        reveal={revealRequest === undefined || !pending.length ? undefined : { index: pending[0].index, seq: revealRequest }}
+      />
+      <Composer session={session} send={send} pending={pending} input={composer} draft={draft} />
     </section>
   );
 }
@@ -260,7 +238,7 @@ function Composer(props: {
   pending: PendingRequest[];
   input: RefObject<HTMLTextAreaElement>;
   /** Text something else (Ask agent in review) drafted for the user to finish and send. */
-  draft: { text: string; seq: number };
+  draft: Draft;
 }) {
   const { session, send, pending, input, draft } = props;
   const [text, setText] = useState("");

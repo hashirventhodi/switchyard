@@ -14,6 +14,7 @@ import type { Shell } from "./schema/Shell";
 import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
+import type { Commit } from "./schema/Commit";
 
 export interface RepositoryView extends Repository {
   worktrees: Worktree[];
@@ -67,6 +68,14 @@ export interface State {
   worktreeFacts: Record<string, WorktreeFacts>;
   /** Uncommitted changes the core last read for each worktree, by path. */
   changes: Record<string, ChangedFile[]>;
+  /** The commits each worktree's branch has above its base, by path, as last read. */
+  history: Record<string, WorktreeHistory>;
+}
+
+export interface WorktreeHistory {
+  base: string;
+  /** Newest first. */
+  commits: Commit[];
 }
 
 export const initialState: State = {
@@ -78,6 +87,7 @@ export const initialState: State = {
   agents: [],
   worktreeFacts: {},
   changes: {},
+  history: {},
 };
 
 const noFacts: SessionFacts = { model: null, cliVersion: null, cliPermissionMode: null, turns: 0 };
@@ -132,6 +142,12 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "worktreeHistory":
+      return { ...state, history: { ...state.history, [event.worktreePath]: { base: event.base, commits: event.commits } } };
+    case "worktreeRebased": {
+      const worktree = state.repositories.flatMap((r) => r.worktrees).find((w) => w.path === event.worktreePath);
+      return resultToast(state, `Rebased ${worktree?.branch ?? event.worktreePath} on ${event.base}`, "ok");
+    }
     case "commandRefused":
       return addToast(state, { tone: "bad", text: event.reason, ms: RESULT_TOAST_MS });
     case "sessionStarted": {

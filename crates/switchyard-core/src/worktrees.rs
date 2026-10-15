@@ -138,22 +138,25 @@ pub(crate) fn refresh(inner: &Inner) {
     }
 }
 
-/// Re-read one known worktree's facts from git and emit them.
+/// Re-read one worktree's facts from git and emit them (after an agent turn, say).
 pub(crate) fn refresh_one(inner: &Inner, worktree_path: &str) {
-    let Some((repo, wt)) = inner.find_worktree(worktree_path) else { return };
+    let Some((repo, worktree)) = inner.find_worktree(worktree_path) else { return };
     let dir = Path::new(&repo.path);
     let Some(primary) = git::worktrees(dir).ok().and_then(|l| l.into_iter().next()) else { return };
-    emit_facts(inner, &wt.path, &git::base_branch(dir, &primary));
+    emit_facts(inner, &worktree.path, &git::base_branch(dir, &primary));
 }
 
 /// Emit what git says about the worktree at `path` relative to `base`. A worktree git
 /// cannot read (deleted behind our back, say) gets no facts.
-fn emit_facts(inner: &Inner, path: &Path, base: &str) {
+pub(crate) fn emit_facts(inner: &Inner, path: &Path, base: &str) {
     let Ok(dirty) = git::dirty_count(path) else { return };
-    let (ahead, behind) = git::ahead_behind(path, &git::base_ref(path, base)).unwrap_or((0, 0));
+    let base = git::base_ref(path, base);
+    let (ahead, behind) = git::ahead_behind(path, &base).unwrap_or((0, 0));
+    // Not behind means base is already in the branch: nothing to conflict with.
+    let conflicts = if behind > 0 { git::conflicting_files(path, &base).unwrap_or_default() } else { Vec::new() };
     inner.emit(Event::WorktreeFactsChanged {
         worktree_path: path.to_string_lossy().into_owned(),
-        facts: WorktreeFacts { ahead, behind, dirty },
+        facts: WorktreeFacts { ahead, behind, dirty, conflicts },
     });
 }
 

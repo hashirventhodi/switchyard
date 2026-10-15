@@ -1,19 +1,15 @@
 /* The session workbench (transcript | review pane) and the Changes tab. Rules follow the
    prototype's .workbench, .pane, .changes-body, .file, .diff, .hunkbox, .ln, .commit-box. */
 
-.session .workbench{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,440px);min-height:0}
 .workbench.changes-hidden,.workbench.focus-changes{grid-template-columns:minmax(0,1fr)}
-.workbench.focus-changes .agent-pane{display:none}
+.workbench.changes-hidden .changes-pane{display:none}
+.workbench.focus-changes .session{display:none}
 .workbench.focus-changes .changes-pane{border-left:0}
 .workbench.focus-changes .filelist{max-height:260px}
-.pane{display:flex;flex-direction:column;min-width:0;min-height:0}
-.pane-head{display:flex;align-items:center;gap:6px;height:36px;padding:0 10px 0 14px;border-bottom:1px solid var(--line);background:var(--bg-1);flex:none}
-.pane-head .tabs{display:flex;gap:2px}
 .pane-head .spacer{flex:1}
 .pane-head .tab{height:26px;padding:0 10px;border-radius:var(--radius);color:var(--fg-2);font-weight:500;display:inline-flex;align-items:center;gap:6px}
 .pane-head .tab.active{color:var(--fg);background:var(--bg-3)}
 .pane-head .tab .n{font-size:10.5px;padding:0 5px;border-radius:8px;background:var(--bg-4);color:var(--fg-1);font-variant-numeric:tabular-nums}
-.changes-pane{border-left:1px solid var(--line)}
 .mobile-only{display:none}
 
 .changes-body{flex:1;display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0}
@@ -64,10 +60,9 @@
 .review-foot .btn:disabled,.commit-box .btn:disabled{opacity:.5;cursor:default}
 
 @media (max-width:860px){
-  .session .workbench{grid-template-columns:minmax(0,1fr)}
   .mobile-only{display:inline-flex}
   .lane-head .hide-sm{display:none}
   .changes-pane{display:none;border-left:0}
-  .workbench.show-changes .agent-pane{display:none}
+  .workbench.show-changes .session{display:none}
   .workbench.show-changes .changes-pane,.workbench.focus-changes .changes-pane{display:flex}
 }

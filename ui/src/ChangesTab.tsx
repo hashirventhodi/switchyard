@@ -1,6 +1,6 @@
-// The review pane beside the transcript. Its Changes tab lists the worktree's uncommitted
-// files grouped Conflicts / Modified / Added / Deleted, shows the selected file's hunks,
-// takes file decisions (a / r, j / k to move) and commits accepted files whole.
+// The Changes tab of the review pane (BranchPane): the worktree's uncommitted files grouped
+// Conflicts / Modified / Added / Deleted, the selected file's hunks, file decisions (a / r,
+// j / k to move) and Commit accepted…, which commits accepted files whole.
 import { useEffect, useRef, useState } from "react";
 import { useAction, usePaletteSource } from "./actions";
 import { at } from "./chunked";
@@ -14,16 +14,24 @@ import type { WorktreeFacts } from "./schema/WorktreeFacts";
 import type { SessionView } from "./state";
 
 const LETTER: Record<FileStatus, string> = { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!" };
-const GROUPS: [string, (f: ChangedFile) => boolean][] = [
-  ["Conflicts", (f) => f.status === "conflicted"],
-  ["Modified", (f) => f.status === "modified" || f.status === "renamed"],
-  ["Added", (f) => f.status === "added"],
-  ["Deleted", (f) => f.status === "deleted"],
+/** A listed file. `baseConflict`: a dry-run merge of base conflicts on it (#17's fact). */
+type Row = ChangedFile & { baseConflict?: boolean };
+const conflicted = (f: Row) => f.status === "conflicted" || !!f.baseConflict;
+const GROUPS: [string, (f: Row) => boolean][] = [
+  ["Conflicts", conflicted],
+  ["Modified", (f) => !conflicted(f) && (f.status === "modified" || f.status === "renamed")],
+  ["Added", (f) => !conflicted(f) && f.status === "added"],
+  ["Deleted", (f) => !conflicted(f) && f.status === "deleted"],
 ];
 
-/** Files in the order the list shows them (group by group). */
-export function reviewOrder(files: ChangedFile[]): ChangedFile[] {
-  return GROUPS.flatMap(([, test]) => files.filter(test));
+/** Files in the order the list shows them (group by group); files that conflict with base
+ *  join the Conflicts group even when they have no uncommitted change. */
+function reviewOrder(files: ChangedFile[], baseConflicts: string[]): Row[] {
+  const rows: Row[] = files.map((f) => (baseConflicts.includes(f.path) ? { ...f, baseConflict: true } : f));
+  for (const path of baseConflicts)
+    if (!files.some((f) => f.path === path))
+      rows.push({ path, oldPath: null, status: "modified", added: 0, removed: 0, binary: false, decision: null, hunks: [], baseConflict: true });
+  return GROUPS.flatMap(([, test]) => rows.filter(test));
 }
 
 /** The session's title: the first line of its first prompt. */
@@ -45,36 +53,36 @@ export function draftCommitMessage(title: string, accepted: ChangedFile[]): stri
   return `${title}\n\n${accepted.map((f) => `- ${verb(f)}`).join("\n")}`;
 }
 
-export interface ReviewPaneProps {
+export interface ChangesTabProps {
   session: SessionView;
   files: ChangedFile[] | undefined;
   facts: WorktreeFacts | undefined;
+  /** The Repository's base branch, for conflict notes. */
+  base: string | undefined;
   send: (command: Command) => void;
-  expanded: boolean;
-  onToggleExpand: () => void;
   /** Put text in the composer for the user to finish and send. */
   onAsk: (text: string) => void;
 }
 
-export function ReviewPane({ session, files, facts, send, expanded, onToggleExpand, onAsk }: ReviewPaneProps) {
+export function ChangesTab({ session, files, facts, base, send, onAsk }: ChangesTabProps) {
   const worktreePath = session.worktreePath;
   // Re-read whenever the agent may have changed something: on open and on every status change.
   useEffect(() => {
     send({ type: "readChanges", worktreePath });
   }, [send, worktreePath, session.status]);
 
-  const ordered = reviewOrder(files ?? []);
+  const ordered = reviewOrder(files ?? [], facts?.conflicts ?? []);
   const [activePath, setActivePath] = useState<string | null>(null);
   const active = ordered.find((f) => f.path === activePath) ?? ordered[0];
   const [committing, setCommitting] = useState(false);
 
   const accepted = ordered.filter((f) => f.decision === "accept");
   const rejected = ordered.filter((f) => f.decision === "reject");
-  const conflicts = ordered.filter((f) => f.status === "conflicted");
+  const conflicts = ordered.filter(conflicted);
   const canCommit = accepted.length > 0 && conflicts.length === 0;
 
-  const decide = (file: ChangedFile, decision: Decision, advance = false) => {
-    if (file.status === "conflicted") return false;
+  const decide = (file: Row, decision: Decision, advance = false) => {
+    if (conflicted(file)) return false;
     const next = file.decision === decision ? null : decision;
     send({ type: "decideFile", worktreePath, path: file.path, decision: next });
     // Deciding by key moves on to the next file, so a / r / a / r walks the list.
@@ -91,45 +99,24 @@ export function ReviewPane({ session, files, facts, send, expanded, onToggleExpa
   useAction("review.prevFile", () => move(-1), reviewing);
   useAction("review.accept", () => active && decide(active, "accept", true), reviewing);
   useAction("review.reject", () => active && decide(active, "reject", true), reviewing);
-  usePaletteSource(() => [
-    ...(canCommit && !committing
+  usePaletteSource(() =>
+    canCommit && !committing
       ? [{ id: "review.commit", group: "Actions" as const, title: "Commit accepted…", run: () => setCommitting(true) }]
-      : []),
-    {
-      id: "review.expand",
-      group: "Actions" as const,
-      title: expanded ? "Show agent beside review" : "Expand review pane",
-      run: onToggleExpand,
-    },
-  ]);
+      : [],
+  );
 
   return (
-    <section className="pane changes-pane" role="region" aria-label="Review">
-      <div className="pane-head">
-        <div className="tabs" role="tablist">
-          <button className="tab active" role="tab" aria-selected="true">
-            Changes <span className="n">{ordered.length}</span>
-          </button>
-        </div>
-        <div className="spacer" />
-        <button className="btn ghost sm" title="Expand review pane" aria-pressed={expanded} onClick={onToggleExpand}>
-          {expanded ? "Show agent" : "Expand"}
-        </button>
-      </div>
+    <div className="changes-body" role="tabpanel" aria-label="Changes">
       {files === undefined ? (
-        <div className="changes-body">
-          <p className="diff-empty">Reading changes…</p>
-        </div>
+        <p className="diff-empty">Reading changes…</p>
       ) : ordered.length === 0 ? (
-        <div className="changes-body">
-          <p className="diff-empty">
-            {session.status === "done"
-              ? `Working tree clean. ${commitsReady(facts?.ahead ?? 0)}`
-              : "No uncommitted changes in this worktree."}
-          </p>
-        </div>
+        <p className="diff-empty">
+          {session.status === "done"
+            ? `Working tree clean. ${commitsReady(facts?.ahead ?? 0)}`
+            : "No uncommitted changes in this worktree."}
+        </p>
       ) : (
-        <div className="changes-body">
+        <>
           <div className="filelist">
             {GROUPS.map(([name, test]) => {
               const list = ordered.filter(test);
@@ -150,6 +137,7 @@ export function ReviewPane({ session, files, facts, send, expanded, onToggleExpa
           {active && (
             <FileDiff
               file={active}
+              base={base}
               onDecide={(d) => decide(active, d)}
               onAsk={() => onAsk(`Explain the change in ${active.path} and whether it needs a test.`)}
             />
@@ -185,17 +173,23 @@ export function ReviewPane({ session, files, facts, send, expanded, onToggleExpa
               </div>
             )}
           </div>
-        </div>
+        </>
       )}
-    </section>
+    </div>
   );
+}
+
+/** How many files the Changes tab lists (its tab count). */
+export function changesCount(files: ChangedFile[] | undefined, facts: WorktreeFacts | undefined): number | undefined {
+  return files && reviewOrder(files, facts?.conflicts ?? []).length;
 }
 
 function commitsReady(ahead: number): string {
   return ahead === 1 ? "1 commit ready." : `${ahead} commits ready.`;
 }
 
-function FileRow({ file, active, onSelect }: { file: ChangedFile; active: boolean; onSelect: () => void }) {
+function FileRow({ file, active, onSelect }: { file: Row; active: boolean; onSelect: () => void }) {
+  const status = conflicted(file) ? "conflicted" : file.status;
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (active) ref.current?.scrollIntoView?.({ block: "nearest" });
@@ -204,11 +198,11 @@ function FileRow({ file, active, onSelect }: { file: ChangedFile; active: boolea
     <button
       ref={ref}
       className={`file ${active ? "active" : ""}`}
-      aria-label={`File ${file.path}, ${file.status}`}
+      aria-label={`File ${file.path}, ${status}`}
       aria-current={active ? "true" : undefined}
       onClick={onSelect}
     >
-      <span className={`st ${LETTER[file.status]}`}>{LETTER[file.status]}</span>
+      <span className={`st ${LETTER[status]}`}>{LETTER[status]}</span>
       <span className="path" title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
         <span>{file.path}</span>
       </span>
@@ -224,13 +218,14 @@ function FileRow({ file, active, onSelect }: { file: ChangedFile; active: boolea
   );
 }
 
-function FileDiff(props: { file: ChangedFile; onDecide: (d: Decision) => void; onAsk: () => void }) {
-  const { file, onDecide, onAsk } = props;
-  const conflicted = file.status === "conflicted";
+function FileDiff(props: { file: Row; base: string | undefined; onDecide: (d: Decision) => void; onAsk: () => void }) {
+  const { file, base, onDecide, onAsk } = props;
+  const conflict = conflicted(file);
+  const letter = LETTER[conflict ? "conflicted" : file.status];
   return (
     <div className="diff" aria-label={`Diff of ${file.path}`}>
       <div className="diff-file">
-        <span className={`st ${LETTER[file.status]}`}>{LETTER[file.status]}</span>
+        <span className={`st ${letter}`}>{letter}</span>
         <span className="p">{file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}</span>
         <span className="m">
           +{file.added} −{file.removed}
@@ -238,7 +233,7 @@ function FileDiff(props: { file: ChangedFile; onDecide: (d: Decision) => void; o
         <button className="btn ghost sm" onClick={onAsk}>
           Ask agent
         </button>
-        {!conflicted && (
+        {!conflict && (
           <>
             <button
               className={`btn sm ${file.decision === "accept" ? "ok" : ""}`}
@@ -259,8 +254,12 @@ function FileDiff(props: { file: ChangedFile; onDecide: (d: Decision) => void; o
           </>
         )}
       </div>
-      {conflicted ? (
+      {file.status === "conflicted" ? (
         <p className="diff-empty">This file has a merge conflict. Resolve it before deciding.</p>
+      ) : file.baseConflict && !file.hunks.length ? (
+        <p className="diff-empty">
+          {base ?? "Base"} changed this file too: merging it would conflict. Rebase, or ask the agent to rebase.
+        </p>
       ) : file.binary ? (
         <p className="diff-empty">Binary file; no text diff.</p>
       ) : file.hunks.length === 0 ? (

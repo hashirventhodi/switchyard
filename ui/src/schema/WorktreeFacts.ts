@@ -15,4 +15,9 @@ behind: number,
 /**
  * Uncommitted files: modified, staged, deleted or untracked.
  */
-dirty: number, };
+dirty: number, 
+/**
+ * Files a merge of the base branch into this branch would conflict on, from a dry-run
+ * merge that never touches the working tree or the index. Empty when not behind.
+ */
+conflicts: Array<string>, };

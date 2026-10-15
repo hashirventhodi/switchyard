@@ -52,6 +52,21 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
         .collect())
 }
 
+/// The base branch's name and the files a dry-run merge of it into the worktree conflicts
+/// on (#17's conflicts fact; empty when not behind).
+fn base_conflicts(inner: &Inner, worktree_path: &str) -> (String, Vec<String>) {
+    let Some((repo, wt)) = inner.find_worktree(worktree_path) else { return (String::new(), Vec::new()) };
+    let dir = Path::new(&repo.path);
+    let Some(primary) = git::worktrees(dir).ok().and_then(|l| l.into_iter().next()) else {
+        return (String::new(), Vec::new());
+    };
+    let base = git::base_branch(dir, &primary);
+    let base_ref = git::base_ref(&wt.path, &base);
+    let behind = git::ahead_behind(&wt.path, &base_ref).map(|(_, b)| b).unwrap_or(0);
+    let conflicts = if behind > 0 { git::conflicting_files(&wt.path, &base_ref).unwrap_or_default() } else { Vec::new() };
+    (base, conflicts)
+}
+
 /// Look up a worktree of an added repository, refusing `command` when there is none.
 fn known(inner: &Inner, command: &str, worktree_path: &str) -> Option<git::GitWorktree> {
     match inner.find_worktree(worktree_path) {
@@ -97,6 +112,12 @@ pub(crate) fn decide(inner: &mut Inner, worktree_path: &str, path: &str, decisio
     if file.status == FileStatus::Conflicted && decision.is_some() {
         return inner.refuse(COMMAND, format!("{path} has a conflict; resolve it before deciding"));
     }
+    if decision.is_some() {
+        let (base, conflicts) = base_conflicts(inner, worktree_path);
+        if conflicts.iter().any(|c| c == path) {
+            return inner.refuse(COMMAND, format!("{path} conflicts with {base}; rebase before deciding"));
+        }
+    }
     let decided = inner.review.by_worktree.entry(worktree_path.to_string()).or_default();
     match decision {
         Some(d) => decided.insert(path.to_string(), (d, fingerprint)),
@@ -118,6 +139,9 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
     };
     if let Some((conflicted, _)) = list.iter().find(|(f, _)| f.status == FileStatus::Conflicted) {
         return inner.refuse(COMMAND, format!("Resolve the conflict in {} before committing", conflicted.path));
+    }
+    if let Some(path) = base_conflicts(inner, worktree_path).1.first() {
+        return inner.refuse(COMMAND, format!("Resolve the conflict in {path} before committing"));
     }
     let accepted: Vec<&ChangedFile> =
         list.iter().map(|(f, _)| f).filter(|f| f.decision == Some(Decision::Accept)).collect();

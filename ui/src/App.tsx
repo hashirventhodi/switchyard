@@ -13,8 +13,9 @@ import { Dock } from "./Dock";
 import { shellStreams, type ShellStreams } from "./shellStreams";
 import { xtermTerminal, type CreateTerminal } from "./terminal";
 import { NewSession, type NewSessionPreset } from "./NewSession";
-import { SessionView } from "./SessionView";
+import { SessionView, type Draft } from "./SessionView";
 import { NewWorktree, WorktreesView } from "./WorktreesView";
+import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { SpendToday } from "./spend";
 import type { CoreConnection } from "./core";
@@ -151,6 +152,13 @@ export function App({
     };
   }, [core]);
 
+  // Git is the source of truth and moves outside Switchyard: re-read on returning to the app.
+  useEffect(() => {
+    const onFocus = () => core.send({ type: "refreshWorktrees" });
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [core]);
+
   // Bumped to make the session view scroll to its pending request (⌘J, inbox, toast).
   const [reveal, setReveal] = useState<number | undefined>(undefined);
 
@@ -230,6 +238,13 @@ export function App({
     [prefs.reviewHidden, updatePrefs],
   );
   useHandler(registry, "review.togglePane", toggleReview);
+  // The session workbench: review pane expanded to full width, or (below 860 px) shown in
+  // place of the agent pane; text Ask agent drafted for the composer.
+  const [bench, setBench] = useState<{ expanded: boolean; showChanges: boolean; draft: Draft }>({
+    expanded: false,
+    showChanges: false,
+    draft: { text: "", seq: 0 },
+  });
   useHandler(registry, "view.dashboard", () => updatePrefs({ view: "dashboard" }));
   useHandler(registry, "view.session", () => updatePrefs({ view: "session" }));
   useHandler(registry, "view.worktrees", () => updatePrefs({ view: "worktrees" }));
@@ -432,17 +447,46 @@ export function App({
 
         <main className="stage">
           {prefs.view === "session" && shownSession ? (
-            <SessionView
-              key={shownSession.id}
-              session={shownSession}
-              send={core.send}
-              pending={state.requests[shownSession.id] ?? NONE}
-              revealRequest={reveal}
-              changes={state.changes[shownSession.worktreePath]}
-              facts={state.worktreeFacts[shownSession.worktreePath]}
-              reviewHidden={prefs.reviewHidden}
-              onToggleReview={toggleReview}
-            />
+            <div
+              className={[
+                "workbench",
+                prefs.reviewHidden ? "changes-hidden" : "",
+                bench.expanded && !prefs.reviewHidden ? "focus-changes" : "",
+                bench.showChanges ? "show-changes" : "",
+              ].join(" ")}
+            >
+              <SessionView
+                key={shownSession.id}
+                session={shownSession}
+                send={core.send}
+                pending={state.requests[shownSession.id] ?? NONE}
+                revealRequest={reveal}
+                branchState={
+                  <BehindBadge
+                    facts={branchOf(state, shownSession.worktreePath).facts}
+                    base={branchOf(state, shownSession.worktreePath).repository?.baseBranch}
+                  />
+                }
+                draft={bench.draft}
+                reviewHidden={prefs.reviewHidden}
+                onToggleReview={toggleReview}
+                showChanges={bench.showChanges}
+                onToggleChanges={() => setBench((b) => ({ ...b, showChanges: !b.showChanges }))}
+              />
+              {!prefs.reviewHidden && (
+                <BranchPane
+                  key={`pane-${shownSession.id}`}
+                  state={state}
+                  session={shownSession}
+                  send={core.send}
+                  expanded={bench.expanded}
+                  onToggleExpand={() => setBench((b) => ({ ...b, expanded: !b.expanded }))}
+                  onAsk={(text) =>
+                    setBench((b) => ({ expanded: false, showChanges: false, draft: { text, seq: b.draft.seq + 1 } }))
+                  }
+                />
+              )}
+            </div>
           ) : prefs.view === "worktrees" ? (
             <WorktreesView
               state={state}
@@ -610,13 +654,17 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                   {branch}
                   <span className="meta">
                     {AGENT_SHORT[occupant.agent]} · <Status status={occupant.status} variant="dot" />
+                    <BehindBadge facts={state.worktreeFacts[w.path]} />
                   </span>
                 </button>
               ) : (
                 <>
                   <span className="dot" />
                   {branch}
-                  <span className="meta">free</span>
+                  <span className="meta">
+                    free
+                    <BehindBadge facts={state.worktreeFacts[w.path]} />
+                  </span>
                 </>
               )}
             </li>

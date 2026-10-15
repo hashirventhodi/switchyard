@@ -66,7 +66,7 @@ function launch(...events: Event[]) {
   return { ...fake, actions };
 }
 
-const pane = () => screen.getByRole("region", { name: "Review" });
+const pane = () => screen.getByRole("complementary", { name: "Review" });
 const fileRows = () =>
   within(pane())
     .getAllByRole("button", { name: /^File / })
@@ -136,6 +136,37 @@ test("a conflicted file offers no Accept or Reject and blocks Commit accepted", 
   expect(within(diff).queryByRole("button", { name: "Accept file" })).toBeNull();
   expect(within(pane()).getByRole("button", { name: "Commit accepted…" })).toHaveProperty("disabled", true);
   expect(within(pane()).getByText(/1 conflict/)).toBeTruthy();
+});
+
+test("files a merge of base would conflict on join the Conflicts group and block Commit accepted", () => {
+  const { sent, emit } = launch();
+  act(() =>
+    emit(
+      { type: "changesRead", worktreePath: WT, files: [{ ...readme, decision: "accept" }, changed("b.ts", "modified")] },
+      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 1, behind: 2, dirty: 2, conflicts: ["b.ts", "c.ts"] } },
+    ),
+  );
+  expect(fileRows()).toEqual(["File b.ts, conflicted", "File c.ts, conflicted", "File README.md, modified"]);
+  expect(within(pane()).getByRole("tab", { name: /Changes/ }).textContent).toContain("3");
+  expect(within(pane()).getByRole("button", { name: "Commit accepted…" })).toHaveProperty("disabled", true);
+
+  // c.ts has no uncommitted change: only the conflict note, no decision buttons.
+  const diff = within(pane()).getByLabelText("Diff of b.ts");
+  expect(within(diff).queryByRole("button", { name: "Accept file" })).toBeNull();
+  key("a");
+  expect(sent.some((c) => c.type === "decideFile")).toBe(false);
+  key("j");
+  expect(within(pane()).getByLabelText("Diff of c.ts").textContent).toContain("main changed this file too");
+});
+
+test("Changes is the review pane's first tab, beside History and Context", () => {
+  launch();
+  expect(within(pane()).getAllByRole("tab").map((t) => t.textContent?.trim().split(" ")[0])).toEqual([
+    "Changes",
+    "History",
+    "Context",
+  ]);
+  expect(within(pane()).getByRole("tab", { name: /Changes/ }).getAttribute("aria-selected")).toBe("true");
 });
 
 test("keyboard review end to end: j / k move, a / r decide and advance, then commit with a drafted message", () => {
@@ -216,7 +247,7 @@ test("empty states: no changes, and when Finished, how many commits are ready", 
   act(() =>
     emit(
       { type: "sessionStatusChanged", sessionId: "session-1", status: "done" },
-      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 3, behind: 0, dirty: 0 } },
+      { type: "worktreeFactsChanged", worktreePath: WT, facts: { ahead: 3, behind: 0, dirty: 0, conflicts: [] } },
     ),
   );
   expect(within(pane()).getByText("Working tree clean. 3 commits ready.")).toBeTruthy();
@@ -233,7 +264,7 @@ test("a status change re-reads the changes", () => {
 test("Expand gives the review pane the full width; ⌘⇧D hides and shows it", () => {
   const { emit } = launch();
   act(() => emit({ type: "changesRead", worktreePath: WT, files }));
-  const bench = () => screen.getByRole("region", { name: "Session fix/readme" }).querySelector(".workbench")!;
+  const bench = () => document.querySelector(".workbench")!;
 
   fireEvent.click(within(pane()).getByRole("button", { name: "Expand" }));
   expect(bench().classList.contains("focus-changes")).toBe(true);
@@ -241,7 +272,7 @@ test("Expand gives the review pane the full width; ⌘⇧D hides and shows it", 
   expect(bench().classList.contains("focus-changes")).toBe(false);
 
   key("D", { metaKey: true, shiftKey: true });
-  expect(screen.queryByRole("region", { name: "Review" })).toBeNull();
+  expect(screen.queryByRole("complementary", { name: "Review" })).toBeNull();
   key("D", { metaKey: true, shiftKey: true });
   expect(pane()).toBeTruthy();
 });

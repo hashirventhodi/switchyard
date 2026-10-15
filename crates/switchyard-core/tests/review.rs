@@ -306,6 +306,26 @@ fn a_conflicted_file_is_listed_as_conflicted_and_blocks_commit() {
 }
 
 #[test]
+fn a_file_that_conflicts_with_base_cannot_be_decided_and_blocks_commit() {
+    let (repo, wt, mut core) = setup();
+    // Base moves on and changes README; the worktree changes it too (uncommitted).
+    std::fs::write(repo.path.join("README"), "theirs\n").unwrap();
+    git(&repo.path, &["commit", "-qam", "theirs"]);
+    std::fs::write(wt.join("README"), "ours\n").unwrap();
+    git(&wt, &["commit", "-qam", "ours"]);
+    std::fs::write(wt.join("README"), "ours, edited\n").unwrap();
+    std::fs::write(wt.join("lib.txt"), "x\n").unwrap();
+
+    assert_eq!(
+        refusal(&decide(&mut core, &wt, "README", Some(Decision::Accept))),
+        "README conflicts with main; rebase before deciding"
+    );
+    decide(&mut core, &wt, "lib.txt", Some(Decision::Accept));
+    assert_eq!(refusal(&commit(&mut core, &wt, "msg")), "Resolve the conflict in README before committing");
+    assert_eq!(git_out(&wt, &["rev-list", "--count", "HEAD"]).trim(), "3");
+}
+
+#[test]
 fn review_commands_on_an_unknown_worktree_are_refused() {
     let mut core = Harness::launch();
     let events = core.send(Command::ReadChanges { worktree_path: "/nowhere".into() });
