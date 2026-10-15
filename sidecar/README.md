@@ -87,6 +87,20 @@ Unverified against a live CLI so far; the fixtures `mode-*`, `full-auto-unavaila
    offered in New session or the composer. With `permissions: { sandbox: true }`, Full auto
    starts the CLI in `bypassPermissions` (strip: `CLI: bypassPermissions`), only there.
 
+## Manual MCP check (real CLI, model calls)
+
+Unverified against a live CLI so far; the fixture `mcp-servers` is synthesised.
+
+1. Give a user-level server to Claude Code (`claude mcp add -s user leak -- npx -y
+   @modelcontextprotocol/server-everything`) and commit a `.mcp.json` in a test repository with
+   one working server, one whose command does not exist, and one HTTP server needing OAuth.
+2. Snapshot the config files: `shasum ~/.claude.json ~/.claude/settings.json <repo>/.mcp.json
+   <repo>/.claude/settings*.json`.
+3. Start a session there and ask "Which MCP tools do you have?". The agent lists only the
+   repository's working server (never `leak`); Context lists the three servers as connected,
+   not connected (hover shows the spawn error) and needs sign-in.
+4. Quit and re-run the `shasum`: every hash is unchanged.
+
 ## Manual compat check (real CLI, no model call)
 
 1. `pnpm tauri dev` with `claude` on PATH in the supported range: the Dashboard shows no Setup

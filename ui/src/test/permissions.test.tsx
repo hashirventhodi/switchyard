@@ -235,7 +235,7 @@ test("only requests toast (20 s) and results of the user's own actions (4 s); no
   const { emit } = launch(
     status("waiting"),
     entry(1, { type: "agent", text: "Done for now." }),
-    { type: "sessionFactsChanged", sessionId: "session-1", facts: { model: "m", cliVersion: "1", cliPermissionMode: "default", turns: 1, modeWarning: null, classifierDenials: 0 } },
+    { type: "sessionFactsChanged", sessionId: "session-1", facts: { model: "m", cliVersion: "1", cliPermissionMode: "default", turns: 1, modeWarning: null, classifierDenials: 0, mcpServers: [] } },
     status("running"),
   );
   expect(toasts()).toHaveLength(0);
