@@ -5,8 +5,8 @@
 //! the head commit) and answers `pr list --head <branch>` from what it holds. Tests change
 //! what GitHub reports with `set_state`, `set_checks`, `set_review` and `set_prs`.
 //!
-//! `issue list` prints what `set_issues` holds; `issue close` only logs (tests read the
-//! calls and change the issues themselves).
+//! `issue list` prints what `set_issues` holds. There is no `issue close`: Switchyard never
+//! writes to the tracker (a call would fail as unknown).
 //!
 //! Until `install` is called there is no `gh` at all (the CLI is missing).
 
@@ -21,7 +21,8 @@ pub struct FakeGh {
 
 const SCRIPT: &str = r#"#!/bin/sh
 state="@STATE@"
-for a in "$@"; do printf '%s\037' "$a"; done >> "$state/calls"
+# One call per line: arguments end in \037, newlines inside one are logged as \036.
+for a in "$@"; do printf '%s\037' "$a" | tr '\n' '\036'; done >> "$state/calls"
 printf '\n' >> "$state/calls"
 hold="$state/hold-$1-$2"
 if [ -f "$hold" ]; then
@@ -61,10 +62,6 @@ case "$1 $2" in
   "issue list")
     if [ -f "$state/signed-out" ]; then echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4; fi
     if [ -f "$state/issues.json" ]; then cat "$state/issues.json"; else echo "[]"; fi
-    ;;
-  "issue close")
-    if [ -f "$state/close-fails" ]; then cat "$state/close-fails" >&2; exit 1; fi
-    echo "Closed issue #$3"
     ;;
   *)
     echo "fake gh: unknown command $*" >&2
@@ -137,7 +134,7 @@ impl FakeGh {
     pub fn calls(&self) -> Vec<Vec<String>> {
         let text = std::fs::read_to_string(self.state().join("calls")).unwrap_or_default();
         text.lines()
-            .map(|line| line.split('\u{1f}').filter(|a| !a.is_empty()).map(str::to_owned).collect())
+            .map(|line| line.split('\u{1f}').filter(|a| !a.is_empty()).map(|a| a.replace('\u{1e}', "\n")).collect())
             .collect()
     }
 
@@ -156,10 +153,6 @@ impl FakeGh {
         std::fs::write(self.state().join("issues.json"), issues.to_string()).unwrap();
     }
 
-    /// `issue close` fails with `message` on stderr.
-    pub fn fail_close(&self, message: &str) {
-        std::fs::write(self.state().join("close-fails"), message).unwrap();
-    }
 
     fn file(&self, branch: &str) -> PathBuf {
         self.state().join("prs").join(format!("{}.json", branch.replace('/', "_")))

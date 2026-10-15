@@ -34,8 +34,9 @@ pub trait Forge: Send + Sync {
     /// Is the CLI installed and signed in?
     fn detect(&self) -> ForgeSetup;
     /// Open a pull request from `branch` (already pushed) into `base`, from the worktree at
-    /// `dir`. Returns its address.
-    fn create_pull_request(&self, dir: &Path, base: &str, branch: &str) -> Result<String, String>;
+    /// `dir`, with `text` as its title and body (none: from the commits, as the Forge
+    /// fills it). Returns its address.
+    fn create_pull_request(&self, dir: &Path, base: &str, branch: &str, text: Option<&PullRequestText>) -> Result<String, String>;
     /// The pull request for `branch` (an open one if any, else the newest), if there is one.
     fn pull_request(&self, dir: &Path, branch: &str) -> Result<Option<ForgePullRequest>, String>;
     /// The repository's issues (open and recently closed), newest first, read from the
@@ -43,10 +44,14 @@ pub trait Forge: Send + Sync {
     fn issues(&self, _dir: &Path) -> Result<Vec<ForgeIssue>, String> {
         Err("no Forge is configured".into())
     }
-    /// Close issue `number` with `comment`: the one thing ever written to the tracker.
-    fn close_issue(&self, _dir: &Path, _number: u32, _comment: &str) -> Result<(), String> {
-        Err("no Forge is configured".into())
-    }
+}
+
+/// A pull request's title and body, when Switchyard writes them (to say which linked
+/// issues it closes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestText {
+    pub title: String,
+    pub body: String,
 }
 
 /// An issue as the Forge reports it.
@@ -80,7 +85,7 @@ impl Forge for NoForge {
             },
         }
     }
-    fn create_pull_request(&self, _: &Path, _: &str, _: &str) -> Result<String, String> {
+    fn create_pull_request(&self, _: &Path, _: &str, _: &str, _: Option<&PullRequestText>) -> Result<String, String> {
         Err("no Forge is configured".into())
     }
     fn pull_request(&self, _: &Path, _: &str) -> Result<Option<ForgePullRequest>, String> {
@@ -261,6 +266,28 @@ struct Opening {
     branch: String,
     remote: String,
     base: String,
+    /// Title and body naming the linked issues it closes; none when nothing is linked.
+    text: Option<PullRequestText>,
+}
+
+/// For a branch whose sessions are linked to GitHub issues: a title and body that close
+/// them on merge ("Closes #412"). The title is the only commit's subject, or the branch's
+/// name; the body lists the commits, oldest first.
+fn closing_text(path: &Path, onto: &str, branch: &str, issues: &[u32]) -> Option<PullRequestText> {
+    if issues.is_empty() {
+        return None;
+    }
+    let commits = git::log_above(path, onto, 50).unwrap_or_default();
+    let title = match &commits[..] {
+        [only] => only.subject.clone(),
+        _ => branch.rsplit('/').next().unwrap_or(branch).replace(['-', '_'], " "),
+    };
+    let mut body: Vec<String> = commits.iter().rev().map(|c| format!("- {}", c.subject)).collect();
+    if !body.is_empty() {
+        body.push(String::new());
+    }
+    body.extend(issues.iter().map(|n| format!("Closes #{n}")));
+    Some(PullRequestText { title, body: body.join("\n") })
 }
 
 /// [`Command::OpenPullRequest`](switchyard_schema::Command::OpenPullRequest): checked while
@@ -334,19 +361,21 @@ fn prepare_opening(inner: &Inner, worktree_path: &str) -> Result<Opening, String
             return Err(format!("PR #{n} is already open for {branch}"));
         }
     }
-    Ok(Opening { path: worktree.path, branch, remote, base })
+    let issues = tasks::linked_issues(inner, worktree_path, &branch);
+    let text = closing_text(&worktree.path, &onto, &branch, &issues);
+    Ok(Opening { path: worktree.path, branch, remote, base, text })
 }
 
 /// Detect, push and open, without holding the core.
 fn open_unlocked(core: &Arc<Mutex<Inner>>, o: &Opening) -> Result<ForgePullRequest, String> {
     admit(core)?;
     let forge = core.lock().expect("core lock").runtime.forge.clone();
-    let Opening { path, branch, remote, base } = o;
+    let Opening { path, branch, remote, base, text } = o;
     if let Err(git::GitError(e)) = git::push(path, remote, branch) {
         return Err(format!("Could not push {branch} to {remote}: {e}"));
     }
     let url = forge
-        .create_pull_request(path, base, branch)
+        .create_pull_request(path, base, branch, text.as_ref())
         .map_err(|e| format!("{branch} was pushed, but the pull request could not be opened: {e}"))?;
     // Read it back for its checks and review; fall back to what the address says.
     let found = forge.pull_request(path, branch).ok().flatten().filter(|p| p.pull_request.url == url);
@@ -402,10 +431,20 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
         .collect();
     let mut inner = core.lock().expect("core lock");
     retry_cleanups(&mut inner);
+    let mut merged_in = Vec::new();
     for (d, found) in results {
-        polled(&mut inner, d, found);
+        let repository_id = d.repository_id.clone();
+        if polled(&mut inner, d, found) && !merged_in.contains(&repository_id) {
+            merged_in.push(repository_id);
+        }
     }
     sessions::flush(&mut inner);
+    drop(inner);
+    // A merge closes the issues its pull request named, on GitHub: read them again so
+    // Done shows (Switchyard never closes them itself).
+    for repository_id in merged_in {
+        tasks::refresh_issues(core, &repository_id);
+    }
 }
 
 /// Every branch worktree of every repository with a remote (runs git; hold nothing).
@@ -456,28 +495,34 @@ fn belongs(path: &Path, found: &ForgePullRequest) -> bool {
         || (!found.head_oid.is_empty() && git::is_ancestor(path, "HEAD", &found.head_oid))
 }
 
-fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, String>) {
+/// Take in one poll's answer. True when it found the branch Merged.
+fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, String>) -> bool {
     let key = due.path.to_string_lossy().into_owned();
-    let Some(track) = inner.forge.tracks.get_mut(&key) else { return };
+    let Some(track) = inner.forge.tracks.get_mut(&key) else { return false };
     let Ok(found) = found else {
         // The Forge could not answer (offline, say): try again later.
-        return track.polled(false);
+        track.polled(false);
+        return false;
     };
     let before = track.pull_request.as_ref().map(|p| &p.pull_request);
     let changed = before != found.as_ref().map(|p| &p.pull_request);
     track.pull_request = found.clone();
     track.polled(changed);
     if !changed {
-        return;
+        return false;
     }
     let pull_request = found.as_ref().map(|f| f.pull_request.clone());
     inner.emit(Event::PullRequestChanged { worktree_path: key.clone(), pull_request: pull_request.clone() });
     match pull_request.map(|p| (p.state, p.number, p.url)) {
-        Some((PullRequestState::Merged, number, url)) => merged(inner, None, &due, Some((number, &url))),
+        Some((PullRequestState::Merged, number, url)) => {
+            merged(inner, None, &due, Some((number, &url)));
+            return true;
+        }
         // Opened outside Switchyard, or seen again after a relaunch.
         Some((PullRequestState::Open, ..)) => tasks::pull_request_open(inner, None, &key, &due.branch),
         _ => {}
     }
+    false
 }
 
 /// Each tick: try again to clean up every Merged worktree that was kept, now that its

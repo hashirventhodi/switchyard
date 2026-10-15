@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use switchyard_schema::{Check, CheckStatus, ChecksState, ForgeSetup, ForgeSetupState, Link, PullRequest, PullRequestState, ReviewState};
 
-use super::{Forge, ForgeIssue, ForgePullRequest};
+use super::{Forge, ForgeIssue, ForgePullRequest, PullRequestText};
 use crate::subprocess;
 
 /// Runs `program` as `gh`. The app finds it with [`GhForge::find`]; tests point it at a fake.
@@ -91,8 +91,13 @@ impl Forge for GhForge {
         ForgeSetup { name: NAME.into(), state }
     }
 
-    fn create_pull_request(&self, dir: &Path, base: &str, branch: &str) -> Result<String, String> {
-        let out = self.run_ok(dir, &["pr", "create", "--base", base, "--head", branch, "--fill"])?;
+    fn create_pull_request(&self, dir: &Path, base: &str, branch: &str, text: Option<&PullRequestText>) -> Result<String, String> {
+        let mut args = vec!["pr", "create", "--base", base, "--head", branch];
+        match text {
+            Some(t) => args.extend(["--title", t.title.as_str(), "--body", t.body.as_str()]),
+            None => args.push("--fill"),
+        }
+        let out = self.run_ok(dir, &args)?;
         out.lines()
             .map(str::trim)
             .rfind(|l| l.starts_with("https://"))
@@ -133,10 +138,6 @@ impl Forge for GhForge {
                 labels: i.labels.into_iter().map(|l| l.name).collect(),
             })
             .collect())
-    }
-
-    fn close_issue(&self, dir: &Path, number: u32, comment: &str) -> Result<(), String> {
-        self.run_ok(dir, &["issue", "close", &number.to_string(), "--comment", comment]).map(|_| ())
     }
 }
 

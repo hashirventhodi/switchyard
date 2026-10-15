@@ -106,9 +106,7 @@ fn source<'a>(inner: &'a Inner, repo: &StoredRepository, kind: TaskSourceKind) -
             git::remote(dir)?;
             Some(Box::new(GithubIssues {
                 db: inner.store.db(),
-                forge: inner.runtime.forge.clone(),
                 repository_id: repo.id.clone(),
-                dir: dir.to_path_buf(),
                 progress: issue_progress(inner, repo),
             }))
         }
@@ -144,7 +142,6 @@ fn issue_progress(inner: &Inner, repo: &StoredRepository) -> HashMap<u32, TaskCo
             .iter()
             .filter_map(|s| linked_task(db, s))
             .filter_map(|t| issue_of(&t))
-            .chain(github::named_issue(&branch))
             .collect();
         let column =
             if forge::has_open_pull_request(inner, &path) { TaskColumn::InReview } else { TaskColumn::InProgress };
@@ -442,14 +439,11 @@ pub(crate) fn start_session(
 }
 
 /// The tasks of `branch` at `path`: those linked to any session, live or archived, that ran
-/// there, and the issue the branch is named for (`fix/412-…`), as GitHub links them.
+/// there. A branch's name links nothing.
 fn tasks_on(inner: &Inner, path: &str, branch: &str) -> Vec<(StoredRepository, Task)> {
     let db = inner.store.db();
     let mut ids: Vec<String> =
         sessions::ids_on_branch(inner, path, branch).iter().filter_map(|s| linked_task(db, s)).collect();
-    if let (Some(n), Some((repo, _))) = (github::named_issue(branch), inner.find_worktree(path)) {
-        ids.push(TaskId::new(&repo, TaskSourceKind::Github, &format!("#{n}")).to_string());
-    }
     ids.sort();
     ids.dedup();
     ids.iter().filter_map(|id| find(inner, id)).collect()
@@ -524,5 +518,43 @@ mod tests {
         assert_eq!((odd.source, odd.key.as_str()), (TaskSourceKind::Local, "L-1/x"));
         assert_eq!(TaskId::parse("repo-3/jira/X-1"), None);
         assert_eq!(TaskId::parse("repo-3"), None);
+    }
+}
+
+/// The GitHub issue numbers linked to the sessions that ran on `branch` at `path`: what a
+/// pull request opened from there closes on merge.
+pub(crate) fn linked_issues(inner: &Inner, path: &str, branch: &str) -> Vec<u32> {
+    let db = inner.store.db();
+    let mut issues: Vec<u32> = sessions::ids_on_branch(inner, path, branch)
+        .iter()
+        .filter_map(|s| linked_task(db, s))
+        .filter_map(|t| TaskId::parse(&t))
+        .filter(|id| id.source == TaskSourceKind::Github)
+        .filter_map(|id| github::number_of(&id.key))
+        .collect();
+    issues.sort_unstable();
+    issues.dedup();
+    issues
+}
+
+/// Read a repository's issues again (after a merge) and announce the board; quiet when the
+/// Forge cannot answer. Runs `gh` without holding the core. Only for a repository that
+/// has been synced before.
+pub(crate) fn refresh_issues(core: &Arc<Mutex<Inner>>, repository_id: &str) {
+    let (dir, forge) = {
+        let inner = core.lock().expect("core lock");
+        let Some(repo) = worktrees::repository(&inner, repository_id) else { return };
+        if !github::synced(inner.store.db(), repository_id) {
+            return;
+        }
+        (Path::new(&repo.path).to_path_buf(), inner.runtime.forge.clone())
+    };
+    let Ok(issues) = forge.issues(&dir) else { return };
+    let inner = core.lock().expect("core lock");
+    let Some(repo) = worktrees::repository(&inner, repository_id) else { return };
+    if github::save(inner.store.db(), &repo.id, &issues).is_ok() {
+        if let Ok(tasks) = list(&inner, &repo) {
+            inner.emit(Event::TasksChanged { repository_id: repo.id.clone(), tasks, house_rules: house_rules(&repo) });
+        }
     }
 }

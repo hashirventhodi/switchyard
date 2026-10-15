@@ -1,8 +1,9 @@
 //! The GitHub Issues TaskSource through seam 1: Sync pulls the repository's issues through
 //! the Forge (a fake `gh`, see `harness/gh.rs`; nothing touches GitHub) onto the board
 //! beside local tasks, with the lossy column mapping (To do = open, no branch; In progress
-//! = open with a linked branch; In review = pull request open; Done = closed). Only one
-//! thing is ever written back: Merged closes the issue with a comment linking the PR.
+//! = open with a linked session; In review = its pull request open; Done = closed on
+//! GitHub). Nothing is written to the tracker: a pull request opened for a linked issue
+//! says "Closes #N" and GitHub closes it on merge.
 
 mod harness;
 
@@ -157,12 +158,18 @@ impl Tracker {
     }
 }
 
+/// The `--body` a `pr create` call was given, if any.
+fn body_of(call: &[String]) -> Option<String> {
+    call.iter().position(|a| a == "--body").and_then(|i| call.get(i + 1).cloned())
+}
+
 #[test]
-fn an_issue_moves_with_the_work_and_merged_closes_it_with_a_comment_linking_the_pr() {
+fn an_issue_moves_with_its_linked_work_and_is_done_when_github_closes_it() {
     let mut t = tracker();
     t.sync();
 
-    let (events, wt) = t.assign_and_commit("#412", "fix/412-login-times-out");
+    // The branch is not named for the issue: the link is the session's.
+    let (events, wt) = t.assign_and_commit("#412", "fix/login-timeout");
     assert_eq!(by_key(&tasks_in(&events, &t.repo_id), "#412").column, TaskColumn::InProgress);
     assert_eq!(t.writes(), Vec::<Vec<String>>::new(), "In progress is not written to GitHub");
 
@@ -171,17 +178,22 @@ fn an_issue_moves_with_the_work_and_merged_closes_it_with_a_comment_linking_the_
     assert_eq!(by_key(&tasks_in(&events, &t.repo_id), "#412").column, TaskColumn::InReview);
     let writes = t.writes();
     assert_eq!(writes.len(), 1, "{writes:?}");
-    assert_eq!(writes[0][..2], ["pr", "create"], "In review is not written to the issue");
+    assert_eq!(writes[0][..2], ["pr", "create"]);
+    let body = body_of(&writes[0]).expect("a body naming the issue");
+    assert!(body.ends_with("Closes #412"), "{body}");
+    assert!(body.contains("Fix the timeout"), "{body}");
 
-    t.core.gh.set_state("fix/412-login-times-out", "MERGED");
+    // GitHub closes the issue when the pull request merges ("Closes #412"); Switchyard
+    // never does. The poller reads the issues again once a linked branch is Merged.
+    t.core.gh.set_issues(json!([
+        gh_issue(412, "Login times out", "The form hangs.", "CLOSED", &["bug"]),
+        gh_issue(7, "Old thing", "", "CLOSED", &[]),
+    ]));
+    t.core.gh.set_state("fix/login-timeout", "MERGED");
     let events = t.core.poll_forge();
     assert!(events.iter().any(|e| matches!(e, Event::BranchMerged { removed: true, .. })), "{events:#?}");
     assert_eq!(by_key(&tasks_in(&events, &t.repo_id), "#412").column, TaskColumn::Done);
-    assert_eq!(
-        t.core.gh.calls_with(["issue", "close"]),
-        vec![vec!["issue", "close", "412", "--comment", "Merged in https://github.com/acme/acme/pull/421."]],
-    );
-    assert_eq!(t.writes().len(), 2, "nothing else is written: {:?}", t.writes());
+    assert_eq!(t.writes().len(), 1, "nothing else is written: {:?}", t.writes());
 
     // Still Done after a relaunch, before any sync (the store keeps what GitHub said).
     let mut core = t.core.relaunch();
@@ -189,7 +201,32 @@ fn an_issue_moves_with_the_work_and_merged_closes_it_with_a_comment_linking_the_
     let id = t.repo_id.clone();
     let tasks = tasks_in(&core.send(Command::ReadTasks { repository_id: id.clone() }), &id);
     assert_eq!(by_key(&tasks, "#412").column, TaskColumn::Done);
-    assert_eq!(by_key(&tasks, "#7").column, TaskColumn::Done);
+}
+
+#[test]
+fn an_issue_closed_by_hand_is_done_on_the_next_sync() {
+    let mut t = tracker();
+    t.sync();
+    t.assign_and_commit("#412", "fix/login-timeout");
+    assert_eq!(t.issue("#412").column, TaskColumn::InProgress);
+    t.core.gh.set_issues(json!([gh_issue(412, "Login times out", "", "CLOSED", &["bug"])]));
+    assert_eq!(by_key(&tasks_in(&t.sync(), &t.repo_id), "#412").column, TaskColumn::Done);
+    assert_eq!(t.writes(), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn a_pull_request_with_no_linked_issue_closes_nothing() {
+    let mut t = tracker();
+    t.sync();
+    // Named like the issue, but no session is linked to it.
+    let wt = t.repo.add_worktree("fix/412-login");
+    std::fs::write(wt.join("fix.txt"), "fixed\n").unwrap();
+    git(&wt, &["add", "fix.txt"]);
+    git(&wt, &["commit", "-q", "-m", "Fix it"]);
+    t.core.send(Command::OpenPullRequest { worktree_path: path(&wt) });
+    let writes = t.writes();
+    assert_eq!(writes[0], vec!["pr", "create", "--base", "main", "--head", "fix/412-login", "--fill"]);
+    assert_eq!(t.issue("#412").column, TaskColumn::Todo, "a branch name links nothing");
 }
 
 #[test]
@@ -210,11 +247,10 @@ fn sync_is_idempotent_and_never_closes_twice() {
     t.core.gh.set_state("fix/412-login-times-out", "MERGED");
     let events = t.core.poll_forge();
     assert!(events.iter().any(|e| matches!(e, Event::BranchMerged { .. })), "{events:#?}");
-    assert_eq!(t.core.gh.calls_of(["issue", "close"]), 0, "an issue already closed is not closed again");
 
     let synced = tasks_in(&t.sync(), &t.repo_id);
     assert_eq!(synced, tasks_in(&t.sync(), &t.repo_id));
-    assert_eq!(t.core.gh.calls_of(["issue", "close"]), 0);
+    assert_eq!(t.writes().len(), 1, "only the pull request: {:?}", t.writes());
 }
 
 #[test]
@@ -260,26 +296,10 @@ fn a_repository_without_a_remote_has_only_local_tasks() {
 }
 
 #[test]
-fn a_worktree_branch_named_for_an_issue_links_it() {
+fn a_worktree_branch_named_like_an_issue_does_not_link_it() {
     let mut t = tracker();
     t.sync();
     t.repo.add_worktree("412-login-timeout");
-    assert_eq!(t.issue("#412").column, TaskColumn::InProgress);
-    t.repo.add_worktree("feat/4120-other");
-    assert_eq!(t.issue("#7").column, TaskColumn::Done);
+    assert_eq!(t.issue("#412").column, TaskColumn::Todo);
     assert_eq!(t.writes(), Vec::<Vec<String>>::new());
-}
-
-#[test]
-fn a_failed_close_leaves_the_issue_open_until_github_says_otherwise() {
-    let mut t = tracker();
-    t.sync();
-    let (_, wt) = t.assign_and_commit("#412", "fix/412-login-times-out");
-    t.core.send(Command::OpenPullRequest { worktree_path: path(&wt) });
-    t.core.gh.fail_close("HTTP 403: Resource not accessible by integration");
-    t.core.gh.set_state("fix/412-login-times-out", "MERGED");
-    let events = t.core.poll_forge();
-    assert!(events.iter().any(|e| matches!(e, Event::BranchMerged { removed: true, .. })), "{events:#?}");
-    assert_eq!(t.core.gh.calls_of(["issue", "close"]), 1);
-    assert_eq!(t.issue("#412").column, TaskColumn::InProgress, "still open on GitHub, its session linked");
 }

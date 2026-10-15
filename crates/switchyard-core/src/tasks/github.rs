@@ -3,21 +3,19 @@
 //! the board never runs `gh` and the board survives a relaunch or a signed-out `gh`.
 //!
 //! GitHub knows only open and closed, so the column is a lossy, explicit mapping:
-//! To do = open with no branch; In progress = open with a linked branch (a worktree branch
-//! named for the issue, `<kind>/412-…` or `412-…`, or a branch a session linked to it ran
-//! on); In review = that branch's pull request is open; Done = closed. The only write is
-//! closing the issue, with a comment linking the pull request, when the work is Merged.
-//! Labels, bodies and checklists are never written.
+//! To do = open with no linked session; In progress = open with a linked session (a link
+//! the user made, never a branch-name guess); In review = that session's worktree has an
+//! open pull request; Done = closed on GitHub, however it was closed. Switchyard writes
+//! nothing to the tracker: a pull request it opens for a linked issue says "Closes #N",
+//! and GitHub closes the issue when it merges.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use rusqlite::{params, Connection};
 use switchyard_schema::{TaskColumn, TaskKind, TaskSourceKind};
 
 use super::{SourceTask, TaskSource};
-use crate::forge::{Forge, ForgeIssue};
+use crate::forge::ForgeIssue;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS github_issues (
@@ -49,6 +47,11 @@ pub(crate) fn save(db: &Connection, repository_id: &str, issues: &[ForgeIssue]) 
     write().map_err(|e| format!("could not keep the issues: {e}"))
 }
 
+/// Whether the repository's issues were ever synced.
+pub(crate) fn synced(db: &Connection, repository_id: &str) -> bool {
+    !load(db, repository_id).is_empty()
+}
+
 fn load(db: &Connection, repository_id: &str) -> Vec<ForgeIssue> {
     let read = || -> rusqlite::Result<Vec<String>> {
         let mut stmt = db.prepare("SELECT issue FROM github_issues WHERE repository_id = ?1 ORDER BY rowid")?;
@@ -63,23 +66,9 @@ pub(crate) fn number_of(key: &str) -> Option<u32> {
     key.strip_prefix('#')?.parse().ok()
 }
 
-/// The issue a branch is named for: `feat/412-login`, `412-login` or `412`.
-pub(crate) fn named_issue(branch: &str) -> Option<u32> {
-    let last = branch.rsplit('/').next()?;
-    let digits: String = last.chars().take_while(char::is_ascii_digit).collect();
-    let rest = &last[digits.len()..];
-    if digits.is_empty() || !(rest.is_empty() || rest.starts_with('-')) {
-        return None;
-    }
-    digits.parse().ok()
-}
-
 pub(crate) struct GithubIssues<'a> {
     pub db: &'a Connection,
-    pub forge: Arc<dyn Forge>,
     pub repository_id: String,
-    /// The primary worktree, where `gh` runs.
-    pub dir: PathBuf,
     /// How far each open issue's work has got by Switchyard's own facts (a linked branch:
     /// In progress; its pull request open: In review), by number.
     pub progress: HashMap<u32, TaskColumn>,
@@ -136,26 +125,9 @@ impl TaskSource for GithubIssues<'_> {
         Ok(load(self.db, &self.repository_id).iter().map(|i| self.source_task(i)).collect())
     }
 
-    /// In progress and In review follow Switchyard's facts and are never written; Done
-    /// closes the issue with a comment linking the pull request.
-    fn move_to(&mut self, key: &str, column: TaskColumn, pull_request: Option<&str>) -> Result<(), String> {
-        if column != TaskColumn::Done {
-            return Ok(());
-        }
-        let number = number_of(key).ok_or_else(|| format!("{key} is not an issue"))?;
-        let mut issues = load(self.db, &self.repository_id);
-        let Some(issue) = issues.iter_mut().find(|i| i.number == number) else {
-            return Err(format!("there is no issue {key}"));
-        };
-        if !issue.open {
-            return Ok(());
-        }
-        let comment = match pull_request {
-            Some(url) => format!("Merged in {url}."),
-            None => "Merged.".to_string(),
-        };
-        self.forge.close_issue(Path::new(&self.dir), number, &comment)?;
-        issue.open = false;
-        save(self.db, &self.repository_id, &issues)
+    /// Nothing is written: every column follows Switchyard's facts or GitHub's own state
+    /// (a merged pull request that said "Closes #N" closes the issue on GitHub).
+    fn move_to(&mut self, _key: &str, _column: TaskColumn, _pull_request: Option<&str>) -> Result<(), String> {
+        Ok(())
     }
 }
