@@ -119,7 +119,7 @@ const policy: Policy = {
 test("Context reads the repository's policy and lists every grant with its layer; only local ones revoke", () => {
   const { sent, emit } = launch();
 
-  fireEvent.click(screen.getByRole("button", { name: "Context" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Context" }));
   expect(sent).toContainEqual({ type: "readPolicy", repositoryId: "repo-1" });
   act(() => emit({ type: "policyChanged", repositoryId: "repo-1", policy }));
 
@@ -141,7 +141,7 @@ test("Context reads the repository's policy and lists every grant with its layer
 
 test("Context says when the policy file is broken and nothing is granted", () => {
   const { emit } = launch();
-  fireEvent.click(screen.getByRole("button", { name: "Context" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Context" }));
 
   act(() =>
     emit({
