@@ -11,6 +11,7 @@ pub struct Store {
     db: Connection,
 }
 
+#[derive(Clone)]
 pub struct StoredRepository {
     pub id: String,
     pub path: String,

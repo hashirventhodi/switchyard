@@ -362,6 +362,15 @@ impl Inner {
     /// a known repository's worktrees. Re-read from git every time.
     pub(crate) fn find_worktree(&self, path: &str) -> Option<(StoredRepository, git::GitWorktree)> {
         let repos = self.store.repositories().ok()?;
+        // Which repository `path` belongs to is read from its `.git` (no subprocess), so git
+        // runs once, for that repository, instead of once per repository.
+        if let Some(common) = git::common_dir(Path::new(path)) {
+            let owner = repos.iter().find(|r| git::common_dir(Path::new(&r.path)).as_ref() == Some(&common));
+            if let Some(repo) = owner {
+                let wt = git::worktrees(Path::new(&repo.path)).ok()?.into_iter().find(|w| w.path == Path::new(path))?;
+                return Some((repo.clone(), wt));
+            }
+        }
         repos.into_iter().find_map(|repo| {
             let list = git::worktrees(Path::new(&repo.path)).ok()?;
             let wt = list.into_iter().find(|w| w.path == Path::new(path))?;

@@ -90,19 +90,28 @@ pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
 /// The TaskSources of a repository: its local tasks, and its GitHub Issues when it has a
 /// remote.
 fn sources<'a>(inner: &'a Inner, repo: &StoredRepository) -> Vec<Box<dyn TaskSource + 'a>> {
+    [TaskSourceKind::Local, TaskSourceKind::Github].into_iter().filter_map(|kind| source(inner, repo, kind)).collect()
+}
+
+/// The repository's one source of `kind`, if it has one. Only GitHub Issues runs git (to
+/// see which branches are linked); local tasks are a file.
+fn source<'a>(inner: &'a Inner, repo: &StoredRepository, kind: TaskSourceKind) -> Option<Box<dyn TaskSource + 'a>> {
     let dir = Path::new(&repo.path);
-    let folder = worktrees::repository_folder(dir);
-    let mut list: Vec<Box<dyn TaskSource + 'a>> = vec![Box::new(LocalTasks::new(&inner.data_dir, &folder))];
-    if git::remote(dir).is_some() {
-        list.push(Box::new(GithubIssues {
-            db: inner.store.db(),
-            forge: inner.runtime.forge.clone(),
-            repository_id: repo.id.clone(),
-            dir: dir.to_path_buf(),
-            progress: issue_progress(inner, repo),
-        }));
+    match kind {
+        TaskSourceKind::Local => {
+            Some(Box::new(LocalTasks::new(&inner.data_dir, &worktrees::repository_folder(dir))))
+        }
+        TaskSourceKind::Github => {
+            git::remote(dir)?;
+            Some(Box::new(GithubIssues {
+                db: inner.store.db(),
+                forge: inner.runtime.forge.clone(),
+                repository_id: repo.id.clone(),
+                dir: dir.to_path_buf(),
+                progress: issue_progress(inner, repo),
+            }))
+        }
     }
-    list
 }
 
 /// How far the work on each open issue has got, by Switchyard's facts: In progress once a
@@ -283,11 +292,14 @@ pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
     }
 }
 
-/// A task found by id, with its repository.
+/// A task found by id, with its repository: only the task's own source is read.
 fn find(inner: &Inner, id: &str) -> Option<(StoredRepository, Task)> {
-    let repo_id = id.split('/').next()?;
+    let mut parts = id.splitn(3, '/');
+    let (repo_id, kind, key) = (parts.next()?, parts.next()?, parts.next()?);
+    let kind = [TaskSourceKind::Local, TaskSourceKind::Github].into_iter().find(|k| source_name(*k) == kind)?;
     let repo = worktrees::repository(inner, repo_id)?;
-    let found = list(inner, &repo).ok()?.into_iter().find(|t| t.id == id)?;
+    let found = source(inner, &repo, kind)?.tasks().ok()?.into_iter().find(|t| t.key == key)?;
+    let found = task(inner.store.db(), &repo, kind, found);
     Some((repo, found))
 }
 

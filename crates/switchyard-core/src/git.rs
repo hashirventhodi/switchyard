@@ -27,6 +27,23 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     }
 }
 
+/// The repository directory shared by every worktree of the repository whose worktree is
+/// rooted at `dir`, read from `dir/.git` without running git: the primary's `.git`
+/// directory, or what a linked worktree's `.git` file points at (through its `commondir`).
+/// `None` when `dir` is not the root of a worktree.
+pub fn common_dir(dir: &Path) -> Option<PathBuf> {
+    let dot_git = dir.join(".git");
+    if dot_git.is_dir() {
+        return dot_git.canonicalize().ok();
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = dir.join(text.trim().strip_prefix("gitdir:")?.trim());
+    match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => gitdir.join(common.trim()).canonicalize().ok(),
+        Err(_) => gitdir.canonicalize().ok(),
+    }
+}
+
 /// True when `dir` is inside a git repository (any of its worktrees).
 pub fn is_inside_repository(dir: &Path) -> bool {
     git(dir, &["rev-parse", "--git-dir"]).is_ok()
