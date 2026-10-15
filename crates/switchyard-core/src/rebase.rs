@@ -59,8 +59,36 @@ pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
     worktrees::emit_facts(inner, &worktree.path, &base);
 }
 
+/// One message asking the agent to rebase on base and resolve conflicts itself, delivered
+/// as the user's next prompt (the agent sees it in its context, as if typed).
 pub(crate) fn ask_agent(inner: &mut Inner, session_id: &str) {
-    let _ = (inner, session_id);
+    const COMMAND: &str = "askAgentToRebase";
+    let Some((worktree_path, status)) = sessions::worktree_and_status(inner, session_id) else {
+        return inner.refuse(COMMAND, format!("There is no session {session_id}"));
+    };
+    match status {
+        SessionStatus::Running => {
+            return inner.refuse(COMMAND, "The agent is still working; wait for it or stop it first".into())
+        }
+        SessionStatus::Idle => return inner.refuse(COMMAND, "The session is paused; resume it first".into()),
+        _ => {}
+    }
+    let Some((repo, worktree)) = inner.find_worktree(&worktree_path) else {
+        return inner.refuse(COMMAND, format!("{worktree_path} is not a worktree of an added repository"));
+    };
+    let Some(base) = base_of(Path::new(&repo.path)) else {
+        return inner.refuse(COMMAND, format!("{} is no longer a readable git repository", repo.path));
+    };
+    let onto = git::base_ref(&worktree.path, &base);
+    let conflicts = git::conflicting_files(&worktree.path, &onto).unwrap_or_default();
+    let mut text = format!(
+        "Rebase this branch on {base}: commit or stash your work in progress, run `git rebase {onto}`, \
+         resolve any conflicts keeping the intent of both sides, and continue until the rebase completes."
+    );
+    if !conflicts.is_empty() {
+        text.push_str(&format!(" Expect conflicts in: {}.", conflicts.join(", ")));
+    }
+    sessions::send_prompt(inner, session_id, &text);
 }
 
 pub(crate) fn history(inner: &Inner, worktree_path: &str) {

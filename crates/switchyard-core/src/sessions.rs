@@ -180,6 +180,12 @@ pub(crate) fn send_prompt(inner: &mut Inner, id: &str, text: &str) {
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
+/// The worktree path and status of session `id`, if it exists.
+pub(crate) fn worktree_and_status(inner: &Inner, id: &str) -> Option<(String, SessionStatus)> {
+    let state = inner.sessions.list.iter().find(|s| s.session.id == id)?;
+    Some((state.session.worktree_path.clone(), state.session.status))
+}
+
 /// The status of the session occupying the worktree at `path`, if any.
 pub(crate) fn occupant(inner: &Inner, path: &str) -> Option<SessionStatus> {
     inner.sessions.list.iter().find(|s| s.session.worktree_path == path).map(|s| s.session.status)
@@ -215,6 +221,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let mut out = Vec::new();
     let mut cause = None;
     let mut failure = None;
+    let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
             AgentEvent::SessionInit { cli_permission_mode, cli, model, .. } => {
@@ -294,8 +301,13 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
         out.push(event);
     }
     let (agent, cli_version) = (state.session.agent, state.facts.cli_version.clone());
+    let worktree_path = state.session.worktree_path.clone();
     for event in out {
         inner.emit(event);
+    }
+    // A turn is when the agent commits and edits: re-read where its branch stands.
+    if turn_ended {
+        crate::worktrees::refresh_one(inner, &worktree_path);
     }
     if let Some((class, detail)) = failure {
         compat::record(inner, agent, class, cli_version.as_deref(), &detail);

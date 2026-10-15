@@ -7,7 +7,8 @@ mod harness;
 use std::path::{Path, PathBuf};
 
 use harness::{added_repository, git, worktree_snapshot, Harness, TempRepo};
-use switchyard_schema::{Command, Event, WorktreeFacts};
+use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
+use switchyard_schema::{Command, Entry, Event, SessionStatus, WorktreeFacts};
 
 /// A repository with an identity for the commits a rebase rewrites (CI has no global one),
 /// added to a fresh core, plus a worktree on `feat/login` made through the core.
@@ -192,4 +193,49 @@ fn a_worktree_whose_agent_is_running_is_not_rebased_behind_its_back() {
 
     assert!(reason.contains("Running"), "{reason}");
     assert_eq!(head(&path), head_before);
+}
+
+#[test]
+fn asking_the_agent_to_rebase_sends_one_message_and_the_session_goes_running() {
+    let (repo, mut core, path) = setup();
+    commit(&path, "README", "hello from the branch\n", "branch edit");
+    commit(&repo.path, "README", "hello from main\n", "main edit");
+    let id = harness::started_session(&core.start_session(&path, "Add a login form."));
+    core.agent_says(0, AgentEvent::TurnComplete);
+    let sent_before = core.agents.commands(0).len();
+
+    let events = core.send(Command::AskAgentToRebase { session_id: id.clone() });
+
+    let sent = &core.agents.commands(0)[sent_before..];
+    let [AgentCommand::SendText { text }] = sent else { panic!("expected one message, got {sent:?}") };
+    assert!(text.contains("git rebase main") && text.contains("README"), "{text}");
+    let users: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::TranscriptEntry { entry: Entry::User { .. }, .. }))
+        .collect();
+    assert_eq!(users.len(), 1, "{events:#?}");
+    assert!(events.contains(&Event::SessionStatusChanged { session_id: id, status: SessionStatus::Running }));
+}
+
+#[test]
+fn asking_a_running_agent_to_rebase_is_refused() {
+    let (_repo, mut core, path) = setup();
+    let id = harness::started_session(&core.start_session(&path, "Add a login form."));
+
+    let events = core.send(Command::AskAgentToRebase { session_id: id });
+
+    assert!(matches!(events.as_slice(), [Event::CommandRefused { .. }]), "{events:#?}");
+    assert_eq!(core.agents.commands(0).len(), 1, "only the first prompt was sent");
+}
+
+#[test]
+fn ahead_and_behind_are_reread_after_every_agent_turn() {
+    let (repo, mut core, path) = setup();
+    core.start_session(&path, "Add a login form.");
+    commit(&path, "login.rs", "fn login() {}\n", "add login");
+    commit(&repo.path, "NOTES", "unrelated\n", "main notes");
+
+    let events = core.agent_says(0, AgentEvent::TurnComplete);
+
+    assert_eq!(facts_of(&events, &path), WorktreeFacts { ahead: 1, behind: 1, dirty: 0, conflicts: vec![] });
 }
