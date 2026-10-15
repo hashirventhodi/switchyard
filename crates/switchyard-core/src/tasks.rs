@@ -121,8 +121,8 @@ fn source<'a>(inner: &'a Inner, repo: &StoredRepository, kind: TaskSourceKind) -
 fn issue_progress(inner: &Inner, repo: &StoredRepository) -> HashMap<u32, TaskColumn> {
     let db = inner.store.db();
     let issue_of = |task_id: &str| -> Option<u32> {
-        let key = task_id.strip_prefix(&format!("{}/github/", repo.id))?;
-        github::number_of(key)
+        let id = TaskId::parse(task_id).filter(|id| id.repository_id == repo.id && id.source == TaskSourceKind::Github)?;
+        github::number_of(&id.key)
     };
     let mut progress = HashMap::new();
     let mut reach = |n: u32, column: TaskColumn| {
@@ -162,13 +162,36 @@ fn source_name(kind: TaskSourceKind) -> &'static str {
     }
 }
 
-/// `<repository id>/<source>/<key>`: unique across repositories and sources.
-fn task_id(repo: &StoredRepository, kind: TaskSourceKind, key: &str) -> String {
-    format!("{}/{}/{key}", repo.id, source_name(kind))
+/// A Task's id, `<repository id>/<source>/<key>`: unique across repositories and sources.
+/// The key may itself contain `/`; the repository id and source name never do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskId {
+    repository_id: String,
+    source: TaskSourceKind,
+    key: String,
+}
+
+impl TaskId {
+    fn new(repo: &StoredRepository, source: TaskSourceKind, key: &str) -> TaskId {
+        TaskId { repository_id: repo.id.clone(), source, key: key.to_string() }
+    }
+
+    fn parse(id: &str) -> Option<TaskId> {
+        let mut parts = id.splitn(3, '/');
+        let (repository_id, source, key) = (parts.next()?, parts.next()?, parts.next()?);
+        let source = [TaskSourceKind::Local, TaskSourceKind::Github].into_iter().find(|k| source_name(*k) == source)?;
+        Some(TaskId { repository_id: repository_id.into(), source, key: key.into() })
+    }
+}
+
+impl std::fmt::Display for TaskId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}/{}", self.repository_id, source_name(self.source), self.key)
+    }
 }
 
 fn task(db: &Connection, repo: &StoredRepository, kind: TaskSourceKind, t: SourceTask) -> Task {
-    let id = task_id(repo, kind, &t.key);
+    let id = TaskId::new(repo, kind, &t.key).to_string();
     let ticked = ticks(db, &id);
     Task {
         checklist: t
@@ -295,10 +318,8 @@ pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
 
 /// A task found by id, with its repository: only the task's own source is read.
 fn find(inner: &Inner, id: &str) -> Option<(StoredRepository, Task)> {
-    let mut parts = id.splitn(3, '/');
-    let (repo_id, kind, key) = (parts.next()?, parts.next()?, parts.next()?);
-    let kind = [TaskSourceKind::Local, TaskSourceKind::Github].into_iter().find(|k| source_name(*k) == kind)?;
-    let repo = worktrees::repository(inner, repo_id)?;
+    let TaskId { repository_id, source: kind, key } = TaskId::parse(id)?;
+    let repo = worktrees::repository(inner, &repository_id)?;
     let found = source(inner, &repo, kind)?.tasks().ok()?.into_iter().find(|t| t.key == key)?;
     let found = task(inner.store.db(), &repo, kind, found);
     Some((repo, found))
@@ -432,7 +453,7 @@ fn tasks_on(inner: &Inner, path: &str, branch: &str) -> Vec<(StoredRepository, T
     let mut ids: Vec<String> =
         sessions::ids_on_branch(inner, path, branch).iter().filter_map(|s| linked_task(db, s)).collect();
     if let (Some(n), Some((repo, _))) = (github::named_issue(branch), inner.find_worktree(path)) {
-        ids.push(task_id(&repo, TaskSourceKind::Github, &format!("#{n}")));
+        ids.push(TaskId::new(&repo, TaskSourceKind::Github, &format!("#{n}")).to_string());
     }
     ids.sort();
     ids.dedup();
@@ -491,5 +512,22 @@ pub(crate) fn replay_links(inner: &Inner) {
         if sessions::known(inner, &session_id) {
             inner.emit(Event::TaskLinked { session_id, task_id: Some(task_id) });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_task_id_reads_back_what_it_writes_and_keeps_slashes_in_the_key() {
+        let repo = StoredRepository { id: "repo-3".into(), path: "/src/acme".into() };
+        let id = TaskId::new(&repo, TaskSourceKind::Github, "#412");
+        assert_eq!(id.to_string(), "repo-3/github/#412");
+        assert_eq!(TaskId::parse("repo-3/github/#412"), Some(id));
+        let odd = TaskId::parse("repo-3/local/L-1/x").unwrap();
+        assert_eq!((odd.source, odd.key.as_str()), (TaskSourceKind::Local, "L-1/x"));
+        assert_eq!(TaskId::parse("repo-3/jira/X-1"), None);
+        assert_eq!(TaskId::parse("repo-3"), None);
     }
 }
