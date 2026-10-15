@@ -54,5 +54,5 @@ recording, never an edited one, and an updated supported range in
 3. Start the app with `claude` hidden (e.g. `PATH=/usr/bin:/bin`, no `~/.local/bin/claude`):
    Setup lists Claude Code as not installed with its install command. Restore it and press
    Check again: the block disappears.
-4. `cat "~/Library/Application Support/<bundle id>/compat-log.jsonl"` after a failed start shows
+4. `cat ~/Library/Application\ Support/dev.switchyard.app/compat-log.jsonl` after a failed start shows
    one JSON record per failure.
