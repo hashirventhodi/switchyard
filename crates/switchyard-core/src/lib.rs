@@ -111,6 +111,9 @@ impl Core {
             }
             Command::RemoveWorktree { worktree_path } => worktrees::remove(&mut inner, &worktree_path),
             Command::RefreshWorktrees => worktrees::refresh(&inner),
+            Command::AnswerRequest { session_id, request_id, verdict } => {
+                sessions::answer_request(&mut inner, &session_id, &request_id, verdict)
+            }
             Command::CheckAgents => compat::check(&mut inner),
             Command::RebaseWorktree { worktree_path } => rebase::rebase(&mut inner, &worktree_path),
             Command::AskAgentToRebase { session_id } => rebase::ask_agent(&mut inner, &session_id),
