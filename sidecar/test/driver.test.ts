@@ -130,11 +130,67 @@ test("interrupt calls query.interrupt()", async () => {
     query,
   });
 
+  stdin.push({ type: "send_text", text: "hi" });
   stdin.push({ type: "interrupt" });
   stdin.close();
   await done;
 
   expect(calls.interrupts).toBe(1);
+});
+
+test("resume starts the query on the CLI's own session, then takes prompts", async () => {
+  const stdin = lines();
+  const events: ProtocolEvent[] = [];
+  const { query, calls } = fakeQuery((text) => [say(`echo ${text}`), result(`echo ${text}`)]);
+  const done = drive({
+    config: { cwd: "/wt", permission_mode: "auto_edit", claude_path: null },
+    commands: stdin,
+    emit: (e) => events.push(e),
+    query,
+  });
+
+  stdin.push({ type: "resume", external_session_id: S });
+  stdin.push({ type: "send_text", text: "Continue where you left off." });
+  await until(events, "turn_complete");
+  stdin.close();
+  await done;
+
+  expect(calls.options).toMatchObject({ cwd: "/wt", permissionMode: "acceptEdits", resume: S });
+  expect(calls.prompts).toEqual(["Continue where you left off."]);
+  expect(events[0]).toMatchObject({ type: "session_init", external_session_id: S });
+});
+
+test("a new session starts the query without resuming anything", async () => {
+  const stdin = lines();
+  const { query, calls } = fakeQuery(() => []);
+  const done = drive({
+    config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null },
+    commands: stdin,
+    emit: () => {},
+    query,
+  });
+
+  stdin.push({ type: "send_text", text: "hi" });
+  stdin.close();
+  await done;
+
+  expect(calls.options.resume).toBeUndefined();
+});
+
+test("a session that never got a command ends without starting the CLI", async () => {
+  const stdin = lines();
+  const { query, calls } = fakeQuery(() => []);
+  const done = drive({
+    config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null },
+    commands: stdin,
+    emit: () => {},
+    query,
+  });
+
+  stdin.close();
+  await done;
+
+  expect(calls.options).toBeUndefined();
 });
 
 test("a query that throws ends with a fatal error", async () => {
@@ -166,11 +222,11 @@ test("a command the adapter cannot carry out is reported, not fatal", async () =
     query,
   });
 
-  stdin.push({ type: "resume", external_session_id: "x" });
+  stdin.push({ type: "answer_request", request_id: "nope", verdict: { decision: "allow_once" } });
   stdin.close();
   await done;
 
-  expect(events).toContainEqual({ type: "error", message: "resume is not supported yet", fatal: false });
+  expect(events).toContainEqual({ type: "error", message: "no pending request nope", fatal: false });
 });
 
 test("with a record directory it writes a replayable fixture of the run", async () => {

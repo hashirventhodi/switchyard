@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.1.0",
+  "description": "Resume by id after a relaunch: the host's first command is resume with the CLI's session id (the query starts with options.resume), then a continue prompt; the CLI re-reports the same session and running totals that include the earlier run. Synthesised from the Agent SDK 0.3.300 message types, not captured from a live run."
+}

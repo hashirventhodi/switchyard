@@ -56,3 +56,9 @@ test("answering an unknown request is an adapter error", () => {
     "no pending request nope",
   );
 });
+
+test("resume by the CLI's session id becomes a resume op", () => {
+  expect(new ClaudeTranslator().command({ type: "resume", external_session_id: "sess-9" })).toEqual([
+    { op: "resume", session_id: "sess-9" },
+  ]);
+});
