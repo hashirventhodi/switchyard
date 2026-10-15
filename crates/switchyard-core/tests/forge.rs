@@ -373,7 +373,7 @@ fn polling_backs_off_while_nothing_changes_and_speeds_up_on_a_change() {
 }
 
 #[test]
-fn polling_stops_when_the_pull_request_closes() {
+fn a_closed_pull_request_is_still_polled_now_and_then_and_a_reopen_is_seen() {
     let mut r = with_remote();
     open_pr(&mut r.core, &r.wt);
     r.core.gh.set_state("feat/login", "CLOSED");
@@ -381,9 +381,26 @@ fn polling_stops_when_the_pull_request_closes() {
     assert_eq!(changed(&events, &r.wt), vec![Some(PullRequest { state: PullRequestState::Closed, ..open_at(421) })]);
     assert!(merged(&events).is_empty());
     assert!(r.wt.exists(), "a closed pull request removes nothing");
-    assert_eq!(polled_on(&mut r.core, 20), Vec::<u32>::new());
+    // Rarely: every CLOSED_TICKS ticks.
+    let every = switchyard_core::forge::CLOSED_TICKS;
+    assert_eq!(polled_on(&mut r.core, every * 2), vec![every, every * 2]);
 
-    // Opening another starts polling again.
+    // Reopened in the browser: seen on the next of those polls, then polled as usual.
+    r.core.gh.set_state("feat/login", "OPEN");
+    let mut events = Vec::new();
+    for _ in 0..every {
+        events.extend(r.core.poll_forge());
+    }
+    assert_eq!(changed(&events, &r.wt), vec![Some(open_at(421))]);
+    assert_eq!(polled_on(&mut r.core, 1), vec![1]);
+}
+
+#[test]
+fn opening_another_pull_request_after_one_closed_polls_it_at_once() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+    r.core.gh.set_state("feat/login", "CLOSED");
+    r.core.poll_forge();
     let events = open_pr(&mut r.core, &r.wt);
     assert!(events.iter().any(|e| matches!(e, Event::PullRequestOpened { pull_request, .. } if pull_request.number == 422)));
     assert_eq!(polled_on(&mut r.core, 1), vec![1]);
@@ -477,6 +494,53 @@ fn a_merged_worktree_with_uncommitted_files_or_an_agent_at_work_is_kept() {
     assert!(other.exists());
     assert!(merged(&events).iter().any(|e| matches!(e,
         Event::BranchMerged { kept: Some(k), .. } if k == "feat/busy has a Running session; stop it before removing the worktree")));
+}
+
+#[test]
+fn a_merged_worktree_kept_for_its_files_is_cleaned_up_once_they_are_committed() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+    std::fs::write(r.wt.join("scratch.txt"), "notes").unwrap();
+    r.core.gh.set_state("feat/login", "MERGED");
+    let events = r.core.poll_forge();
+    assert!(merged(&events).iter().any(|e| matches!(e, Event::BranchMerged { removed: false, .. })));
+    let lists = r.core.gh.calls_of(["pr", "list"]);
+
+    // Still dirty: kept, quietly, tick after tick.
+    let events = r.core.poll_forge();
+    assert!(merged(&events).is_empty());
+    assert!(r.wt.exists());
+
+    std::fs::remove_file(r.wt.join("scratch.txt")).unwrap();
+    let events = r.core.poll_forge();
+    assert!(!r.wt.exists(), "removed once clean");
+    assert_eq!(
+        merged(&events),
+        vec![Event::BranchMerged {
+            repository_id: r.repo_id.clone(),
+            worktree_path: path(&r.wt),
+            branch: "feat/login".into(),
+            base: "main".into(),
+            pull_request: Some(421),
+            removed: true,
+            kept: None,
+        }]
+    );
+    assert_eq!(r.core.gh.calls_of(["pr", "list"]), lists, "a merged pull request is not asked about again");
+}
+
+#[test]
+fn a_merged_worktree_kept_for_its_session_is_cleaned_up_when_the_session_stops() {
+    let mut r = with_remote();
+    let session = harness::started_session(&r.core.start_session(&r.wt, "Polish."));
+    open_pr(&mut r.core, &r.wt);
+    r.core.gh.set_state("feat/login", "MERGED");
+    let events = r.core.poll_forge();
+    assert!(merged(&events).iter().any(|e| matches!(e, Event::BranchMerged { removed: false, .. })));
+
+    r.core.send(Command::StopSession { session_id: session });
+    let events = r.core.poll_forge();
+    assert!(removed(&events, &r.wt), "{events:#?}");
 }
 
 #[test]

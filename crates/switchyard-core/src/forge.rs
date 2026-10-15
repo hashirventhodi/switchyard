@@ -1,8 +1,10 @@
 //! The Forge (ADR-0003): work leaves a worktree through a pull request. Open pull request
 //! pushes the branch and opens one; every worktree branch of a Repository with a remote is
-//! then polled on the Forge until its pull request closes or is Merged, whether or not it
-//! was opened from Switchyard. Merged cleans the worktree up (removed, shells closed,
-//! Session archived). Prune merged does the same for every free, clean, Merged worktree,
+//! then polled on the Forge until its pull request is Merged, whether or not it was opened
+//! from Switchyard (a closed one only every [`CLOSED_TICKS`], so a reopen is still seen).
+//! Merged cleans the worktree up (removed, shells closed, Session archived); a worktree
+//! kept because an agent is at work or files are uncommitted is cleaned up on the first
+//! tick after that is no longer so. Prune merged does the same for every free, clean, Merged worktree,
 //! and Local merge stands in for all of it in a Repository with no remote.
 //!
 //! Polling is ticked from outside ([`crate::Core::poll_forge`]; the app ticks every
@@ -88,6 +90,10 @@ impl Forge for NoForge {
 /// The most ticks between two polls of one worktree.
 pub const MAX_TICKS: u32 = 8;
 
+/// Ticks between polls of a closed pull request: rare, but a reopen (or a new one opened
+/// outside Switchyard) is still seen.
+pub const CLOSED_TICKS: u32 = 32;
+
 #[derive(Default)]
 pub(crate) struct Tracker {
     setup: Option<ForgeSetup>,
@@ -103,19 +109,35 @@ struct Track {
     /// Ticks between polls now, and ticks left until the next one.
     every: u32,
     wait: u32,
-    /// The pull request closed or merged: no more polling until one is opened again.
-    stopped: bool,
+    /// Merged, but the worktree was kept (an agent at work, uncommitted files): the Forge
+    /// is not asked again; each tick tries the cleanup again until it succeeds.
+    cleanup: Option<Cleanup>,
+}
+
+/// A Merged worktree waiting to be cleaned up.
+struct Cleanup {
+    repository_id: String,
+    branch: String,
+    base: String,
+    pull_request: Option<u32>,
 }
 
 impl Default for Track {
     fn default() -> Self {
-        Track { pull_request: None, every: 1, wait: 0, stopped: false }
+        Track { pull_request: None, every: 1, wait: 0, cleanup: None }
     }
 }
 
 impl Track {
     fn polled(&mut self, changed: bool) {
-        self.every = if changed { 1 } else { (self.every * 2).min(MAX_TICKS) };
+        let closed = self.pull_request.as_ref().is_some_and(|p| p.pull_request.state == PullRequestState::Closed);
+        self.every = if closed {
+            CLOSED_TICKS
+        } else if changed {
+            1
+        } else {
+            (self.every * 2).min(MAX_TICKS)
+        };
         self.wait = self.every - 1;
     }
 }
@@ -378,6 +400,7 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
         })
         .collect();
     let mut inner = core.lock().expect("core lock");
+    retry_cleanups(&mut inner);
     for (d, found) in results {
         polled(&mut inner, d, found);
     }
@@ -411,7 +434,7 @@ fn due(inner: &mut Inner, candidates: Vec<Candidate>) -> Vec<Due> {
         let key = c.path.to_string_lossy().into_owned();
         seen.insert(key.clone());
         let track = inner.forge.tracks.entry(key).or_default();
-        if track.stopped {
+        if track.cleanup.is_some() {
             continue;
         }
         if track.wait > 0 {
@@ -441,27 +464,45 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
     };
     let before = track.pull_request.as_ref().map(|p| &p.pull_request);
     let changed = before != found.as_ref().map(|p| &p.pull_request);
-    track.polled(changed);
     track.pull_request = found.clone();
+    track.polled(changed);
     if !changed {
         return;
     }
     let pull_request = found.as_ref().map(|f| f.pull_request.clone());
     inner.emit(Event::PullRequestChanged { worktree_path: key.clone(), pull_request: pull_request.clone() });
     match pull_request.map(|p| (p.state, p.number, p.url)) {
-        Some((PullRequestState::Closed, ..)) => track_mut(inner, &key).stopped = true,
-        Some((PullRequestState::Merged, number, url)) => {
-            track_mut(inner, &key).stopped = true;
-            merged(inner, &due, Some((number, &url)));
-        }
+        Some((PullRequestState::Merged, number, url)) => merged(inner, &due, Some((number, &url))),
         // Opened outside Switchyard, or seen again after a relaunch.
         Some((PullRequestState::Open, ..)) => tasks::pull_request_open(inner, &key, &due.branch),
         _ => {}
     }
 }
 
-fn track_mut<'a>(inner: &'a mut Inner, key: &str) -> &'a mut Track {
-    inner.forge.tracks.entry(key.to_string()).or_default()
+/// Each tick: try again to clean up every Merged worktree that was kept, now that its
+/// session may have stopped or its files been committed. Quiet until it succeeds.
+fn retry_cleanups(inner: &mut Inner) {
+    let waiting: Vec<String> =
+        inner.forge.tracks.iter().filter(|(_, t)| t.cleanup.is_some()).map(|(path, _)| path.clone()).collect();
+    for path in waiting {
+        let Some(cleanup) = inner.forge.tracks.get_mut(&path).and_then(|t| t.cleanup.take()) else { continue };
+        match worktrees::try_remove(inner, &path) {
+            Ok(()) => inner.emit(Event::BranchMerged {
+                repository_id: cleanup.repository_id,
+                worktree_path: path,
+                branch: cleanup.branch,
+                base: cleanup.base,
+                pull_request: cleanup.pull_request,
+                removed: true,
+                kept: None,
+            }),
+            Err(_) => {
+                if let Some(track) = inner.forge.tracks.get_mut(&path) {
+                    track.cleanup = Some(cleanup);
+                }
+            }
+        }
+    }
 }
 
 /// The branch is in base: clean the worktree up if it is free and clean, and say so.
@@ -471,6 +512,14 @@ fn merged(inner: &mut Inner, due: &Due, pull_request: Option<(u32, &str)>) {
     let path = due.path.to_string_lossy().into_owned();
     tasks::merged(inner, &path, &due.branch, pull_request.map(|p| p.1));
     let result = worktrees::try_remove(inner, &path);
+    if result.is_err() {
+        inner.forge.tracks.entry(path.clone()).or_default().cleanup = Some(Cleanup {
+            repository_id: due.repository_id.clone(),
+            branch: due.branch.clone(),
+            base: due.base.clone(),
+            pull_request: pull_request.map(|p| p.0),
+        });
+    }
     inner.emit(Event::BranchMerged {
         repository_id: due.repository_id.clone(),
         worktree_path: path,
