@@ -52,8 +52,18 @@ base: string, commits: Array<Commit>, } | { "type": "mcpServersChanged", reposit
 /**
  * Why `.mcp.json` could not be read, when it could not.
  */
-error: string | null, } | { "type": "rebaseStopped", worktreePath: string, base: string, conflicts: Array<string>, } | { "type": "contextRead", worktreePath: string, files: Array<ContextFile>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
+error: string | null, } | { "type": "rebaseStopped", worktreePath: string, base: string, conflicts: Array<string>, } | { "type": "contextRead", worktreePath: string, files: Array<ContextFile>, } | { "type": "policyChanged", repositoryId: string, policy: Policy, } | { "type": "forgeChecked", forge: ForgeSetup, } | { "type": "pullRequestChanged", worktreePath: string, pullRequest: PullRequest | null, 
+/**
+ * When the Forge was last asked about it, in milliseconds since the Unix epoch:
+ * the renderer shows "checked N s ago" from it.
+ */
+checkedAtMs: number, } | { "type": "pullRequestOpened", worktreePath: string, pullRequest: PullRequest, } | { "type": "branchMerged", repositoryId: string, worktreePath: string, branch: string, base: string, 
 /**
  * The pull request's number; `null` for a Local merge.
  */
-pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, } | { "type": "tasksChanged", repositoryId: string, tasks: Array<Task>, houseRules: string, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, };
+pullRequest: number | null, removed: boolean, kept: string | null, } | { "type": "mergedPruned", repositoryId: string, branches: Array<string>, } | { "type": "tasksChanged", repositoryId: string, tasks: Array<Task>, houseRules: string, 
+/**
+ * When the GitHub issues were last read from the Forge, in milliseconds since the
+ * Unix epoch; `null` when they never were (no remote, or never synced).
+ */
+checkedAtMs: number | null, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, };

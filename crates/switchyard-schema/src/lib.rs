@@ -885,6 +885,11 @@ pub enum Event {
         #[serde(rename = "pullRequest")]
         #[ts(rename = "pullRequest")]
         pull_request: Option<PullRequest>,
+        /// When the Forge was last asked about it, in milliseconds since the Unix epoch:
+        /// the renderer shows "checked N s ago" from it.
+        #[serde(rename = "checkedAtMs")]
+        #[ts(rename = "checkedAtMs", type = "number")]
+        checked_at_ms: u64,
     },
     /// A pull request was opened from Switchyard for the worktree's branch.
     PullRequestOpened {
@@ -931,6 +936,11 @@ pub enum Event {
         #[serde(rename = "houseRules")]
         #[ts(rename = "houseRules")]
         house_rules: String,
+        /// When the GitHub issues were last read from the Forge, in milliseconds since the
+        /// Unix epoch; `null` when they never were (no remote, or never synced).
+        #[serde(rename = "checkedAtMs")]
+        #[ts(rename = "checkedAtMs", type = "number | null")]
+        checked_at_ms: Option<u64>,
     },
     /// The user added a local Task.
     TaskCreated { task: Task },

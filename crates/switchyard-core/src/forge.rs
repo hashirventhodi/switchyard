@@ -108,10 +108,34 @@ pub(crate) struct Tracker {
     /// Worktrees whose pull request is being opened right now (the push and `gh` run
     /// without holding the core).
     opening: HashSet<String>,
+    /// GitHub issues, by repository id: of repositories with a remote that were synced.
+    issues: HashMap<String, Schedule>,
+}
+
+/// When a GitHub issues source is next read: the same back-off as a pull request's.
+struct Schedule {
+    /// Ticks between polls now, and ticks left until the next one.
+    every: u32,
+    wait: u32,
+}
+
+impl Default for Schedule {
+    fn default() -> Self {
+        Schedule { every: 1, wait: 0 }
+    }
+}
+
+impl Schedule {
+    fn polled(&mut self, changed: bool) {
+        self.every = if changed { 1 } else { (self.every * 2).min(MAX_TICKS) };
+        self.wait = self.every - 1;
+    }
 }
 
 struct Track {
     pull_request: Option<ForgePullRequest>,
+    /// When the Forge was last asked about it (ms since the Unix epoch).
+    checked_at_ms: u64,
     /// Ticks between polls now, and ticks left until the next one.
     every: u32,
     wait: u32,
@@ -130,7 +154,7 @@ struct Cleanup {
 
 impl Default for Track {
     fn default() -> Self {
-        Track { pull_request: None, every: 1, wait: 0, cleanup: None }
+        Track { pull_request: None, checked_at_ms: 0, every: 1, wait: 0, cleanup: None }
     }
 }
 
@@ -164,11 +188,11 @@ pub(crate) fn replay_pull_requests(inner: &Inner) {
         .forge
         .tracks
         .iter()
-        .filter_map(|(path, t)| t.pull_request.as_ref().map(|p| (path.clone(), p.pull_request.clone())))
+        .filter_map(|(path, t)| t.pull_request.as_ref().map(|p| (path.clone(), p.pull_request.clone(), t.checked_at_ms)))
         .collect();
     known.sort_by(|a, b| a.0.cmp(&b.0));
-    for (worktree_path, pull_request) in known {
-        inner.emit(Event::PullRequestChanged { worktree_path, pull_request: Some(pull_request) });
+    for (worktree_path, pull_request, checked_at_ms) in known {
+        inner.emit(Event::PullRequestChanged { worktree_path, pull_request: Some(pull_request), checked_at_ms });
     }
 }
 
@@ -232,6 +256,18 @@ pub(crate) fn has_open_pull_request(inner: &Inner, path: &str) -> bool {
         .get(path)
         .and_then(|t| t.pull_request.as_ref())
         .is_some_and(|p| p.pull_request.state == PullRequestState::Open)
+}
+
+/// The repository's GitHub issues were just synced: poll them from now on, starting afresh
+/// (every tick, backing off while nothing changes).
+pub(crate) fn issues_synced(inner: &mut Inner, repository_id: &str) {
+    inner.forge.issues.insert(repository_id.to_string(), Schedule::default());
+}
+
+/// The repository's GitHub issues were read again (`changed`: they differ from last time),
+/// or could not be (`false`).
+pub(crate) fn issues_polled(inner: &mut Inner, repository_id: &str, changed: bool) {
+    inner.forge.issues.entry(repository_id.to_string()).or_default().polled(changed);
 }
 
 /// The worktree at `path` is gone: stop polling it.
@@ -309,9 +345,15 @@ pub(crate) fn open_pull_request(core: &Arc<Mutex<Inner>>, worktree_path: &str) {
     match opened {
         Ok(opened) => {
             let pull_request = opened.pull_request.clone();
-            inner.forge.tracks.insert(worktree_path.to_string(), Track { pull_request: Some(opened), ..Track::default() });
+            let checked_at_ms = (inner.runtime.now_ms)();
+            let track = Track { pull_request: Some(opened), checked_at_ms, ..Track::default() };
+            inner.forge.tracks.insert(worktree_path.to_string(), track);
             inner.emit(Event::PullRequestOpened { worktree_path: worktree_path.into(), pull_request: pull_request.clone() });
-            inner.emit(Event::PullRequestChanged { worktree_path: worktree_path.into(), pull_request: Some(pull_request) });
+            inner.emit(Event::PullRequestChanged {
+                worktree_path: worktree_path.into(),
+                pull_request: Some(pull_request),
+                checked_at_ms,
+            });
             tasks::pull_request_open(&inner, Some(OPEN_PULL_REQUEST), worktree_path, &opening.branch);
         }
         Err(reason) => inner.refuse(OPEN_PULL_REQUEST, reason),
@@ -421,7 +463,12 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
         (inner.runtime.forge.clone(), inner.store.repositories().unwrap_or_default())
     };
     let candidates = candidates(&repos);
-    let due = due(&mut core.lock().expect("core lock"), candidates);
+    let remoted: Vec<String> =
+        repos.iter().filter(|r| git::remote(Path::new(&r.path)).is_some()).map(|r| r.id.clone()).collect();
+    let (due, issues_due) = {
+        let mut inner = core.lock().expect("core lock");
+        (due(&mut inner, candidates), issues_due(&mut inner, remoted))
+    };
     let results: Vec<_> = due
         .into_iter()
         .map(|d| {
@@ -440,11 +487,36 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
     }
     sessions::flush(&mut inner);
     drop(inner);
-    // A merge closes the issues its pull request named, on GitHub: read them again so
-    // Done shows (Switchyard never closes them itself).
+    // Issues whose turn it is, and those of a repository where a merge closed the issues its
+    // pull request named, on GitHub: read them again so Done shows (Switchyard never closes
+    // them itself).
+    let mut read = issues_due;
     for repository_id in merged_in {
+        if !read.contains(&repository_id) {
+            read.push(repository_id);
+        }
+    }
+    for repository_id in read {
         tasks::refresh_issues(core, &repository_id);
     }
+}
+
+/// The repositories (of those with a remote) whose GitHub issues are to be read on this
+/// tick; counts down the others. Only repositories synced once are polled; forgets those
+/// that are gone.
+fn issues_due(inner: &mut Inner, remoted: Vec<String>) -> Vec<String> {
+    let synced: Vec<String> = remoted.into_iter().filter(|id| tasks::issues_synced(inner, id)).collect();
+    inner.forge.issues.retain(|id, _| synced.contains(id));
+    let mut list = Vec::new();
+    for id in synced {
+        let schedule = inner.forge.issues.entry(id.clone()).or_default();
+        if schedule.wait > 0 {
+            schedule.wait -= 1;
+            continue;
+        }
+        list.push(id);
+    }
+    list
 }
 
 /// Every branch worktree of every repository with a remote (runs git; hold nothing).
@@ -506,13 +578,19 @@ fn polled(inner: &mut Inner, due: Due, found: Result<Option<ForgePullRequest>, S
     };
     let before = track.pull_request.as_ref().map(|p| &p.pull_request);
     let changed = before != found.as_ref().map(|p| &p.pull_request);
+    let checked_at_ms = (inner.runtime.now_ms)();
     track.pull_request = found.clone();
+    track.checked_at_ms = checked_at_ms;
     track.polled(changed);
+    let pull_request = found.as_ref().map(|f| f.pull_request.clone());
     if !changed {
+        // The same as before, but checked again just now: the card says so.
+        if let Some(pull_request) = pull_request {
+            inner.emit(Event::PullRequestChanged { worktree_path: key, pull_request: Some(pull_request), checked_at_ms });
+        }
         return false;
     }
-    let pull_request = found.as_ref().map(|f| f.pull_request.clone());
-    inner.emit(Event::PullRequestChanged { worktree_path: key.clone(), pull_request: pull_request.clone() });
+    inner.emit(Event::PullRequestChanged { worktree_path: key.clone(), pull_request: pull_request.clone(), checked_at_ms });
     match pull_request.map(|p| (p.state, p.number, p.url)) {
         Some((PullRequestState::Merged, number, url)) => {
             merged(inner, None, &due, Some((number, &url)));

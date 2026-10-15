@@ -10,7 +10,7 @@ mod harness;
 use std::path::{Path, PathBuf};
 
 use harness::gh::gh_issue;
-use harness::{added_repository, git, Harness, TempRepo};
+use harness::{added_repository, git, Harness, TempRepo, NOW_MS};
 use serde_json::json;
 use switchyard_schema::{
     Command, Event, ForgeSetupState, PermissionMode, AgentKind, Task, TaskColumn, TaskKind, TaskSessionTarget,
@@ -302,4 +302,95 @@ fn a_worktree_branch_named_like_an_issue_does_not_link_it() {
     t.repo.add_worktree("412-login-timeout");
     assert_eq!(t.issue("#412").column, TaskColumn::Todo);
     assert_eq!(t.writes(), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn once_synced_a_new_issue_on_github_appears_after_a_forge_tick() {
+    let mut t = tracker();
+    t.sync();
+    t.core.gh.set_issues(json!([
+        gh_issue(413, "Signup is slow", "", "OPEN", &[]),
+        gh_issue(412, "Login times out", "", "OPEN", &["bug"]),
+        gh_issue(7, "Old thing", "", "CLOSED", &[]),
+    ]));
+    let events = t.core.poll_forge();
+    let tasks = tasks_in(&events, &t.repo_id);
+    assert_eq!(by_key(&tasks, "#413").column, TaskColumn::Todo);
+    assert_eq!(tasks.len(), 4, "{tasks:#?}");
+}
+
+/// The `checkedAtMs` of the last task list emitted for the repository.
+fn checked_in(events: &[Event], repo_id: &str) -> Option<u64> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::TasksChanged { repository_id, checked_at_ms, .. } if repository_id == repo_id => Some(*checked_at_ms),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected TasksChanged for {repo_id} in {events:#?}"))
+}
+
+#[test]
+fn the_task_list_says_when_the_issues_were_last_checked() {
+    let mut t = tracker();
+    let events = t.core.send(Command::ReadTasks { repository_id: t.repo_id.clone() });
+    assert_eq!(checked_in(&events, &t.repo_id), None, "never synced");
+    assert_eq!(checked_in(&t.sync(), &t.repo_id), Some(NOW_MS));
+
+    // Read again by the poller, later.
+    let core = std::mem::replace(&mut t.core, Harness::launch()).relaunch_at(|| NOW_MS + 15_000);
+    t.core = core;
+    t.core.send(Command::Attach);
+    let events = t.core.send(Command::ReadTasks { repository_id: t.repo_id.clone() });
+    assert_eq!(checked_in(&events, &t.repo_id), Some(NOW_MS), "kept across a relaunch");
+    assert_eq!(checked_in(&t.core.poll_forge(), &t.repo_id), Some(NOW_MS + 15_000));
+}
+
+/// The ticks (1-based) on which `issue list` ran, over `ticks` ticks.
+fn issues_polled_on(core: &mut Harness, ticks: u32) -> Vec<u32> {
+    let mut on = Vec::new();
+    for tick in 1..=ticks {
+        let before = core.gh.calls_of(["issue", "list"]);
+        core.poll_forge();
+        if core.gh.calls_of(["issue", "list"]) > before {
+            on.push(tick);
+        }
+    }
+    on
+}
+
+#[test]
+fn issue_polling_backs_off_while_nothing_changes_and_speeds_up_on_a_change() {
+    let mut t = tracker();
+    t.sync();
+    // 1, then every 2, 4, 8 ticks, never further apart than 8.
+    assert_eq!(issues_polled_on(&mut t.core, 32), vec![1, 3, 7, 15, 23, 31]);
+
+    t.core.gh.set_issues(json!([gh_issue(412, "Login times out", "", "CLOSED", &["bug"])]));
+    // Next due on tick 39 (8 after 31), the 7th of these; it sees the change, so the next
+    // poll is on the next tick, then they back off again.
+    assert_eq!(issues_polled_on(&mut t.core, 12), vec![7, 8, 10]);
+}
+
+#[test]
+fn sync_now_reads_at_once_and_resets_the_back_off() {
+    let mut t = tracker();
+    t.sync();
+    assert_eq!(issues_polled_on(&mut t.core, 8), vec![1, 3, 7]);
+    let before = t.core.gh.calls_of(["issue", "list"]);
+    t.sync();
+    assert_eq!(t.core.gh.calls_of(["issue", "list"]), before + 1, "Sync now reads at once");
+    assert_eq!(issues_polled_on(&mut t.core, 8), vec![1, 3, 7], "and polls from every tick again");
+}
+
+#[test]
+fn a_repository_never_synced_is_left_alone_by_the_poller() {
+    let mut t = tracker();
+    assert_eq!(issues_polled_on(&mut t.core, 16), Vec::<u32>::new());
+
+    // A sync that found no issues still counts as synced.
+    t.core.gh.set_issues(json!([]));
+    t.sync();
+    assert_eq!(issues_polled_on(&mut t.core, 3), vec![1, 3]);
 }

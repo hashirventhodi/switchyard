@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { App } from "../App";
 import type { Event } from "../schema/Event";
 import type { Repository } from "../schema/Repository";
@@ -30,11 +30,12 @@ const task = (change: Partial<Task> = {}): Task => ({
   url: null,
   ...change,
 });
-const board = (tasks: Task[]): Event => ({
+const board = (tasks: Task[], checkedAtMs: number | null = null): Event => ({
   type: "tasksChanged",
   repositoryId: "repo-1",
   tasks,
   houseRules: "Write a failing test first.",
+  checkedAtMs,
 });
 const running: Session = {
   id: "session-1",
@@ -66,7 +67,7 @@ test("Sync pulls GitHub Issues for repositories with a remote; issue cards carry
   const offline: Repository = { id: "repo-2", name: "notes", path: "/src/notes", baseBranch: "main", remote: null };
   const { sent, emit } = launch([{ type: "repositoryAdded", repository: offline }]);
   openTasks();
-  fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
   expect(sent).toContainEqual({ type: "syncTasks", repositoryId: "repo-1" });
   expect(sent).not.toContainEqual({ type: "syncTasks", repositoryId: "repo-2" });
   act(() =>
@@ -104,7 +105,7 @@ test("Sync shows the gh setup state when GitHub cannot be reached, and is off wi
   render(<App core={fake.core} pickFolder={async () => null} />);
   act(() => fake.emit({ type: "attached" }, { type: "repositoryAdded", repository: { ...acme, remote: null } }));
   openTasks();
-  expect((screen.getByRole("button", { name: "Sync" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Sync now" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 test("the Tasks view reads every repository's tasks into four columns", () => {
@@ -241,4 +242,26 @@ test("Pick one opens Tasks to link a task to the session; changing it is an expl
     taskId: "repo-1/local/L-1",
     relink: true,
   });
+});
+
+test("the Tasks view header says how long ago GitHub Issues were checked, and Sync now syncs at once", () => {
+  const NOW = 1_760_000_000_000;
+  vi.useFakeTimers({ now: NOW });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  const { sent, emit } = launch([board([task()])]);
+  openTasks();
+  const head = () => screen.getByRole("heading", { name: "Tasks" }).closest(".pagehead")! as HTMLElement;
+  // Never synced: no freshness.
+  expect(head().textContent).not.toContain("checked");
+
+  act(() => emit(board([task()], NOW - 3_000)));
+  expect(head().textContent).toContain("checked 3 s ago");
+  act(() => vi.advanceTimersByTime(30_000));
+  expect(head().textContent).toContain("checked 33 s ago");
+
+  fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+  expect(sent).toContainEqual({ type: "syncTasks", repositoryId: "repo-1" });
+  expect(screen.getAllByText(/checked \d+ s ago/)).toHaveLength(1);
 });

@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS github_issues (
     issue         TEXT NOT NULL,
     PRIMARY KEY (repository_id, number)
 );
+CREATE TABLE IF NOT EXISTS github_checked (
+    repository_id TEXT PRIMARY KEY,
+    checked_at_ms INTEGER NOT NULL
+);
 ";
 
 pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
@@ -47,9 +51,33 @@ pub(crate) fn save(db: &Connection, repository_id: &str, issues: &[ForgeIssue]) 
     write().map_err(|e| format!("could not keep the issues: {e}"))
 }
 
-/// Whether the repository's issues were ever synced.
+/// Whether the repository's issues were ever synced (a sync that found none counts).
 pub(crate) fn synced(db: &Connection, repository_id: &str) -> bool {
-    !load(db, repository_id).is_empty()
+    checked_at(db, repository_id).is_some() || !load(db, repository_id).is_empty()
+}
+
+/// The issues were read from the Forge at `at_ms`.
+pub(crate) fn checked(db: &Connection, repository_id: &str, at_ms: u64) -> Result<(), String> {
+    db.execute(
+        "INSERT OR REPLACE INTO github_checked (repository_id, checked_at_ms) VALUES (?1, ?2)",
+        params![repository_id, at_ms as i64],
+    )
+    .map(|_| ())
+    .map_err(|e| format!("could not keep the issues: {e}"))
+}
+
+/// When the issues were last read from the Forge, if ever.
+pub(crate) fn checked_at(db: &Connection, repository_id: &str) -> Option<u64> {
+    db.query_row("SELECT checked_at_ms FROM github_checked WHERE repository_id = ?1", params![repository_id], |r| {
+        r.get::<_, i64>(0)
+    })
+    .ok()
+    .map(|ms| ms as u64)
+}
+
+/// Do `issues` differ from what the last sync saw?
+pub(crate) fn differ(db: &Connection, repository_id: &str, issues: &[ForgeIssue]) -> bool {
+    load(db, repository_id) != issues
 }
 
 fn load(db: &Connection, repository_id: &str) -> Vec<ForgeIssue> {

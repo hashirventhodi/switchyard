@@ -99,10 +99,14 @@ export interface State {
   forge: ForgeSetup | null;
   /** The pull request for each worktree's branch, by worktree path, as last polled. */
   pullRequests: Record<string, PullRequest>;
+  /** When the Forge was last asked about each worktree's pull request (ms), by worktree path. */
+  pullRequestChecked: Record<string, number>;
   /** Each Repository's Tasks from every source, by repository id, as last read. */
   tasks: Record<string, Task[]>;
   /** The house rules a task's prompt carries, by repository id. */
   houseRules: Record<string, string>;
+  /** When each Repository's GitHub Issues were last read (ms); null when never, by id. */
+  tasksChecked: Record<string, number | null>;
   /** The Task each Session (live or archived) is linked to, by session id. */
   taskLinks: Record<string, string>;
   /** Each Repository's declared MCP servers (its .mcp.json) and which are enabled, by id. */
@@ -193,8 +197,10 @@ export const initialState: State = {
   settings: null,
   forge: null,
   pullRequests: {},
+  pullRequestChecked: {},
   tasks: {},
   houseRules: {},
+  tasksChecked: {},
   taskLinks: {},
   conflicts: {},
   activity: [],
@@ -413,7 +419,8 @@ export function reduce(state: State, event: Event): State {
     case "pullRequestChanged": {
       const { [event.worktreePath]: _old, ...others } = state.pullRequests;
       const pullRequests = event.pullRequest ? { ...others, [event.worktreePath]: event.pullRequest } : others;
-      return { ...state, pullRequests };
+      const pullRequestChecked = { ...state.pullRequestChecked, [event.worktreePath]: event.checkedAtMs };
+      return { ...state, pullRequests, pullRequestChecked };
     }
     case "pullRequestOpened": {
       const branch = branchAt(state, event.worktreePath);
@@ -448,6 +455,7 @@ export function reduce(state: State, event: Event): State {
         ...state,
         tasks: { ...state.tasks, [event.repositoryId]: event.tasks },
         houseRules: { ...state.houseRules, [event.repositoryId]: event.houseRules },
+        tasksChecked: { ...state.tasksChecked, [event.repositoryId]: event.checkedAtMs },
       };
     case "taskCreated":
       return resultToast(state, `Added ${event.task.key} to To do`, "ok");

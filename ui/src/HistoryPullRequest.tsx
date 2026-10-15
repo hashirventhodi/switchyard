@@ -1,6 +1,7 @@
 // History's pull request: number, state and every check the Forge reports, beneath the
 // commits. Read from `state.pullRequests` (the core polls the Forge); nothing when the
 // branch has no pull request.
+import { CheckedAgo } from "./CheckedAgo";
 import type { CheckStatus } from "./schema/CheckStatus";
 import type { OpenLink } from "./Setup";
 import { prSubstate } from "./PullRequest";
@@ -24,10 +25,12 @@ const STATUS_MARK: Record<CheckStatus, string> = {
 export function HistoryPullRequest({ state, worktreePath, openLink }: { state: State; worktreePath: string; openLink: OpenLink }) {
   const pr = state.pullRequests[worktreePath];
   if (!pr) return null;
+  const checked = state.pullRequestChecked[worktreePath];
   return (
     <section className="ctx history-pr" aria-label="Pull request">
       <h4>
         <span>Pull request</span>
+        {checked !== undefined && <CheckedAgo at={checked} />}
       </h4>
       <div className="kv">
         <span className="k">
