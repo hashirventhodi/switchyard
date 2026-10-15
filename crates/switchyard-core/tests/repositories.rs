@@ -38,3 +38,32 @@ fn adding_a_repository_reports_its_base_branch_and_every_worktree() {
         ]
     );
 }
+
+#[test]
+fn a_folder_that_is_not_a_git_repository_is_refused_with_the_reason() {
+    let folder = tempfile::TempDir::new().unwrap();
+    let mut core = Harness::launch();
+
+    let events = core.add_repository(folder.path());
+
+    assert_eq!(events.len(), 1, "{events:#?}");
+    match &events[0] {
+        Event::CommandRefused { command, reason } => {
+            assert_eq!(command, "addRepository");
+            assert!(reason.contains("not a git repository"), "reason: {reason}");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_folder_that_does_not_exist_is_refused() {
+    let mut core = Harness::launch();
+
+    let events = core.add_repository(std::path::Path::new("/definitely/not/here"));
+
+    assert!(
+        matches!(&events[..], [Event::CommandRefused { reason, .. }] if reason.contains("does not exist")),
+        "{events:#?}"
+    );
+}

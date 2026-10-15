@@ -37,8 +37,24 @@ impl Core {
         let _ = self.events.send(event);
     }
 
+    fn refuse(&self, command: &str, reason: String) {
+        self.emit(Event::CommandRefused { command: command.into(), reason });
+    }
+
     fn add_repository(&mut self, path: &str) {
-        let worktrees = git::worktrees(Path::new(path)).unwrap();
+        const COMMAND: &str = "addRepository";
+        let dir = Path::new(path);
+        if !dir.is_dir() {
+            return self.refuse(COMMAND, format!("{path} does not exist or is not a folder"));
+        }
+        if !git::is_inside_repository(dir) {
+            return self.refuse(COMMAND, format!("{path} is not a git repository"));
+        }
+        let worktrees = match git::worktrees(dir) {
+            Ok(list) if !list.is_empty() => list,
+            Ok(_) => return self.refuse(COMMAND, format!("{path} has no worktrees (bare repository)")),
+            Err(git::GitError(e)) => return self.refuse(COMMAND, format!("git could not read {path}: {e}")),
+        };
         let primary = &worktrees[0];
         let repository = Repository {
             id: format!("repo-{}", self.next_id),

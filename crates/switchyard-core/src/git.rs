@@ -27,6 +27,11 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     }
 }
 
+/// True when `dir` is inside a git repository (any of its worktrees).
+pub fn is_inside_repository(dir: &Path) -> bool {
+    git(dir, &["rev-parse", "--git-dir"]).is_ok()
+}
+
 /// Every worktree `git worktree list` reports for the repository containing `dir`,
 /// primary first. Bare entries are skipped.
 pub fn worktrees(dir: &Path) -> Result<Vec<GitWorktree>, GitError> {
