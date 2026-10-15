@@ -86,6 +86,31 @@ fn the_sidecar_is_told_the_resolved_grants_as_cli_rules() {
 }
 
 #[test]
+fn the_sidecar_is_given_the_repositorys_mcp_servers_and_no_config_file_changes() {
+    let repo = TempRepo::new("acme");
+    let mcp_json = r#"{"mcpServers":{"docs":{"type":"http","url":"https://docs.example.com/mcp"}}}"#;
+    std::fs::write(repo.path.join(".mcp.json"), mcp_json).unwrap();
+    std::fs::create_dir_all(repo.path.join(".claude")).unwrap();
+    std::fs::write(repo.path.join(".claude/settings.local.json"), "{\"permissions\":{}}\n").unwrap();
+    let worktree = repo.add_worktree("feat/x");
+    let watched = [repo.path.join(".mcp.json"), repo.path.join(".claude/settings.local.json")];
+    let before: Vec<Vec<u8>> = watched.iter().map(|p| std::fs::read(p).unwrap()).collect();
+    let mut core = Harness::launch_with(fake_sidecar());
+    core.add_repository(&repo.path);
+
+    core.dispatch(start(&worktree));
+    let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+
+    assert!(
+        agent_texts(&events)
+            .contains(&r#"mcp={"docs":{"headers":{},"type":"http","url":"https://docs.example.com/mcp"}}"#.to_string()),
+        "{events:#?}"
+    );
+    let after: Vec<Vec<u8>> = watched.iter().map(|p| std::fs::read(p).unwrap()).collect();
+    assert_eq!(before, after);
+}
+
+#[test]
 fn full_auto_in_a_declared_sandbox_launches_the_sidecar_in_bypass() {
     let repo = TempRepo::new("acme");
     std::fs::create_dir_all(repo.path.join(".switchyard")).unwrap();

@@ -12,6 +12,11 @@ export type RequestDetail =
   | { kind: "mcp_tool"; server: string; tool: string; input: unknown }
   | { kind: "question"; question: string; options: string[] };
 
+export type McpServerState = "connected" | "pending" | "failed" | "needs_auth" | "disabled";
+
+/** An MCP server's connection state; `error` says why a failed one failed. */
+export type McpServerStatus = { name: string; state: McpServerState; error: string | null };
+
 export type ProtocolEvent =
   | {
       type: "session_init";
@@ -20,7 +25,10 @@ export type ProtocolEvent =
       cli_permission_mode: string;
       cli: { name: string; version: string };
       model: string | null;
+      mcp_servers: McpServerStatus[];
     }
+  /** Servers whose state changed since last reported (the others are unchanged). */
+  | { type: "mcp_status"; servers: McpServerStatus[] }
   | { type: "agent_text"; text: string }
   | { type: "tool_call_started"; call_id: string; tool: string; input: unknown }
   | { type: "tool_call_finished"; call_id: string; ok: boolean; output: string | null }

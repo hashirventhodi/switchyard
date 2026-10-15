@@ -827,6 +827,38 @@ pub struct SessionFacts {
     /// Actions the CLI's own classifier refused in Full auto ("3 denied by classifier").
     #[serde(default)]
     pub classifier_denials: u32,
+    /// The MCP servers the CLI was given (the repository's `.mcp.json`, and only those),
+    /// each with its connection state as the CLI last reported it. Shown in Context.
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerFact>,
+}
+
+/// One MCP server a Session's CLI was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpServerFact {
+    pub name: String,
+    /// The transport and what it reaches, without arguments, environment or headers
+    /// (`stdio · npx`, `http · mcp.example.com`).
+    pub transport: String,
+    pub state: McpState,
+    /// Why a failed server failed, when the CLI says.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum McpState {
+    /// Not yet reported by the CLI, or still connecting.
+    Pending,
+    Connected,
+    /// Not connected: it failed to start or to connect.
+    Failed,
+    /// Needs the user to sign in before it connects.
+    NeedsAuth,
+    Disabled,
 }
 
 /// A Session's running spend. Cost is either reported by the CLI or, for a CLI that

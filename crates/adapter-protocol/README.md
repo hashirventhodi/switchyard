@@ -20,7 +20,8 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 
 | `type` | Fields |
 | --- | --- |
-| `session_init` | `external_session_id`, `permission_mode` (the mode the CLI actually started in: `explore` / `ask_first` / `auto_edit` / `full_auto` / `bypass`), `cli_permission_mode` (the CLI's own name for it), `cli: {name, version}`, `model` (when the CLI says) |
+| `session_init` | `external_session_id`, `permission_mode` (the mode the CLI actually started in: `explore` / `ask_first` / `auto_edit` / `full_auto` / `bypass`), `cli_permission_mode` (the CLI's own name for it), `cli: {name, version}`, `model` (when the CLI says), `mcp_servers` (optional: each MCP server the CLI was given, `{name, state, error}`, `state` one of `connected` / `pending` / `failed` / `needs_auth` / `disabled`) |
+| `mcp_status` | `servers`: MCP servers whose state changed since last reported (same shape); unlisted servers are unchanged. An adapter whose CLI reports servers one at a time (Codex `mcpServer/startupStatus/updated`) sends one per change |
 | `agent_text` | `text` |
 | `tool_call_started` | `call_id`, `tool`, `input` (any JSON) |
 | `tool_call_finished` | `call_id`, `ok`, `output` |

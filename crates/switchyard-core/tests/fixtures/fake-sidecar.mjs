@@ -18,6 +18,8 @@ say({
 say({ type: "agent_text", text: `cwd=${process.cwd()}` });
 if (config.allowed_tools?.length || config.disallowed_tools?.length)
   say({ type: "agent_text", text: `allowed=${config.allowed_tools.join(",")} disallowed=${config.disallowed_tools.join(",")}` });
+if (config.mcp_servers && Object.keys(config.mcp_servers).length)
+  say({ type: "agent_text", text: `mcp=${JSON.stringify(config.mcp_servers)}` });
 if (config.allow_bypass) say({ type: "agent_text", text: `mode=${config.permission_mode} allow_bypass` });
 
 for await (const line of createInterface({ input: process.stdin })) {

@@ -23,8 +23,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use adapter_protocol::{McpServerState, McpServerStatus};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use switchyard_schema::{McpServerFact, McpState};
 
 pub const MCP_FILE: &str = ".mcp.json";
 
@@ -160,6 +162,55 @@ pub fn codex_config(servers: &[McpServer]) -> Vec<(String, Value)> {
         }
     }
     out
+}
+
+/// The servers a Session was given, as Context lists them before the CLI reports on them.
+pub(crate) fn facts(servers: &[McpServer]) -> Vec<McpServerFact> {
+    servers
+        .iter()
+        .map(|server| McpServerFact {
+            name: server.name.clone(),
+            transport: server.summary(),
+            state: McpState::Pending,
+            error: None,
+        })
+        .collect()
+}
+
+/// The CLI's report at session init: every server it was given and their states. One it
+/// does not mention never loaded, so it is not connected.
+pub(crate) fn on_init(facts: &mut Vec<McpServerFact>, reported: Vec<McpServerStatus>, cli_name: &str) {
+    for fact in facts.iter_mut() {
+        fact.state = McpState::Failed;
+        fact.error = Some(format!("{cli_name} did not load it"));
+    }
+    on_status(facts, reported);
+}
+
+/// A report on some servers; the others keep their state. A server Switchyard did not
+/// pass (which strict mode should rule out) is listed as reported.
+pub(crate) fn on_status(facts: &mut Vec<McpServerFact>, reported: Vec<McpServerStatus>) {
+    for status in reported {
+        let state = match status.state {
+            McpServerState::Connected => McpState::Connected,
+            McpServerState::Pending => McpState::Pending,
+            McpServerState::Failed => McpState::Failed,
+            McpServerState::NeedsAuth => McpState::NeedsAuth,
+            McpServerState::Disabled => McpState::Disabled,
+        };
+        match facts.iter_mut().find(|f| f.name == status.name) {
+            Some(fact) => {
+                fact.state = state;
+                fact.error = status.error;
+            }
+            None => facts.push(McpServerFact {
+                name: status.name,
+                transport: "not from this repository".into(),
+                state,
+                error: status.error,
+            }),
+        }
+    }
 }
 
 /// A TOML key segment: bare when it can be, quoted otherwise.

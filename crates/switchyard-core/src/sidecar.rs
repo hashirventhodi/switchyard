@@ -6,7 +6,9 @@
 //! The sidecar is started as `<node> <script> --config <json>` in the worktree, where the
 //! config is `{"cwd", "permission_mode" (protocol vocabulary), "claude_path" (or null),
 //! "allowed_tools", "disallowed_tools" (Claude Code permission rules from the resolved
-//! Policy), "allow_bypass" (the repository's policy declares a sandbox)}`.
+//! Policy), "allow_bypass" (the repository's policy declares a sandbox), "mcp_servers" (the
+//! repository's MCP servers as the SDK's `mcpServers` map; the sidecar always runs the CLI
+//! with `--strict-mcp-config`, so these are the only servers it loads)}`.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -42,6 +44,7 @@ impl AgentLauncher for SidecarLauncher {
             "allowed_tools": spec.allowed_tools,
             "disallowed_tools": spec.disallowed_tools,
             "allow_bypass": spec.sandboxed,
+            "mcp_servers": crate::mcp::claude_servers(&spec.mcp_servers),
         });
         let mut child = Command::new(&self.node)
             .arg(&self.script)

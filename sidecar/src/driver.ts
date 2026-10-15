@@ -21,6 +21,8 @@ export interface SidecarConfig {
   disallowed_tools?: string[];
   /** The repository's policy declares a sandbox: the CLI's bypass mode may be used. */
   allow_bypass?: boolean;
+  /** The repository's MCP servers as the SDK's `mcpServers` map: the only ones the CLI loads. */
+  mcp_servers?: Record<string, unknown>;
 }
 
 /** Modes in which dangerous commands always reach the host (everything below Full auto). */
@@ -120,6 +122,11 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
         // CLI's settings files (ADR-0004).
         allowedTools: config.allowed_tools ?? [],
         disallowedTools: config.disallowed_tools ?? [],
+        // The repository's MCP servers, per spawn (`--mcp-config`), and strictly only those
+        // (`--strict-mcp-config`): no user-level or plugin server leaks in, and no CLI config
+        // file is written.
+        mcpServers: config.mcp_servers ?? {},
+        strictMcpConfig: true,
         // Everything that would prompt comes to canUseTool and from there to the user's queue.
         permissionPrompts: "host",
         canUseTool,
@@ -172,7 +179,14 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   const running = await ready;
   if (!running) return;
   try {
-    for await (const message of running) ingest(JSON.stringify(message));
+    for await (const message of running) {
+      ingest(JSON.stringify(message));
+      // Init may report servers still connecting: ask again as messages arrive until they settle.
+      if (translator.mcpPending()) {
+        const servers = await running.mcpServerStatus().catch(() => null);
+        if (servers) ingest(JSON.stringify({ type: "switchyard", subtype: "mcp_status", servers }));
+      }
+    }
     ingest(JSON.stringify({ type: "switchyard", subtype: "query_end" }));
   } catch (e) {
     ingest(JSON.stringify({ type: "switchyard", subtype: "query_error", message: (e as Error)?.message ?? String(e) }));

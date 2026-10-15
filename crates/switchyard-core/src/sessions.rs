@@ -236,7 +236,7 @@ fn begin(
     inner.emit(Event::SessionStarted { session: session.clone() });
     inner.sessions.list.push(SessionState {
         session,
-        facts: SessionFacts::default(),
+        facts: SessionFacts { mcp_servers: mcp::facts(&mcp_servers), ..SessionFacts::default() },
         transcript: Vec::new(),
         tool_calls: HashMap::new(),
         raw_events: Vec::new(),
@@ -378,6 +378,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     state.agent = Some(handle);
     state.process = process;
     state.expected_mode = expected_mode;
+    // A new process: its servers' states come from its own init.
+    state.facts.mcp_servers = mcp::facts(&mcp_servers);
     sent.map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))
 }
 
@@ -563,7 +565,15 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
-            AgentEvent::SessionInit { external_session_id, permission_mode, cli_permission_mode, cli, model, .. } => {
+            AgentEvent::SessionInit {
+                external_session_id,
+                permission_mode,
+                cli_permission_mode,
+                cli,
+                model,
+                mcp_servers,
+            } => {
+                mcp::on_init(&mut state.facts.mcp_servers, mcp_servers, agent_name(state.session.agent));
                 state.facts.mode_warning = (permission_mode != state.expected_mode).then(|| {
                     format!(
                         "Asked for {}, but {} started in {} ({cli_permission_mode})",
@@ -576,6 +586,10 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 state.facts.model = model;
                 state.facts.cli_version = Some(cli.version);
                 state.facts.cli_permission_mode = Some(cli_permission_mode);
+                out.push(facts(state));
+            }
+            AgentEvent::McpStatus { servers } => {
+                mcp::on_status(&mut state.facts.mcp_servers, servers);
                 out.push(facts(state));
             }
             AgentEvent::AgentText { text } => out.push(append(state, Entry::Agent { text })),

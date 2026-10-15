@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use harness::{added_repository, started_session, Harness, TempRepo};
 use switchyard_core::mcp::{McpServer, McpTransport};
-use switchyard_schema::{Command, Event, PermissionMode};
+use adapter_protocol::{CliInfo, Event as AgentEvent, McpServerState, McpServerStatus, PermissionMode as AgentMode};
+use switchyard_schema::{Event, McpServerFact, McpState, PermissionMode};
 
 struct Setup {
     core: Harness,
@@ -64,6 +65,91 @@ fn the_spawn_carries_the_repositorys_servers_and_only_them() {
     let path = s.worktree.clone();
     started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
     assert_eq!(s.core.agents.launches()[0].mcp_servers, vec![docs(), github()]);
+}
+
+fn init(servers: Vec<McpServerStatus>) -> AgentEvent {
+    AgentEvent::SessionInit {
+        external_session_id: "ext-1".into(),
+        permission_mode: AgentMode::AskFirst,
+        cli_permission_mode: "default".into(),
+        cli: CliInfo { name: "claude-code".into(), version: "2.1.300".into() },
+        model: None,
+        mcp_servers: servers,
+    }
+}
+
+fn status(name: &str, state: McpServerState, error: Option<&str>) -> McpServerStatus {
+    McpServerStatus { name: name.into(), state, error: error.map(Into::into) }
+}
+
+fn fact(name: &str, transport: &str, state: McpState, error: Option<&str>) -> McpServerFact {
+    McpServerFact { name: name.into(), transport: transport.into(), state, error: error.map(Into::into) }
+}
+
+fn last_mcp_facts(events: &[Event]) -> Vec<McpServerFact> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::SessionFactsChanged { facts, .. } => Some(facts.mcp_servers.clone()),
+            _ => None,
+        })
+        .expect("facts changed")
+}
+
+#[test]
+fn context_shows_each_servers_state_from_the_init_event() {
+    let mut s = setup(Some(TWO_SERVERS));
+    let path = s.worktree.clone();
+    started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
+    let events = s.core.agent_says(
+        0,
+        init(vec![
+            status("docs", McpServerState::Connected, None),
+            status("github", McpServerState::Failed, Some("spawn npx ENOENT")),
+        ]),
+    );
+    assert_eq!(
+        last_mcp_facts(&events),
+        vec![
+            fact("docs", "http · docs.example.com", McpState::Connected, None),
+            fact("github", "stdio · npx", McpState::Failed, Some("spawn npx ENOENT")),
+        ]
+    );
+}
+
+#[test]
+fn a_server_the_cli_did_not_report_shows_as_not_connected() {
+    let mut s = setup(Some(TWO_SERVERS));
+    let path = s.worktree.clone();
+    started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
+    let events = s.core.agent_says(0, init(vec![status("docs", McpServerState::Connected, None)]));
+    assert_eq!(
+        last_mcp_facts(&events)[1],
+        fact("github", "stdio · npx", McpState::Failed, Some("Claude Code did not load it"))
+    );
+}
+
+#[test]
+fn a_server_pending_at_init_settles_from_a_later_status_report() {
+    let mut s = setup(Some(TWO_SERVERS));
+    let path = s.worktree.clone();
+    started_session(&s.core.start_session_in(&path, PermissionMode::AskFirst, "Ship it."));
+    s.core.agent_says(
+        0,
+        init(vec![status("docs", McpServerState::Pending, None), status("github", McpServerState::Connected, None)]),
+    );
+    let events = s.core.agent_says(
+        0,
+        AgentEvent::McpStatus { servers: vec![status("docs", McpServerState::NeedsAuth, None)] },
+    );
+    assert_eq!(
+        last_mcp_facts(&events),
+        vec![
+            fact("docs", "http · docs.example.com", McpState::NeedsAuth, None),
+            fact("github", "stdio · npx", McpState::Connected, None),
+        ]
+    );
 }
 
 fn refusals(events: &[Event]) -> Vec<String> {
