@@ -25,10 +25,11 @@
 .summary .c .v{font:500 12px var(--font-mono);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .summary .by-model{grid-column:span 2}
 .summary .by-model ul{list-style:none;margin:2px 0 0;padding:0;display:grid;gap:1px}
-.summary .by-model li{display:flex;justify-content:space-between;gap:8px;font:12px var(--font-mono);min-width:0}
+.summary .by-model li{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:8px;font:12px var(--font-mono);min-width:0}
 .summary .by-model .m{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-1)}
 .summary .by-model .v{margin:0;flex:none}
 .summary .by-model .v.unpriced{color:var(--fg-2);font-style:italic}
+.summary .by-model .t{flex-basis:100%;font-size:11px;color:var(--fg-2)}
 
 .transcript{flex:1;overflow:auto;min-height:0;padding:12px 20px}
 .vspace{position:relative;max-width:860px}
