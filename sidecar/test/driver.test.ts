@@ -145,6 +145,27 @@ test("the resolved grants are passed as the CLI's allowed and disallowed tools, 
   expect(calls.options).not.toHaveProperty("settings");
 });
 
+test("a chosen Model is passed to the CLI, and Default passes none", async () => {
+  const run = async (model?: string) => {
+    const stdin = lines();
+    const { query, calls } = fakeQuery(() => []);
+    const done = drive({
+      config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null, ...(model ? { model } : {}) },
+      commands: stdin,
+      emit: () => {},
+      query,
+    });
+    stdin.push({ type: "send_text", text: "hi" });
+    stdin.close();
+    await done;
+    return calls.options;
+  };
+
+  expect((await run("claude-sonnet-5-5")).model).toBe("claude-sonnet-5-5");
+  // Default: the CLI, or the user's own settings, decide.
+  expect(await run()).not.toHaveProperty("model");
+});
+
 test("interrupt calls query.interrupt()", async () => {
   const stdin = lines();
   const { query, calls } = fakeQuery(() => []);
