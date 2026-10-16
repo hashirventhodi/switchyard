@@ -24,6 +24,7 @@ import type { Shell } from "./schema/Shell";
 import type { SpendSample } from "./spend";
 import type { Worktree } from "./schema/Worktree";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
+import type { ChangeKind } from "./schema/ChangeKind";
 import type { Commit } from "./schema/Commit";
 import type { ForgeSetup } from "./schema/ForgeSetup";
 import type { PullRequest } from "./schema/PullRequest";
@@ -79,6 +80,11 @@ export interface State {
   agents: AgentSetup[];
   /** What the core last read from the VCS about each worktree, by path. */
   worktreeFacts: Record<string, WorktreeFacts>;
+  /** How many `worktreeChanged` signals of each kind each worktree has had, by path: a view
+   *  showing heavy data re-reads when a count it cares about moves (useWorktreeChanged). */
+  worktreeChanges: Record<string, Partial<Record<ChangeKind, number>>>;
+  /** Why live updates are unavailable for each worktree whose watcher cannot run, by path. */
+  unwatched: Record<string, string>;
   /** Uncommitted changes the core last read for each worktree, by path. */
   changes: Record<string, ChangedFile[]>;
   /** Each worktree's conflicts with their hunks, by path, as last read with its changes. */
@@ -99,10 +105,14 @@ export interface State {
   forge: ForgeSetup | null;
   /** The pull request for each worktree's branch, by worktree path, as last polled. */
   pullRequests: Record<string, PullRequest>;
+  /** When the Forge was last asked about each worktree's pull request (ms), by worktree path. */
+  pullRequestChecked: Record<string, number>;
   /** Each Repository's Tasks from every source, by repository id, as last read. */
   tasks: Record<string, Task[]>;
   /** The house rules a task's prompt carries, by repository id. */
   houseRules: Record<string, string>;
+  /** When each Repository's GitHub Issues were last read (ms); null when never, by id. */
+  tasksChecked: Record<string, number | null>;
   /** The Task each Session (live or archived) is linked to, by session id. */
   taskLinks: Record<string, string>;
   /** Each Repository's declared MCP servers (its .mcp.json) and which are enabled, by id. */
@@ -184,6 +194,8 @@ export const initialState: State = {
   toasts: [],
   agents: [],
   worktreeFacts: {},
+  worktreeChanges: {},
+  unwatched: {},
   changes: {},
   history: {},
   policies: {},
@@ -193,8 +205,10 @@ export const initialState: State = {
   settings: null,
   forge: null,
   pullRequests: {},
+  pullRequestChecked: {},
   tasks: {},
   houseRules: {},
+  tasksChecked: {},
   taskLinks: {},
   conflicts: {},
   activity: [],
@@ -234,6 +248,7 @@ export function reduce(state: State, event: Event): State {
         pullRequests: {},
         taskLinks: {},
         conflicts: {},
+        unwatched: {},
       };
     case "repositoryAdded": {
       const others = state.repositories.filter((r) => r.id !== event.repository.id);
@@ -244,7 +259,13 @@ export function reduce(state: State, event: Event): State {
         ...state,
         repositories: state.repositories.map((r) =>
           r.id === event.repositoryId
-            ? { ...r, worktrees: [...r.worktrees.filter((w) => w.path !== event.worktree.path), event.worktree] }
+            ? {
+                ...r,
+                // A worktree announced again (its branch renamed) keeps its place.
+                worktrees: r.worktrees.some((w) => w.path === event.worktree.path)
+                  ? r.worktrees.map((w) => (w.path === event.worktree.path ? event.worktree : w))
+                  : [...r.worktrees, event.worktree],
+              }
             : r,
         ),
       };
@@ -253,12 +274,14 @@ export function reduce(state: State, event: Event): State {
       const gone = repo?.worktrees.find((w) => w.path === event.worktreePath);
       const { [event.worktreePath]: _dropped, ...worktreeFacts } = state.worktreeFacts;
       const { [event.worktreePath]: _pr, ...pullRequests } = state.pullRequests;
+      const { [event.worktreePath]: _uw, ...unwatched } = state.unwatched;
       const text = `Removed worktree ${gone?.branch ?? event.worktreePath}`;
       return resultToast(
         {
           ...state,
           worktreeFacts,
           pullRequests,
+          unwatched,
           repositories: state.repositories.map((r) =>
             r.id === event.repositoryId ? { ...r, worktrees: r.worktrees.filter((w) => w.path !== event.worktreePath) } : r,
           ),
@@ -269,6 +292,17 @@ export function reduce(state: State, event: Event): State {
     }
     case "worktreeFactsChanged":
       return { ...state, worktreeFacts: { ...state.worktreeFacts, [event.worktreePath]: event.facts } };
+    case "worktreeChanged": {
+      const counts = { ...state.worktreeChanges[event.worktreePath] };
+      for (const kind of event.kinds) counts[kind] = (counts[kind] ?? 0) + 1;
+      return { ...state, worktreeChanges: { ...state.worktreeChanges, [event.worktreePath]: counts } };
+    }
+    case "worktreeUnwatched":
+      return { ...state, unwatched: { ...state.unwatched, [event.worktreePath]: event.reason } };
+    case "worktreeWatched": {
+      const { [event.worktreePath]: _cleared, ...unwatched } = state.unwatched;
+      return { ...state, unwatched };
+    }
     case "mcpServersChanged":
       return { ...state, mcpDeclared: { ...state.mcpDeclared, [event.repositoryId]: { servers: event.servers, error: event.error } } };
     case "contextRead":
@@ -358,7 +392,8 @@ export function reduce(state: State, event: Event): State {
     case "fileDecided": {
       const list = state.changes[event.worktreePath];
       if (!list) return state;
-      const next = list.map((f) => (f.path === event.path ? { ...f, decision: event.decision } : f));
+      // A fresh decision is pinned to the current content: never stale.
+      const next = list.map((f) => (f.path === event.path ? { ...f, decision: event.decision, stale: false } : f));
       return { ...state, changes: { ...state.changes, [event.worktreePath]: next } };
     }
     case "hunkReviewed": {
@@ -376,7 +411,12 @@ export function reduce(state: State, event: Event): State {
     }
     case "committed": {
       const n = event.files.length;
-      const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})`;
+      if (n === 0) {
+        // Every accepted file changed since it was decided: nothing was committed.
+        return resultToast(state, `Nothing committed: ${event.skippedStale.join(", ")} changed since you decided; re-confirm to commit`);
+      }
+      const skipped = event.skippedStale.length ? `; skipped ${event.skippedStale.join(", ")}: changed since you decided` : "";
+      const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})${skipped}`;
       const noted = worktreeActivity(state, event.worktreePath, `committed ${n} file${n === 1 ? "" : "s"} (${event.commit})`);
       return resultToast(noted, text, "ok");
     }
@@ -413,7 +453,8 @@ export function reduce(state: State, event: Event): State {
     case "pullRequestChanged": {
       const { [event.worktreePath]: _old, ...others } = state.pullRequests;
       const pullRequests = event.pullRequest ? { ...others, [event.worktreePath]: event.pullRequest } : others;
-      return { ...state, pullRequests };
+      const pullRequestChecked = { ...state.pullRequestChecked, [event.worktreePath]: event.checkedAtMs };
+      return { ...state, pullRequests, pullRequestChecked };
     }
     case "pullRequestOpened": {
       const branch = branchAt(state, event.worktreePath);
@@ -448,6 +489,7 @@ export function reduce(state: State, event: Event): State {
         ...state,
         tasks: { ...state.tasks, [event.repositoryId]: event.tasks },
         houseRules: { ...state.houseRules, [event.repositoryId]: event.houseRules },
+        tasksChecked: { ...state.tasksChecked, [event.repositoryId]: event.checkedAtMs },
       };
     case "taskCreated":
       return resultToast(state, `Added ${event.task.key} to To do`, "ok");

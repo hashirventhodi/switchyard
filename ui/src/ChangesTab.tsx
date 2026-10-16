@@ -6,12 +6,15 @@
 // agent revises it or the user accepts the whole file. Switchyard never reverts anything.
 // A conflicted file shows its conflict hunks (base's lines highlighted) with Keep ours /
 // Keep base (files git holds unmerged; the core writes the chosen side) and Ask agent to
-// rebase; Commit stays disabled while any conflict is left.
+// rebase; Commit stays disabled while any conflict is left. A Stale decision (its file or
+// hunk changed since it was made) stays visible, flagged "changed since you decided", does
+// not count, and is re-confirmed in one click with the ordinary decideFile.
 import { useEffect, useRef, useState } from "react";
 import { useAction, usePaletteSource } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
 import type { ChangedFile } from "./schema/ChangedFile";
+import type { ChangeKind } from "./schema/ChangeKind";
 import type { Command } from "./schema/Command";
 import type { ConflictFile } from "./schema/ConflictFile";
 import type { ConflictHunk } from "./schema/ConflictHunk";
@@ -19,24 +22,36 @@ import type { ConflictSide } from "./schema/ConflictSide";
 import type { Decision } from "./schema/Decision";
 import type { FileStatus } from "./schema/FileStatus";
 import type { Hunk } from "./schema/Hunk";
+import type { StaleHunk } from "./schema/StaleHunk";
 import type { WorktreeFacts } from "./schema/WorktreeFacts";
-import type { SessionView } from "./state";
+import type { SessionView, State } from "./state";
+import { useWorktreeChanged } from "./useWorktreeChanged";
 
 const LETTER: Record<FileStatus, string> = { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!" };
 /** A listed file. `baseConflict`: a dry-run merge of base conflicts on it (#17's fact). */
 type Row = ChangedFile & { baseConflict?: boolean };
 const conflicted = (f: Row) => f.status === "conflicted" || !!f.baseConflict;
 
+/** The file's own decision when it counts: a Stale decision does not. */
+const inForce = (f: ChangedFile) => (f.stale ? null : f.decision);
+/** A file decision made on content that has since changed. */
+const staleDecision = (f: ChangedFile) => f.stale && !!f.decision;
+/** How a file's Accept or Reject button looks: pressed (`pressed`) when that decision is in
+ *  force, as `aria-pressed` says; flagged, not pressed, when it is a Stale decision. */
+const decisionLook = (f: ChangedFile, decision: Decision, pressed: string) =>
+  inForce(f) === decision ? pressed : f.decision === decision ? "stale" : "";
 /** A rejected hunk and no file decision: kept out of commits (the core decides the same). */
-const rejectedHunks = (f: ChangedFile) => (f.decision ? 0 : f.hunks.filter((h) => h.decision === "reject").length);
+const rejectedHunks = (f: ChangedFile) => (inForce(f) ? 0 : f.hunks.filter((h) => h.decision === "reject").length);
 /** Committed by Commit accepted…: accepted whole, or every hunk accepted. */
-const committable = (f: Row) =>
-  !conflicted(f) && (f.decision === "accept" || (!f.decision && f.hunks.length > 0 && f.hunks.every((h) => h.decision === "accept")));
+const committable = (f: Row) => {
+  const decision = inForce(f);
+  return !conflicted(f) && (decision === "accept" || (!decision && f.hunks.length > 0 && f.hunks.every((h) => h.decision === "accept")));
+};
 type FileState = "accepted" | "rejected" | "undecided" | "conflict";
 function fileState(f: Row): FileState {
   if (conflicted(f)) return "conflict";
   if (committable(f)) return "accepted";
-  if (f.decision === "reject" || rejectedHunks(f) > 0) return "rejected";
+  if (inForce(f) === "reject" || rejectedHunks(f) > 0) return "rejected";
   return "undecided";
 }
 /** Hunks whose rejection or comment the agent has not been sent yet. */
@@ -56,7 +71,19 @@ function reviewOrder(files: ChangedFile[], baseConflicts: string[]): Row[] {
   const rows: Row[] = files.map((f) => (baseConflicts.includes(f.path) ? { ...f, baseConflict: true } : f));
   for (const path of baseConflicts)
     if (!files.some((f) => f.path === path))
-      rows.push({ path, oldPath: null, status: "modified", added: 0, removed: 0, binary: false, decision: null, hunks: [], baseConflict: true });
+      rows.push({
+        path,
+        oldPath: null,
+        status: "modified",
+        added: 0,
+        removed: 0,
+        binary: false,
+        decision: null,
+        stale: false,
+        hunks: [],
+        staleHunks: [],
+        baseConflict: true,
+      });
   return GROUPS.flatMap(([, test]) => rows.filter(test));
 }
 
@@ -90,14 +117,17 @@ export interface ChangesTabProps {
   onAsk: (text: string) => void;
   /** The worktree's conflicts with their hunks (conflictsRead), when read. */
   conflicts?: ConflictFile[];
+  /** The core's change signals (State.worktreeChanges): files or git changes re-read. */
+  worktreeChanges?: State["worktreeChanges"];
 }
 
-export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts: conflictFiles = [] }: ChangesTabProps) {
+const CHANGES_KINDS: ChangeKind[] = ["files", "git"];
+
+export function ChangesTab(props: ChangesTabProps) {
+  const { session, files, facts, base, send, onAsk, conflicts: conflictFiles = [], worktreeChanges = {} } = props;
   const worktreePath = session.worktreePath;
-  // Re-read whenever the agent may have changed something: on open and on every status change.
-  useEffect(() => {
-    send({ type: "readChanges", worktreePath });
-  }, [send, worktreePath, session.status]);
+  // Read on open, and again whenever the core says the files or git's records moved.
+  useWorktreeChanged(worktreeChanges, worktreePath, CHANGES_KINDS, () => send({ type: "readChanges", worktreePath }));
 
   const ordered = reviewOrder(files ?? [], facts?.conflicts ?? []);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -113,12 +143,13 @@ export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts
   const pending = pendingFeedback(files ?? []);
   const acceptAll = () => {
     for (const f of ordered)
-      if (!conflicted(f) && f.decision !== "accept") send({ type: "decideFile", worktreePath, path: f.path, decision: "accept" });
+      if (!conflicted(f) && inForce(f) !== "accept") send({ type: "decideFile", worktreePath, path: f.path, decision: "accept" });
   };
 
   const decide = (file: Row, decision: Decision, advance = false) => {
     if (conflicted(file)) return false;
-    const next = file.decision === decision ? null : decision;
+    // Pressing a Stale decision's button again re-confirms it rather than clearing it.
+    const next = inForce(file) === decision ? null : decision;
     send({ type: "decideFile", worktreePath, path: file.path, decision: next });
     // Deciding by key moves on to the next file, so a / r / a / r walks the list.
     const i = ordered.indexOf(file);
@@ -174,6 +205,7 @@ export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts
               file={active}
               base={base}
               onDecide={(d) => decide(active, d)}
+              onReconfirm={() => active.decision && send({ type: "decideFile", worktreePath, path: active.path, decision: active.decision })}
               onDecideHunk={(hunk, d) =>
                 send({ type: "decideHunk", worktreePath, path: active.path, hunkId: hunk.id, decision: hunk.decision === d ? null : d })
               }
@@ -235,11 +267,6 @@ export function ChangesTab({ session, files, facts, base, send, onAsk, conflicts
   );
 }
 
-/** How many files the Changes tab lists (its tab count). */
-export function changesCount(files: ChangedFile[] | undefined, facts: WorktreeFacts | undefined): number | undefined {
-  return files && reviewOrder(files, facts?.conflicts ?? []).length;
-}
-
 function commitsReady(ahead: number): string {
   return ahead === 1 ? "1 commit ready." : `${ahead} commits ready.`;
 }
@@ -264,6 +291,11 @@ function FileRow({ file, active, onSelect }: { file: Row; active: boolean; onSel
         <span>{file.path}</span>
       </span>
       <span className="stat">
+        {staleDecision(file) && (
+          <span className="dec stale" data-testid="stale" title={`You ${decided(file.decision)} it; re-confirm to count it`}>
+            changed since you decided
+          </span>
+        )}
         {(state === "accepted" || state === "rejected") && (
           <span
             className={`dec ${state === "accepted" ? "accept" : "reject"}`}
@@ -279,10 +311,14 @@ function FileRow({ file, active, onSelect }: { file: Row; active: boolean; onSel
   );
 }
 
+const decided = (d: Decision | null) => (d === "accept" ? "accepted" : "rejected");
+
 function FileDiff(props: {
   file: Row;
   base: string | undefined;
   onDecide: (d: Decision) => void;
+  /** Re-confirm the file's Stale decision on its current content. */
+  onReconfirm: () => void;
   onDecideHunk: (hunk: Hunk, d: Decision) => void;
   onComment: (hunk: Hunk, comment: string | null) => void;
   onAsk: () => void;
@@ -310,16 +346,16 @@ function FileDiff(props: {
         {!conflict && (
           <>
             <button
-              className={`btn sm ${file.decision === "accept" ? "ok" : ""}`}
-              aria-pressed={file.decision === "accept"}
+              className={`btn sm ${decisionLook(file, "accept", "ok")}`}
+              aria-pressed={inForce(file) === "accept"}
               title={`Accept file (${keysLabel("review.accept")})`}
               onClick={() => onDecide("accept")}
             >
               Accept file
             </button>
             <button
-              className={`btn sm ${file.decision === "reject" ? "danger" : ""}`}
-              aria-pressed={file.decision === "reject"}
+              className={`btn sm ${decisionLook(file, "reject", "danger")}`}
+              aria-pressed={inForce(file) === "reject"}
               title={`Reject file (${keysLabel("review.reject")})`}
               onClick={() => onDecide("reject")}
             >
@@ -328,6 +364,14 @@ function FileDiff(props: {
           </>
         )}
       </div>
+      {!conflict && staleDecision(file) && (
+        <p className="stale-note" role="note">
+          You {decided(file.decision)} this file, but it changed since you decided; the decision does not count until re-confirmed.{" "}
+          <button className="btn sm" onClick={props.onReconfirm}>
+            Re-confirm {file.decision}
+          </button>
+        </p>
+      )}
       {rejectedCount > 0 && (
         <p className="blocked-note" role="note">
           Not committable: {rejectedCount} rejected hunk{rejectedCount === 1 ? "" : "s"}. Send feedback to the agent, or Accept file.
@@ -362,12 +406,33 @@ function FileDiff(props: {
           <HunkView
             key={h.id}
             hunk={h}
-            fileDecision={file.decision}
+            fileDecision={inForce(file)}
             decidable={!conflict}
             onDecide={(d) => onDecideHunk(h, d)}
             onComment={(c) => onComment(h, c)}
           />
         ))
+      )}
+      {!conflict && file.staleHunks.map((h) => <StaleHunkView key={h.id} hunk={h} />)}
+    </div>
+  );
+}
+
+/** A hunk Decision whose hunk has since changed: shown, not counted, not decidable (the
+ *  revised lines are a new hunk above). A sent Reject reads as revised: re-review it. */
+function StaleHunkView({ hunk }: { hunk: StaleHunk }) {
+  const revised = hunk.decision === "reject" && hunk.sent;
+  return (
+    <div className="hunkbox stale" role="group" aria-label={`Earlier hunk ${hunk.header}`}>
+      <div className="hh">
+        <span className="h">{hunk.header}</span>
+        <span className="dec">{decided(hunk.decision)}</span>
+        <span className="stale-flag">{revised ? "feedback sent, revised" : "changed since you decided"}</span>
+      </div>
+      {hunk.comment && (
+        <div className="hcomment">
+          <span className="who">Comment</span> {hunk.comment}
+        </div>
       )}
     </div>
   );

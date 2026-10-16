@@ -604,26 +604,39 @@ fn an_archived_session_can_be_exported() {
 // ---- scale ----
 
 #[test]
-fn a_twenty_thousand_entry_session_reloads_in_under_a_second() {
-    let (mut core, _repo, worktree) = setup();
-    let id = started_session(&core.start_session(&worktree, "Go"));
-    for i in 0..20_000 {
-        core.agent_says(0, text(&format!("line {i} of a long, long session with plenty of words in it")));
-    }
-    let core = core.relaunch();
+fn a_twenty_thousand_entry_session_reloads_no_slower_than_ten_two_thousand_entry_ones() {
+    // The budget is measured in the same run, so it scales with how busy the machine is: 10×
+    // the entries may take at most 10× the time. A reload that grows faster than the transcript
+    // fails; a slow machine does not.
+    let reload = |entries: usize| {
+        let (mut core, _repo, worktree) = setup();
+        let id = started_session(&core.start_session(&worktree, "Go"));
+        for i in 0..entries {
+            core.agent_says(0, text(&format!("line {i} of a long, long session with plenty of words in it")));
+        }
+        let mut core = core.relaunch();
+        // The fastest of three reloads, so one scheduler hiccup cannot decide the outcome.
+        let mut fastest = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            core = core.relaunch();
+            let events = core.send(Command::Attach);
+            fastest = fastest.min(started.elapsed());
+            assert_eq!(transcript(&events, &id).len(), entries + 2); // prompt, the lines, the pause note
+        }
+        fastest
+    };
 
-    let started = std::time::Instant::now();
-    let mut core = core.relaunch();
-    let events = core.send(Command::Attach);
-    let took = started.elapsed();
+    let small = reload(2_000);
+    let large = reload(20_000);
 
-    assert_eq!(transcript(&events, &id).len(), 20_002); // prompt, 20k lines, the pause note
-    assert!(took < std::time::Duration::from_secs(1), "reload took {took:?}");
+    assert!(large < small * 10, "20k entries reloaded in {large:?}, 2k in {small:?}");
 }
 
 // ---- review decisions ----
 
-fn decision_after_read(core: &mut Harness, worktree: &Path, file: &str) -> Option<Decision> {
+/// The file's decision after a fresh read, when it counts (a Stale decision does not).
+fn counting_decision(core: &mut Harness, worktree: &Path, file: &str) -> Option<Decision> {
     let events = core.send(Command::ReadChanges { worktree_path: path(worktree) });
     let files = events
         .into_iter()
@@ -632,7 +645,7 @@ fn decision_after_read(core: &mut Harness, worktree: &Path, file: &str) -> Optio
             _ => None,
         })
         .expect("changes read");
-    files.into_iter().find(|f| f.path == file).and_then(|f| f.decision)
+    files.into_iter().find(|f| f.path == file).and_then(|f| f.decision.filter(|_| !f.stale))
 }
 
 fn decide(core: &mut Harness, worktree: &Path, file: &str, decision: Decision) {
@@ -649,12 +662,12 @@ fn review_decisions_survive_a_relaunch() {
 
     let mut core = core.relaunch();
 
-    assert_eq!(decision_after_read(&mut core, &worktree, "README"), Some(Decision::Accept));
-    assert_eq!(decision_after_read(&mut core, &worktree, "NOTES"), Some(Decision::Reject));
+    assert_eq!(counting_decision(&mut core, &worktree, "README"), Some(Decision::Accept));
+    assert_eq!(counting_decision(&mut core, &worktree, "NOTES"), Some(Decision::Reject));
 }
 
 #[test]
-fn a_stored_decision_lapses_when_the_file_changed_while_the_app_was_closed() {
+fn a_stored_decision_goes_stale_when_the_file_changed_while_the_app_was_closed() {
     let (mut core, _repo, worktree) = setup();
     std::fs::write(worktree.join("README"), "changed\n").unwrap();
     decide(&mut core, &worktree, "README", Decision::Accept);
@@ -662,7 +675,7 @@ fn a_stored_decision_lapses_when_the_file_changed_while_the_app_was_closed() {
     let mut core = core.relaunch();
     std::fs::write(worktree.join("README"), "changed again\n").unwrap();
 
-    assert_eq!(decision_after_read(&mut core, &worktree, "README"), None);
+    assert_eq!(counting_decision(&mut core, &worktree, "README"), None);
 }
 
 #[test]
@@ -674,5 +687,5 @@ fn an_undone_decision_stays_undone_after_a_relaunch() {
 
     let mut core = core.relaunch();
 
-    assert_eq!(decision_after_read(&mut core, &worktree, "README"), None);
+    assert_eq!(counting_decision(&mut core, &worktree, "README"), None);
 }

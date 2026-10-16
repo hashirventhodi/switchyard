@@ -30,6 +30,7 @@
 .file .stat .a{color:var(--ok)}.file .stat .d{color:var(--bad)}
 .file .dec{font:600 10px var(--font-ui);padding:0 4px;border-radius:3px}
 .file .dec.accept{color:var(--ok);background:var(--ok-soft)}.file .dec.reject{color:var(--bad);background:var(--bad-soft)}
+.file .dec.stale{color:var(--warn);background:var(--warn-soft);font-weight:500}
 
 .diff{overflow:auto;font-family:var(--font-mono);font-size:11.5px;line-height:1.55;min-height:0}
 .diff-file{position:sticky;top:0;background:var(--bg-1);border-bottom:1px solid var(--line);padding:5px 10px;display:flex;align-items:center;gap:8px;z-index:1;flex-wrap:wrap}
@@ -55,6 +56,11 @@
 .hcomment-edit{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
 .hcomment-edit textarea{width:100%;box-sizing:border-box;resize:vertical;font:12px var(--font-ui)}
 .hcomment-edit .row{display:flex;justify-content:flex-end;gap:6px}
+/* A Stale decision's Accept or Reject: flagged, not drawn pressed. */
+.btn.stale{border-style:dashed;border-color:var(--warn);color:var(--warn)}
+.stale-note{margin:8px 10px 0;padding:4px 8px;font:11px var(--font-ui);color:var(--warn);background:var(--warn-soft);border-radius:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.hunkbox.stale{opacity:.75}
+.hunkbox .hh .stale-flag{font:10px var(--font-ui);color:var(--warn)}
 .blocked-note{margin:8px 10px 0;padding:4px 8px;font-size:11px;color:var(--bad);background:var(--bad-soft);border-radius:4px}
 .ln{display:grid;grid-template-columns:36px 36px 14px 1fr;white-space:pre;min-width:max-content}
 .ln .g{color:var(--fg-2);text-align:right;padding-right:8px;user-select:none;font-size:10.5px;opacity:.8}

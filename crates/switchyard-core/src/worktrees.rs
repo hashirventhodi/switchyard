@@ -71,7 +71,9 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
     let path = listed.map(|w| w.path).unwrap_or(target);
     let worktree = Worktree { path: path.to_string_lossy().into_owned(), branch: Some(branch.into()), primary: false };
     inner.emit(Event::WorktreeAdded { repository_id: repo.id.clone(), worktree: worktree.clone() });
+    crate::disk::remember_added(inner, &repo.id, &worktree);
     emit_facts(inner, &path, &base);
+    crate::disk::watch(inner, &path);
     Some(worktree)
 }
 
@@ -140,24 +142,35 @@ pub(crate) fn try_remove(inner: &mut Inner, worktree_path: &str) -> Result<(), S
     }
     // Checked above: whatever session is left there is not at work.
     let _ = sessions::archive_occupant(inner, worktree_path);
+    forget(inner, &repo.id, worktree_path);
+    Ok(())
+}
+
+/// A worktree git has removed: its reviews, shells, pull request tracking and watch go with
+/// it, and it is announced gone. Its session, if any, must be archived first.
+pub(crate) fn forget(inner: &mut Inner, repository_id: &str, worktree_path: &str) {
     review::forget(inner, worktree_path);
     shells::close_worktree(inner, worktree_path);
     crate::forge::forget(inner, worktree_path);
-    inner.emit(Event::WorktreeRemoved { repository_id: repo.id, worktree_path: worktree_path.into() });
-    Ok(())
+    crate::disk::unwatch(inner, Path::new(worktree_path));
+    inner.emit(Event::WorktreeRemoved { repository_id: repository_id.into(), worktree_path: worktree_path.into() });
 }
 
 /// Re-read every known worktree's facts from git and emit them.
 pub(crate) fn refresh(inner: &Inner) {
     let Ok(repos) = inner.store.repositories() else { return };
     for repo in repos {
-        let dir = Path::new(&repo.path);
-        let Ok(list) = git::worktrees(dir) else { continue };
-        let Some(primary) = list.first() else { continue };
-        let base = git::base_branch(dir, primary);
-        for wt in &list {
-            emit_facts(inner, &wt.path, &base);
-        }
+        refresh_repository(inner, Path::new(&repo.path));
+    }
+}
+
+/// Re-read the facts of every worktree of the repository at `dir` and emit them.
+pub(crate) fn refresh_repository(inner: &Inner, dir: &Path) {
+    let Ok(list) = git::worktrees(dir) else { return };
+    let Some(primary) = list.first() else { return };
+    let base = git::base_branch(dir, primary);
+    for wt in &list {
+        emit_facts(inner, &wt.path, &base);
     }
 }
 
@@ -177,9 +190,20 @@ pub(crate) fn emit_facts(inner: &Inner, path: &Path, base: &str) {
     let (ahead, behind) = git::ahead_behind(path, &base).unwrap_or((0, 0));
     // Not behind means base is already in the branch: nothing to conflict with.
     let conflicts = if behind > 0 { git::conflicting_files(path, &base).unwrap_or_default() } else { Vec::new() };
+    // What Changes lists: the uncommitted files, plus files that conflict with base.
+    let changed_files = match git::changed_paths(path) {
+        Ok(mut list) => {
+            list.extend(conflicts.iter().cloned());
+            list.sort();
+            list.dedup();
+            list.len() as u32
+        }
+        Err(_) => dirty,
+    };
+    let commits = ahead.min(crate::rebase::HISTORY_LIMIT as u32);
     inner.emit(Event::WorktreeFactsChanged {
         worktree_path: path.to_string_lossy().into_owned(),
-        facts: WorktreeFacts { ahead, behind, dirty, conflicts },
+        facts: WorktreeFacts { ahead, behind, dirty, conflicts, changed_files, commits },
     });
 }
 

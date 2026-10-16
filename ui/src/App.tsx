@@ -155,11 +155,40 @@ export function App({
     };
   }, [core]);
 
-  // Git is the source of truth and moves outside Switchyard: re-read on returning to the app.
+  // The core watches git and pushes every change (ADR-0008); only the Forge is polled. The
+  // core is told whether anyone is looking (the window shown and focused), from startup and
+  // on each change only, and polls at its slowest while nobody is. Returning to the window
+  // is one Forge poll: the core polls when told it is visible again; a focus that changes
+  // nothing it knows asks for the poll itself.
   useEffect(() => {
-    const onFocus = () => core.send({ type: "refreshWorktrees" });
+    let told: boolean | null = null;
+    let focused = true;
+    const looking = () => focused && document.visibilityState !== "hidden";
+    const tell = () => {
+      const visible = looking();
+      if (visible === told) return false;
+      told = visible;
+      core.send({ type: "windowVisibility", visible });
+      return true;
+    };
+    const onFocus = () => {
+      focused = true;
+      if (!tell()) core.send({ type: "pollForgeNow" });
+    };
+    const onBlur = () => {
+      focused = false;
+      tell();
+    };
+    const onVisibility = () => tell();
+    tell();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [core]);
 
   // Bumped to make the session view scroll to its pending request (⌘J, inbox, toast).
@@ -580,7 +609,6 @@ export function App({
               state={state}
               onOpenSession={(id) => openSession(id, true)}
               onOpenInbox={() => setOverlay("inbox")}
-              send={core.send}
               onNewSession={openNewSession}
               setup={
                 <SetupPanel
@@ -763,6 +791,11 @@ function RepositoryGroup(props: { repository: RepositoryView; state: State; onOp
                     <PrBadge state={state} worktreePath={w.path} />
                   </span>
                 </>
+              )}
+              {state.unwatched[w.path] !== undefined && (
+                <p className="wt-unwatched" role="status">
+                  Live updates unavailable for {w.branch ?? w.path}: {state.unwatched[w.path]}
+                </p>
               )}
             </li>
           );

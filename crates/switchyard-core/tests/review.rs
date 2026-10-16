@@ -166,15 +166,21 @@ fn deciding_a_file_is_reported_and_shown_on_the_next_read() {
 }
 
 #[test]
-fn a_decision_lapses_when_the_file_changes_again() {
+fn a_decision_goes_stale_when_the_file_changes_again() {
     let (_repo, wt, mut core) = setup();
     std::fs::write(wt.join("lib.txt"), "changed\n").unwrap();
     decide(&mut core, &wt, "lib.txt", Some(Decision::Accept));
 
     std::fs::write(wt.join("lib.txt"), "changed again\n").unwrap();
 
-    assert_eq!(file(&read(&mut core, &wt), "lib.txt").decision, None);
-    assert_eq!(refusal(&commit(&mut core, &wt, "msg")), "Accept at least one file to commit");
+    let lib = file(&read(&mut core, &wt), "lib.txt").clone();
+    assert_eq!((lib.decision, lib.stale), (Some(Decision::Accept), true));
+    let events = commit(&mut core, &wt, "msg");
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Committed { files, skipped_stale, .. }
+            if files.is_empty() && skipped_stale == &vec!["lib.txt".to_string()])),
+        "{events:#?}"
+    );
 }
 
 #[test]
@@ -219,7 +225,7 @@ fn commit_takes_whole_accepted_files_and_leaves_the_rest_untouched() {
     assert_eq!(git_out(&wt, &["diff", "--cached", "--name-only"]), "");
     assert_eq!(std::fs::read_to_string(wt.join("README")).unwrap(), "undecided\n");
     assert_eq!(git_out(&wt, &["status", "--porcelain"]), " M README\n?? nope.txt\n");
-    // Fresh changes after the commit are listed with no decisions.
+    // The others are listed as they were: undecided, or still rejected.
     let after = events.iter().rev().find_map(|e| match e {
         Event::ChangesRead { files, .. } => Some(files.clone()),
         _ => None,
@@ -227,7 +233,7 @@ fn commit_takes_whole_accepted_files_and_leaves_the_rest_untouched() {
     let after = after.expect("changes re-read after commit");
     assert_eq!(
         after.iter().map(|f| (f.path.as_str(), f.decision)).collect::<Vec<_>>(),
-        vec![("README", None), ("nope.txt", None)]
+        vec![("README", None), ("nope.txt", Some(Decision::Reject))]
     );
     assert!(events.iter().any(|e| matches!(e, Event::WorktreeFactsChanged { facts, .. } if facts.ahead == 1)));
 }

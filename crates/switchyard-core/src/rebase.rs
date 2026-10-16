@@ -109,7 +109,7 @@ pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id:
 }
 
 /// The most commits History shows; a branch with more is a branch to split.
-const HISTORY_LIMIT: usize = 200;
+pub(crate) const HISTORY_LIMIT: usize = 200;
 
 pub(crate) fn history(inner: &Inner, worktree_path: &str) {
     const COMMAND: &str = command_name::READ_HISTORY;

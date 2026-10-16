@@ -319,7 +319,7 @@ pub(crate) fn enabled(inner: &crate::Inner, repository_id: &str, primary: &Path)
         .collect())
 }
 
-fn announce(inner: &crate::Inner, repo: &crate::store::StoredRepository) {
+pub(crate) fn announce(inner: &crate::Inner, repo: &crate::store::StoredRepository) {
     let db = inner.store.db();
     let (servers, error) = match load(Path::new(&repo.path)) {
         Ok(servers) => (servers, None),

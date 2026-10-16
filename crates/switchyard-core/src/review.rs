@@ -1,8 +1,9 @@
 //! Review: a worktree's uncommitted changes, file decisions, and committing accepted files
 //! whole. Switchyard never reverts anything and never stages part of a file. Decisions are
-//! keyed by worktree + path, pinned to the diff they were taken on, written through to the
-//! store (so they survive a relaunch) and discarded on commit. Hunks carry their own
-//! decisions and comments (Hunk feedback, see `feedback`), stored the same way.
+//! keyed by worktree + path, pinned to the content they were taken on, written through to
+//! the store (so they survive a relaunch) and discarded on commit. Hunks carry their own
+//! decisions and comments (Hunk feedback, see `feedback`), stored the same way. A Decision
+//! whose content has changed since is a Stale decision: kept and reported, never counted.
 
 mod conflicts;
 mod diff;
@@ -22,25 +23,36 @@ use crate::{git, session_store, worktrees, Inner};
 
 #[derive(Default)]
 pub(crate) struct Decisions {
-    /// worktree path → file path → (decision, fingerprint of the diff it was taken on).
+    /// worktree path → file path → (decision, content hash of the file it was taken on: see
+    /// `diff::Parsed::fingerprint`).
     by_worktree: HashMap<String, HashMap<String, (Decision, u64)>>,
     /// worktree path → hunk id → review. Hunk ids hash the hunk's own lines and index-side
-    /// path, so a review lapses exactly when the agent revises that hunk.
+    /// path, so a review goes stale exactly when the agent revises that hunk.
     hunks: HashMap<String, HashMap<String, feedback::HunkReview>>,
+}
+
+/// The file's own decision when it still counts (a Stale decision does not).
+fn in_force(file: &ChangedFile) -> Option<Decision> {
+    file.decision.filter(|_| !file.stale)
 }
 
 /// A file's commit eligibility, from its own decision and its hunks'.
 fn committable(file: &ChangedFile) -> bool {
-    match file.decision {
+    match in_force(file) {
         Some(d) => d == Decision::Accept,
         None => !file.hunks.is_empty() && file.hunks.iter().all(|h| h.decision == Some(Decision::Accept)),
     }
 }
 
+/// A file accepted on content that has since changed: left out of commits until re-confirmed.
+fn stale_accept(file: &ChangedFile) -> bool {
+    file.stale && file.decision == Some(Decision::Accept) && !committable(file)
+}
+
 /// A file with a rejected hunk and no decision of its own: not committable until the agent
 /// revises the hunk or the user accepts the whole file.
 fn blocked(file: &ChangedFile) -> bool {
-    file.decision.is_none() && file.hunks.iter().any(|h| h.decision == Some(Decision::Reject))
+    in_force(file).is_none() && file.hunks.iter().any(|h| h.decision == Some(Decision::Reject))
 }
 
 /// Load the stored decisions (when the core opens).
@@ -68,6 +80,63 @@ pub(crate) fn forget(inner: &mut Inner, worktree_path: &str) {
     save(inner, worktree_path);
 }
 
+/// Discard the worktree's Decisions on files that are no longer changed (committed or
+/// reverted, in Switchyard or outside it), and hunk reviews that no longer apply: on such a
+/// file, or a lone comment whose hunk is gone (`has_hunk` says which hunks the diff has).
+/// Whether anything was discarded.
+fn prune(inner: &mut Inner, worktree_path: &str, changed: &[&str], has_hunk: impl Fn(&str) -> bool) -> bool {
+    let mut lapsed = false;
+    if let Some(decided) = inner.review.by_worktree.get_mut(worktree_path) {
+        let before = decided.len();
+        decided.retain(|path, _| changed.contains(&path.as_str()));
+        lapsed |= decided.len() != before;
+    }
+    if let Some(reviews) = inner.review.hunks.get_mut(worktree_path) {
+        let before = reviews.len();
+        reviews.retain(|id, r| has_hunk(id) || (r.decision.is_some() && changed.contains(&r.path.as_str())));
+        lapsed |= reviews.len() != before;
+    }
+    lapsed
+}
+
+/// The worktree changed on disk: discard the Decisions on files git no longer lists as
+/// changed (committed or reverted in a shell, say), without computing the diff. Nothing is
+/// read from git for a worktree with nothing decided.
+pub(crate) fn prune_settled(inner: &mut Inner, worktree_path: &str) {
+    let decided = inner.review.by_worktree.get(worktree_path).is_some_and(|d| !d.is_empty())
+        || inner.review.hunks.get(worktree_path).is_some_and(|r| !r.is_empty());
+    if !decided {
+        return;
+    }
+    let Ok(changed) = git::changed_paths(Path::new(worktree_path)) else { return };
+    let changed: Vec<&str> = changed.iter().map(String::as_str).collect();
+    // Without the diff, any hunk on a file still changed may still be there (as may one
+    // stored before reviews named their file): left for the next read to judge.
+    let keep: Vec<String> = inner
+        .review
+        .hunks
+        .get(worktree_path)
+        .into_iter()
+        .flatten()
+        .filter(|(_, r)| r.path.is_empty() || changed.contains(&r.path.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if prune(inner, worktree_path, &changed, |id| keep.iter().any(|k| k == id)) {
+        save(inner, worktree_path);
+    }
+}
+
+/// Discard the Decisions and hunk reviews on `paths`, just committed.
+fn discard(inner: &mut Inner, worktree_path: &str, paths: &[String]) {
+    if let Some(decided) = inner.review.by_worktree.get_mut(worktree_path) {
+        decided.retain(|path, _| !paths.contains(path));
+    }
+    if let Some(reviews) = inner.review.hunks.get_mut(worktree_path) {
+        reviews.retain(|_, r| !paths.contains(&r.path));
+    }
+    save(inner, worktree_path);
+}
+
 /// Read the worktree's changes from git, with the decisions that still apply.
 fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u64)>, String> {
     let dir = Path::new(worktree_path);
@@ -85,25 +154,26 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
                     removed: 0,
                     binary: false,
                     decision: None,
+                    stale: false,
                     hunks: Vec::new(),
+                    stale_hunks: Vec::new(),
                 },
             });
         }
     }
+    // Decisions are kept when their content changes (a file reverted to it counts again);
+    // those on a file no longer changed go, and a lone comment on a hunk that is gone lapses.
+    let changed: Vec<&str> = parsed.iter().map(|p| p.file.path.as_str()).collect();
+    let lapsed = prune(inner, worktree_path, &changed, |id| parsed.iter().any(|p| p.file.hunks.iter().any(|h| h.id == id)));
     let decided = inner.review.by_worktree.entry(worktree_path.to_string()).or_default();
-    // A decision on a diff that has since changed (or a file no longer changed) is stale.
-    let before = decided.len();
-    decided.retain(|path, (_, fp)| parsed.iter().any(|p| &p.file.path == path && p.fingerprint == *fp));
-    let mut lapsed = decided.len() != before;
     let reviews = inner.review.hunks.entry(worktree_path.to_string()).or_default();
-    // A hunk the agent revised (or dropped) has a new id: its review no longer applies.
-    let before = reviews.len();
-    reviews.retain(|id, _| parsed.iter().any(|p| p.file.hunks.iter().any(|h| &h.id == id)));
-    lapsed |= reviews.len() != before;
-    let list = parsed
+    let mut list: Vec<(ChangedFile, u64)> = parsed
         .into_iter()
         .map(|mut p| {
-            p.file.decision = decided.get(&p.file.path).map(|(d, _)| *d);
+            if let Some((d, fp)) = decided.get(&p.file.path) {
+                p.file.decision = Some(*d);
+                p.file.stale = *fp != p.fingerprint;
+            }
             for hunk in &mut p.file.hunks {
                 if let Some(r) = reviews.get(&hunk.id) {
                     r.apply(hunk);
@@ -112,6 +182,17 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
             (p.file, p.fingerprint)
         })
         .collect();
+    // A hunk the agent revised (or dropped) has a new id: its Decision is stale.
+    let mut stale: Vec<(&String, &feedback::HunkReview)> = reviews
+        .iter()
+        .filter(|(id, _)| !list.iter().any(|(f, _)| f.hunks.iter().any(|h| &h.id == *id)))
+        .collect();
+    stale.sort_by(|a, b| a.1.header.cmp(&b.1.header).then(a.0.cmp(b.0)));
+    for (id, review) in stale {
+        if let Some((file, _)) = list.iter_mut().find(|(f, _)| f.path == review.path) {
+            file.stale_hunks.extend(review.stale(id));
+        }
+    }
     if lapsed {
         save(inner, worktree_path);
     }
@@ -234,7 +315,18 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
         return inner.refuse(COMMAND, format!("Resolve the conflict in {path} before committing"));
     }
     let accepted: Vec<&ChangedFile> = list.iter().map(|(f, _)| f).filter(|f| committable(f)).collect();
+    let skipped_stale: Vec<String> = list.iter().map(|(f, _)| f).filter(|f| stale_accept(f)).map(|f| f.path.clone()).collect();
     if accepted.is_empty() {
+        if !skipped_stale.is_empty() {
+            // Every accepted file changed since you decided: nothing to commit, and why.
+            return inner.emit(Event::Committed {
+                worktree_path: worktree_path.into(),
+                branch: worktree.branch,
+                commit: String::new(),
+                files: Vec::new(),
+                skipped_stale,
+            });
+        }
         if let Some((f, _)) = list.iter().find(|(f, _)| blocked(f)) {
             return inner.refuse(
                 COMMAND,
@@ -262,12 +354,14 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
         Ok(c) => c,
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("Could not commit: {e}")),
     };
-    forget(inner, worktree_path);
+    // Decisions on what was not committed (a skipped Stale decision, say) stay.
+    discard(inner, worktree_path, &paths);
     inner.emit(Event::Committed {
         worktree_path: worktree_path.into(),
         branch: worktree.branch,
         commit,
         files: accepted.iter().map(|f| f.path.clone()).collect(),
+        skipped_stale,
     });
     emit_changes(inner, COMMAND, worktree_path);
 }

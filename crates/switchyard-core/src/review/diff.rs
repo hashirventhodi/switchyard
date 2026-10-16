@@ -6,8 +6,9 @@ use switchyard_schema::{ChangedFile, DiffLine, FileStatus, Hunk, LineKind};
 /// One parsed file plus what its review decision is pinned to.
 pub(crate) struct Parsed {
     pub file: ChangedFile,
-    /// Changes whenever the file's diff does: a decision taken on another fingerprint no
-    /// longer applies.
+    /// A hash of the file's content: the `index` line (`--full-index`) names the index-side
+    /// and working-tree blob ids, so it changes exactly when either side's content does and
+    /// returns when the file is reverted. A decision taken on another fingerprint is stale.
     pub fingerprint: u64,
 }
 
@@ -169,7 +170,9 @@ fn finish(cur: &mut Option<Building>, out: &mut Vec<Parsed>) {
             removed: b.removed,
             binary: b.binary,
             decision: None,
+            stale: false,
             hunks: b.hunks,
+            stale_hunks: Vec::new(),
         },
     });
 }

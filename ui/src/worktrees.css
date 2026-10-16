@@ -38,3 +38,11 @@
   .choice,.row2{grid-template-columns:1fr}
   .wtg{grid-template-columns:1fr}
 }
+
+/* A worktree whose watcher cannot run: updated slowly, and says why. */
+.wt-unwatched {
+  grid-column: 2;
+  margin: 0;
+  font-size: 11px;
+  color: var(--warn);
+}

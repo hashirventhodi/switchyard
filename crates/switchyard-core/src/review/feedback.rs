@@ -8,14 +8,18 @@ use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
 use switchyard_schema::command_name;
-use switchyard_schema::{ChangedFile, Decision, Event, Hunk, LineKind, SessionStatus};
+use switchyard_schema::{ChangedFile, Decision, Event, Hunk, LineKind, SessionStatus, StaleHunk};
 
 use super::{changes, conflict, known, save};
 use crate::{sessions, Inner};
 
 /// One hunk's review. `sent`: the rejection and comment as they stand reached the agent.
+/// `path` and `header` name the hunk as it was reviewed, so a review whose hunk has since
+/// changed can still be shown as a Stale decision on its file.
 #[derive(Clone, Default)]
 pub(crate) struct HunkReview {
+    pub(crate) path: String,
+    pub(crate) header: String,
     pub(crate) decision: Option<Decision>,
     pub(crate) comment: Option<String>,
     pub(crate) sent: bool,
@@ -28,6 +32,18 @@ impl HunkReview {
         hunk.sent = self.sent;
     }
 
+    /// This review as a Stale decision, for a hunk no longer in the diff; `None` without a
+    /// decision (a lone comment on a changed hunk lapses).
+    pub(super) fn stale(&self, id: &str) -> Option<StaleHunk> {
+        Some(StaleHunk {
+            id: id.to_string(),
+            header: self.header.clone(),
+            decision: self.decision?,
+            comment: self.comment.clone(),
+            sent: self.sent,
+        })
+    }
+
     /// Something the agent has not been told yet.
     fn pending(&self) -> bool {
         !self.sent && (self.decision == Some(Decision::Reject) || self.comment.is_some())
@@ -35,7 +51,7 @@ impl HunkReview {
 }
 
 /// Look up a hunk of a changed file, refusing `command` when it is not (or no longer) there.
-fn find(inner: &mut Inner, command: &str, worktree_path: &str, path: &str, hunk_id: &str) -> Option<ChangedFile> {
+fn find(inner: &mut Inner, command: &str, worktree_path: &str, path: &str, hunk_id: &str) -> Option<(ChangedFile, Hunk)> {
     known(inner, command, worktree_path)?;
     let list = match changes(inner, worktree_path) {
         Ok(list) => list,
@@ -48,17 +64,20 @@ fn find(inner: &mut Inner, command: &str, worktree_path: &str, path: &str, hunk_
         inner.refuse(command, format!("{path} has no uncommitted changes"));
         return None;
     };
-    if !file.hunks.iter().any(|h| h.id == hunk_id) {
+    let Some(hunk) = file.hunks.iter().find(|h| h.id == hunk_id).cloned() else {
         inner.refuse(command, format!("That hunk is no longer in {path}; the agent may have changed it"));
         return None;
-    }
-    Some(file)
+    };
+    Some((file, hunk))
 }
 
 /// Change one hunk's review and report it.
-fn update(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, change: impl FnOnce(&mut HunkReview)) {
+fn update(inner: &mut Inner, worktree_path: &str, path: &str, hunk: &Hunk, change: impl FnOnce(&mut HunkReview)) {
+    let hunk_id = hunk.id.as_str();
     let reviews = inner.review.hunks.entry(worktree_path.to_string()).or_default();
     let review = reviews.entry(hunk_id.to_string()).or_default();
+    review.path = path.to_string();
+    review.header = hunk.header.clone();
     change(review);
     let review = review.clone();
     if review.decision.is_none() && review.comment.is_none() {
@@ -77,7 +96,7 @@ fn update(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, cha
 
 pub(crate) fn decide_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, decision: Option<Decision>) {
     const COMMAND: &str = command_name::DECIDE_HUNK;
-    let Some(file) = find(inner, COMMAND, worktree_path, path, hunk_id) else { return };
+    let Some((file, hunk)) = find(inner, COMMAND, worktree_path, path, hunk_id) else { return };
     if decision.is_some() {
         if let Some(reason) = conflict(inner, worktree_path, &file) {
             return inner.refuse(COMMAND, reason);
@@ -90,7 +109,7 @@ pub(crate) fn decide_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hu
         }
         inner.emit(Event::FileDecided { worktree_path: worktree_path.into(), path: path.into(), decision: None });
     }
-    update(inner, worktree_path, path, hunk_id, |r| {
+    update(inner, worktree_path, path, &hunk, |r| {
         if r.decision != decision {
             r.decision = decision;
             r.sent = false;
@@ -100,11 +119,9 @@ pub(crate) fn decide_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hu
 
 pub(crate) fn comment_hunk(inner: &mut Inner, worktree_path: &str, path: &str, hunk_id: &str, comment: Option<&str>) {
     const COMMAND: &str = command_name::COMMENT_HUNK;
-    if find(inner, COMMAND, worktree_path, path, hunk_id).is_none() {
-        return;
-    }
+    let Some((_, hunk)) = find(inner, COMMAND, worktree_path, path, hunk_id) else { return };
     let comment = comment.map(str::trim).filter(|c| !c.is_empty()).map(String::from);
-    update(inner, worktree_path, path, hunk_id, |r| {
+    update(inner, worktree_path, path, &hunk, |r| {
         if r.comment != comment {
             r.comment = comment;
             r.sent = false;
@@ -115,7 +132,7 @@ pub(crate) fn comment_hunk(inner: &mut Inner, worktree_path: &str, path: &str, h
 /// Accepting a whole file clears the rejections on its hunks (comments stay).
 pub(super) fn clear_rejections(inner: &mut Inner, worktree_path: &str, file: &ChangedFile) {
     for hunk in file.hunks.iter().filter(|h| h.decision == Some(Decision::Reject)) {
-        update(inner, worktree_path, &file.path, &hunk.id, |r| r.decision = None);
+        update(inner, worktree_path, &file.path, hunk, |r| r.decision = None);
     }
 }
 
@@ -160,9 +177,9 @@ pub(crate) fn send_feedback(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktre
         return;
     }
     let count = items.len() as u32;
-    let sent: Vec<(String, String)> = items.iter().map(|(f, h)| (f.path.clone(), h.id.clone())).collect();
-    for (path, hunk_id) in sent {
-        update(inner, worktree_path, &path, &hunk_id, |r| r.sent = true);
+    let sent: Vec<(String, Hunk)> = items.iter().map(|(f, h)| (f.path.clone(), (*h).clone())).collect();
+    for (path, hunk) in sent {
+        update(inner, worktree_path, &path, &hunk, |r| r.sent = true);
     }
     inner.emit(Event::FeedbackSent { worktree_path: worktree_path.into(), session_id, hunks: count });
 }

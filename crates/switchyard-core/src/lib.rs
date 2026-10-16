@@ -28,11 +28,13 @@ mod spend;
 mod store;
 mod subprocess;
 mod tasks;
+pub mod watcher;
+mod disk;
 mod worktrees;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use switchyard_schema::command_name;
 use switchyard_schema::{Command, Event, Repository, Worktree};
@@ -73,6 +75,12 @@ pub struct Runtime {
     /// Claude Code's home (`~/.claude`): where it keeps each project's memory, read for
     /// Context.
     pub claude_home: PathBuf,
+    /// Tells the core when a Worktree changes on disk (ADR-0008).
+    pub watcher: Arc<dyn watcher::Watcher>,
+    /// How often the core re-derives Worktrees whose watcher cannot run, and tries to watch
+    /// them again (about [`watcher::FALLBACK_EVERY`]); `None`: only when
+    /// [`Core::fallback_tick`] is called (tests tick it by hand).
+    pub fallback_every: Option<std::time::Duration>,
 }
 
 impl Default for Runtime {
@@ -89,6 +97,8 @@ impl Default for Runtime {
             forge_poll_every: None,
             claude_home: context::default_claude_home(),
             sandbox_evidence: policy::detect_sandbox,
+            watcher: Arc::new(watcher::NoWatcher),
+            fallback_every: None,
         }
     }
 }
@@ -128,6 +138,20 @@ pub(crate) struct Inner {
     compat: Compat,
     review: review::Decisions,
     forge: forge::Tracker,
+    /// The core itself, for callbacks that re-enter it from other threads (the watcher).
+    me: Weak<Mutex<Inner>>,
+    /// Each Repository's worktrees as last announced, by repository id: what a re-list
+    /// from git is compared with.
+    announced_worktrees: std::collections::HashMap<String, Vec<Worktree>>,
+    /// Worktrees whose watcher cannot run, by path, with why: re-derived on a slow cadence.
+    unwatched: std::collections::BTreeMap<String, String>,
+    /// The directory each watched Worktree's Claude memory is watched through, by path
+    /// (none until Claude makes one).
+    watched_memory: std::collections::HashMap<String, PathBuf>,
+    /// A fingerprint of each Worktree's configuration files as last re-read, by path: what
+    /// the slow cadence and the end of a turn compare with, so unchanged configuration is
+    /// not pushed again.
+    config_stamps: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Debug)]
@@ -155,13 +179,20 @@ impl Core {
             compat,
             review: Default::default(),
             forge: Default::default(),
+            me: Weak::new(),
+            announced_worktrees: Default::default(),
+            unwatched: Default::default(),
+            watched_memory: Default::default(),
+            config_stamps: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
         shells::kill_orphans(&inner);
         review::load(&mut inner);
         let every = inner.runtime.forge_poll_every;
+        let fallback_every = inner.runtime.fallback_every;
         let inner = Arc::new(Mutex::new(inner));
+        inner.lock().expect("core lock").me = Arc::downgrade(&inner);
         if let Some(every) = every {
             let weak = Arc::downgrade(&inner);
             std::thread::spawn(move || loop {
@@ -170,7 +201,22 @@ impl Core {
                 forge::poll(&core);
             });
         }
+        if let Some(every) = fallback_every {
+            let weak = Arc::downgrade(&inner);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(every);
+                let Some(core) = weak.upgrade() else { break };
+                disk::fallback_tick_locking(&core);
+            });
+        }
         Ok(Core { inner })
+    }
+
+    /// One beat of the slow cadence for Worktrees whose watcher cannot run: re-derive each
+    /// and try its watcher again. The core ticks itself every [`Runtime::fallback_every`]
+    /// when that is set.
+    pub fn fallback_tick(&self) {
+        disk::fallback_tick_locking(&self.inner);
     }
 
     /// One tick of the Forge poller: poll every worktree branch whose turn it is, and clean
@@ -194,6 +240,8 @@ impl Core {
             Command::OpenPullRequest { worktree_path } => return forge::open_pull_request(&self.inner, &worktree_path),
             Command::PruneMerged { repository_id } => return forge::prune(&self.inner, &repository_id),
             Command::CheckForge => return forge::check(&self.inner),
+            Command::PollForgeNow => return forge::poll_now(&self.inner),
+            Command::WindowVisibility { visible } => return forge::set_visible(&self.inner, visible),
             Command::SyncTasks { repository_id } => return tasks::sync(&self.inner, &repository_id),
             Command::Attach => forge::detect_if_unknown(&self.inner),
             _ => {}
@@ -269,7 +317,12 @@ impl Core {
             Command::SetSecretValue { repository_id, name, value } => {
                 secrets::set_value(&mut inner, &repository_id, &name, &value)
             }
-            Command::CheckForge | Command::OpenPullRequest { .. } | Command::PruneMerged { .. } | Command::SyncTasks { .. } => {
+            Command::CheckForge
+            | Command::PollForgeNow
+            | Command::WindowVisibility { .. }
+            | Command::OpenPullRequest { .. }
+            | Command::PruneMerged { .. }
+            | Command::SyncTasks { .. } => {
                 unreachable!("handled above without holding the core")
             }
             Command::LocalMerge { worktree_path } => forge::local_merge(&mut inner, &worktree_path),
@@ -320,6 +373,8 @@ impl Inner {
         for repo in stored {
             if let Err(reason) = self.announce(&repo) {
                 self.refuse(command_name::ATTACH, reason);
+            } else {
+                self.watch_and_refresh(&repo);
             }
         }
         sessions::replay(self);
@@ -351,10 +406,20 @@ impl Inner {
             Ok(repo) => {
                 if let Err(reason) = self.announce(&repo) {
                     self.refuse(COMMAND, reason);
+                } else {
+                    self.watch_and_refresh(&repo);
                 }
             }
             Err(e) => self.refuse(COMMAND, format!("cannot save the repository: {e}")),
         }
+    }
+
+    /// Watch each of an announced repository's worktrees and push their facts, so none
+    /// waits for a change to have them.
+    fn watch_and_refresh(&mut self, repo: &StoredRepository) {
+        disk::remember_repository(self, repo);
+        disk::watch_repository(self, Path::new(&repo.path));
+        worktrees::refresh_repository(self, Path::new(&repo.path));
     }
 
     /// Read a stored repository's facts from git and emit them.

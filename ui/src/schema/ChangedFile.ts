@@ -2,6 +2,7 @@
 import type { Decision } from "./Decision";
 import type { FileStatus } from "./FileStatus";
 import type { Hunk } from "./Hunk";
+import type { StaleHunk } from "./StaleHunk";
 
 /**
  * One file with uncommitted changes.
@@ -18,4 +19,14 @@ added: number, removed: number,
 /**
  * Git shows no text diff for the file.
  */
-binary: boolean, decision: Decision | null, hunks: Array<Hunk>, };
+binary: boolean, decision: Decision | null, 
+/**
+ * The file's Decision is a Stale decision: it was made on content that has since
+ * changed, so it is shown but does not count until re-confirmed.
+ */
+stale: boolean, hunks: Array<Hunk>, 
+/**
+ * Hunk Decisions on hunks no longer in the diff (the hunk changed since you decided):
+ * kept to show, never counted.
+ */
+staleHunks: Array<StaleHunk>, };

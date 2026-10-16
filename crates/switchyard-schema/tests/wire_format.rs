@@ -122,11 +122,20 @@ fn worktree_lifecycle_commands_and_events_use_camel_case() {
 
     let event = Event::WorktreeFactsChanged {
         worktree_path: "/wt/x".into(),
-        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3, conflicts: vec!["src/a.rs".into()] },
+        facts: WorktreeFacts { ahead: 1, behind: 2, dirty: 3, conflicts: vec!["src/a.rs".into()], changed_files: 3, commits: 1 },
     };
     assert_eq!(
         serde_json::to_value(event).unwrap(),
-        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3, "conflicts": ["src/a.rs"]}})
+        json!({"type": "worktreeFactsChanged", "worktreePath": "/wt/x", "facts": {"ahead": 1, "behind": 2, "dirty": 3, "conflicts": ["src/a.rs"], "changedFiles": 3, "commits": 1}})
+    );
+
+    let changed = Event::WorktreeChanged {
+        worktree_path: "/wt/x".into(),
+        kinds: vec![switchyard_schema::ChangeKind::Files, switchyard_schema::ChangeKind::Git],
+    };
+    assert_eq!(
+        serde_json::to_value(changed).unwrap(),
+        json!({"type": "worktreeChanged", "worktreePath": "/wt/x", "kinds": ["files", "git"]})
     );
 }
 
@@ -213,7 +222,7 @@ fn persistence_commands_and_events_use_camel_case() {
 
 #[test]
 fn review_commands_and_events_use_camel_case() {
-    use switchyard_schema::{ChangedFile, Decision, DiffLine, FileStatus, Hunk, LineKind};
+    use switchyard_schema::{ChangedFile, Decision, DiffLine, FileStatus, Hunk, LineKind, StaleHunk};
     let command: Command = serde_json::from_value(
         json!({"type": "decideFile", "worktreePath": "/wt/x", "path": "a.rs", "decision": "accept"}),
     )
@@ -235,7 +244,8 @@ fn review_commands_and_events_use_camel_case() {
             added: 1,
             removed: 0,
             binary: false,
-            decision: None,
+            decision: Some(Decision::Accept),
+            stale: true,
             hunks: vec![Hunk {
                 id: "00ff".into(),
                 header: "@@ -1 +1,2 @@".into(),
@@ -244,17 +254,37 @@ fn review_commands_and_events_use_camel_case() {
                 comment: Some("why?".into()),
                 sent: false,
             }],
+            stale_hunks: vec![StaleHunk {
+                id: "11aa".into(),
+                header: "@@ -5 +5 @@".into(),
+                decision: Decision::Reject,
+                comment: None,
+                sent: true,
+            }],
         }],
     };
     assert_eq!(
         serde_json::to_value(event).unwrap(),
         json!({"type": "changesRead", "worktreePath": "/wt/x", "files": [{
             "path": "b.rs", "oldPath": "a.rs", "status": "renamed", "added": 1, "removed": 0,
-            "binary": false, "decision": null,
+            "binary": false, "decision": "accept", "stale": true,
             "hunks": [{"id": "00ff", "header": "@@ -1 +1,2 @@",
                        "lines": [{"kind": "added", "old": null, "new": 2, "text": "x"}],
-                       "decision": "reject", "comment": "why?", "sent": false}]
+                       "decision": "reject", "comment": "why?", "sent": false}],
+            "staleHunks": [{"id": "11aa", "header": "@@ -5 +5 @@", "decision": "reject", "comment": null, "sent": true}]
         }]})
+    );
+    let event = Event::Committed {
+        worktree_path: "/wt/x".into(),
+        branch: Some("feat/x".into()),
+        commit: "abc1234".into(),
+        files: vec!["a.rs".into()],
+        skipped_stale: vec!["b.rs".into()],
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"type": "committed", "worktreePath": "/wt/x", "branch": "feat/x", "commit": "abc1234",
+               "files": ["a.rs"], "skippedStale": ["b.rs"]})
     );
 }
 

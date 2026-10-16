@@ -3,6 +3,7 @@
 // ("Pick one" in Context).
 import { useEffect, useState } from "react";
 import { useAction } from "./actions";
+import { CheckedAgo } from "./CheckedAgo";
 import type { Command } from "./schema/Command";
 import type { Task } from "./schema/Task";
 import type { TaskKind } from "./schema/TaskKind";
@@ -44,6 +45,9 @@ export function TasksView(props: {
       : forge.type === "missing"
         ? `GitHub CLI (gh) is not installed; install it (${forge.installHint}) to sync GitHub Issues.`
         : `GitHub CLI (gh) is not signed in; run ${forge.loginHint} to sync GitHub Issues.`;
+  // The Forge is polled, not pushed: say how fresh the stalest synced repository's issues are.
+  const checks = tracked.map((r) => state.tasksChecked[r.id]).filter((t): t is number => typeof t === "number");
+  const checked = checks.length ? Math.min(...checks) : null;
 
   return (
     <div className="page">
@@ -53,13 +57,14 @@ export function TasksView(props: {
           Local tasks and GitHub Issues per repository. Assign a task to an agent and a worktree is created for it.
         </span>
         <div className="right">
+          {checked !== null && <CheckedAgo at={checked} />}
           <button
             className="btn"
             disabled={tracked.length === 0}
-            title={tracked.length === 0 ? "No repository has a remote to read GitHub Issues from" : "Read GitHub Issues again"}
+            title={tracked.length === 0 ? "No repository has a remote to read GitHub Issues from" : "Read GitHub Issues now"}
             onClick={() => tracked.forEach((r) => send({ type: "syncTasks", repositoryId: r.id }))}
           >
-            Sync
+            Sync now
           </button>
           <button className="btn" onClick={onNewTask} disabled={state.repositories.length === 0}>
             New local task

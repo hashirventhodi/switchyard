@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { App } from "../App";
 import type { Event } from "../schema/Event";
 import type { PullRequest } from "../schema/PullRequest";
@@ -38,10 +38,11 @@ const pr = (change: Partial<PullRequest> = {}): PullRequest => ({
   review: "none",
   ...change,
 });
-const prChanged = (pullRequest: PullRequest | null, worktreePath = "/wt/acme/login"): Event => ({
+const prChanged = (pullRequest: PullRequest | null, worktreePath = "/wt/acme/login", checkedAtMs = 0): Event => ({
   type: "pullRequestChanged",
   worktreePath,
   pullRequest,
+  checkedAtMs,
 });
 
 function launch(events: Event[], repository?: Repository) {
@@ -288,4 +289,53 @@ test("History shows no pull request section when the branch has none", () => {
   fireEvent.click(screen.getByRole("tab", { name: /History/ }));
   act(() => emit({ type: "worktreeHistory", worktreePath: "/wt/acme/login", base: "main", commits: [] }));
   expect(screen.queryByRole("region", { name: "Pull request" })).toBeNull();
+});
+
+test("the pull request card says how long ago the Forge was checked; no local view does", () => {
+  const NOW = 1_760_000_000_000;
+  vi.useFakeTimers({ now: NOW });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  const { emit } = launch([{ type: "sessionStarted", session: finished }, prChanged(pr(), "/wt/acme/login", NOW - 12_000)]);
+  openSession();
+  fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+  act(() => emit({ type: "worktreeHistory", worktreePath: "/wt/acme/login", base: "main", commits: [] }));
+  const section = () => screen.getByRole("region", { name: "Pull request" });
+  expect(section().textContent).toContain("checked 12 s ago");
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(section().textContent).toContain("checked 17 s ago");
+  act(() => emit(prChanged(pr(), "/wt/acme/login", NOW + 4_000)));
+  expect(section().textContent).toContain("checked 1 s ago");
+  // Only the pull request card: not the header, the sidebar, nor anything local.
+  expect(screen.getAllByText(/checked \d+ s ago/)).toHaveLength(1);
+  expect(header().textContent).not.toContain("checked");
+  expect(sidebar().textContent).not.toContain("checked");
+});
+
+test("the checked-ago label stops repainting while the window is hidden and catches up when shown", () => {
+  const NOW = 1_760_000_000_000;
+  vi.useFakeTimers({ now: NOW });
+  const setVisibility = (state: "visible" | "hidden") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    act(() => {
+      document.dispatchEvent(new window.Event("visibilitychange"));
+    });
+  };
+  onTestFinished(() => {
+    setVisibility("visible");
+    vi.useRealTimers();
+  });
+  const { emit } = launch([{ type: "sessionStarted", session: finished }, prChanged(pr(), "/wt/acme/login", NOW - 12_000)]);
+  openSession();
+  fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+  act(() => emit({ type: "worktreeHistory", worktreePath: "/wt/acme/login", base: "main", commits: [] }));
+  const section = () => screen.getByRole("region", { name: "Pull request" });
+
+  setVisibility("hidden");
+  act(() => vi.advanceTimersByTime(30_000));
+  expect(section().textContent).toContain("checked 12 s ago");
+
+  setVisibility("visible");
+  expect(section().textContent).toContain("checked 42 s ago");
 });

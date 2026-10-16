@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use switchyard_schema::command_name;
 use switchyard_schema::{AgentKind, ArchivedSession, Entry, Event, PermissionMode, SessionStatus, Settings};
 
-use super::{begin, persist, status_label};
+use super::{append, begin, change_status, persist, requests, status_label, Cause};
 use crate::processes;
 use crate::session_store;
 use crate::Inner;
@@ -54,6 +54,23 @@ pub(crate) fn archive_occupant(inner: &mut Inner, path: &str) -> Result<(), Stri
     let id = state.session.id.clone();
     archive(inner, &id);
     Ok(())
+}
+
+/// Archive the session on the worktree at `path`, which git has already removed (outside
+/// Switchyard). An agent at work is stopped first; its transcript says why.
+pub(crate) fn archive_gone(inner: &mut Inner, path: &str) {
+    let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.worktree_path == path) else { return };
+    let id = state.session.id.clone();
+    if let Some(status) = change_status(state, &Cause::UserStop) {
+        let entry = append(state, Entry::System { text: "Stopped: its worktree was removed outside Switchyard.".into() });
+        let cancelled = requests::cancel_all(state);
+        inner.emit(status);
+        inner.emit(entry);
+        for event in cancelled {
+            inner.emit(event);
+        }
+    }
+    archive(inner, &id);
 }
 
 /// Archive the session `id`: stop its agent, keep its transcript, drop it from the live

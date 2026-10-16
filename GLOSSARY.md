@@ -105,7 +105,7 @@ The Forge reports the branch is in base. Triggers worktree cleanup and moves the
 ### Review
 
 **Decision**:
-Accept or Reject on a changed file or one of its hunks, pinned to the content it was made on. File decisions override hunk decisions. Discarded on commit.
+Accept or Reject on a changed file or one of its hunks, pinned to the content it was made on. File decisions override hunk decisions. Discarded when its file is committed (in Switchyard or outside it) or reverted.
 
 **Stale decision**:
 A Decision whose file or hunk has changed since it was made. It stays visible, flagged as changed since you decided, and stops counting: a stale Accept is not committable until re-confirmed; a stale hunk Reject reads as feedback sent and revised, awaiting re-review. Re-confirming makes a new Decision on the current content.

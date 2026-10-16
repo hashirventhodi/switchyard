@@ -326,6 +326,13 @@ pub enum Command {
     /// Detect the Forge's CLI (`gh`) and its sign-in again. Answered with
     /// [`Event::ForgeChecked`].
     CheckForge,
+    /// Run a Forge poller tick now (pull requests and GitHub issues) and reset its back-off:
+    /// the window was focused. Answered as any tick is, with the Forge events that changed.
+    PollForgeNow,
+    /// The window was shown or hidden. Hidden, the Forge poller polls every due item at its
+    /// slowest cadence; shown, it polls at once and resets its back-off (as
+    /// [`Command::PollForgeNow`]). Watching and agent events carry on either way.
+    WindowVisibility { visible: bool },
     /// Push a worktree's branch and open a pull request against its Repository's base on
     /// the Forge. Refused when the worktree has uncommitted files, is behind its base, or
     /// the Forge's CLI is missing or signed out. Answered with [`Event::PullRequestOpened`]
@@ -504,6 +511,8 @@ pub mod command_name {
     pub const READ_POLICY: &str = "readPolicy";
     pub const REVOKE_GRANT: &str = "revokeGrant";
     pub const CHECK_FORGE: &str = "checkForge";
+    pub const POLL_FORGE_NOW: &str = "pollForgeNow";
+    pub const WINDOW_VISIBILITY: &str = "windowVisibility";
     pub const OPEN_PULL_REQUEST: &str = "openPullRequest";
     pub const PRUNE_MERGED: &str = "pruneMerged";
     pub const LOCAL_MERGE: &str = "localMerge";
@@ -520,7 +529,7 @@ pub mod command_name {
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
 }
 
 impl Command {
@@ -567,6 +576,8 @@ impl Command {
             Command::ReadPolicy { .. } => command_name::READ_POLICY,
             Command::RevokeGrant { .. } => command_name::REVOKE_GRANT,
             Command::CheckForge { .. } => command_name::CHECK_FORGE,
+            Command::PollForgeNow { .. } => command_name::POLL_FORGE_NOW,
+            Command::WindowVisibility { .. } => command_name::WINDOW_VISIBILITY,
             Command::OpenPullRequest { .. } => command_name::OPEN_PULL_REQUEST,
             Command::PruneMerged { .. } => command_name::PRUNE_MERGED,
             Command::LocalMerge { .. } => command_name::LOCAL_MERGE,
@@ -722,6 +733,32 @@ pub enum Event {
         worktree_path: String,
         facts: WorktreeFacts,
     },
+    /// Something in a worktree changed (on disk, or at the end of an agent turn), pushed
+    /// beside its facts. A view showing heavy data for the worktree (its Changes, History or
+    /// Context) re-reads it on the kinds it shows; nothing else is derived from this.
+    WorktreeChanged {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        kinds: Vec<ChangeKind>,
+    },
+    /// Live updates are unavailable for a worktree: its watcher could not start or failed.
+    /// Its facts are re-derived on a slow cadence until [`Event::WorktreeWatched`]. Replayed
+    /// on attach for worktrees still in that state.
+    WorktreeUnwatched {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+        /// Why the watcher cannot run, for the person reading the notice.
+        reason: String,
+    },
+    /// A worktree's watcher works again: live updates resume (the all-clear for
+    /// [`Event::WorktreeUnwatched`]).
+    WorktreeWatched {
+        #[serde(rename = "worktreePath")]
+        #[ts(rename = "worktreePath")]
+        worktree_path: String,
+    },
     /// A Session was archived (replaced, or its worktree removed), or an archived Session
     /// is replayed on attach. It is no longer a live Session.
     SessionArchived { archived: ArchivedSession },
@@ -765,16 +802,23 @@ pub enum Event {
         path: String,
         decision: Option<Decision>,
     },
-    /// Accepted files were committed on the worktree's branch.
+    /// Accepted files were committed on the worktree's branch; or, when every accepted file
+    /// changed since you decided, nothing was (`commit` empty, `files` empty, `skippedStale`
+    /// naming them).
     Committed {
         #[serde(rename = "worktreePath")]
         #[ts(rename = "worktreePath")]
         worktree_path: String,
         branch: Option<String>,
-        /// Abbreviated commit id.
+        /// Abbreviated commit id; empty when nothing was committed.
         commit: String,
         /// Paths committed (for a rename, the new path).
         files: Vec<String>,
+        /// Accepted files left out because they changed since you decided (their Accept is
+        /// a Stale decision): re-confirm them to commit them.
+        #[serde(rename = "skippedStale")]
+        #[ts(rename = "skippedStale")]
+        skipped_stale: Vec<String>,
     },
     /// One hunk's review as it stands now (decision, comment, whether they were sent to the
     /// agent). Replaces that hunk's earlier review.
@@ -885,6 +929,11 @@ pub enum Event {
         #[serde(rename = "pullRequest")]
         #[ts(rename = "pullRequest")]
         pull_request: Option<PullRequest>,
+        /// When the Forge was last asked about it, in milliseconds since the Unix epoch:
+        /// the renderer shows "checked N s ago" from it.
+        #[serde(rename = "checkedAtMs")]
+        #[ts(rename = "checkedAtMs", type = "number")]
+        checked_at_ms: u64,
     },
     /// A pull request was opened from Switchyard for the worktree's branch.
     PullRequestOpened {
@@ -931,6 +980,11 @@ pub enum Event {
         #[serde(rename = "houseRules")]
         #[ts(rename = "houseRules")]
         house_rules: String,
+        /// When the GitHub issues were last read from the Forge, in milliseconds since the
+        /// Unix epoch; `null` when they never were (no remote, or never synced).
+        #[serde(rename = "checkedAtMs")]
+        #[ts(rename = "checkedAtMs", type = "number | null")]
+        checked_at_ms: Option<u64>,
     },
     /// The user added a local Task.
     TaskCreated { task: Task },
@@ -1222,7 +1276,29 @@ pub struct ChangedFile {
     /// Git shows no text diff for the file.
     pub binary: bool,
     pub decision: Option<Decision>,
+    /// The file's Decision is a Stale decision: it was made on content that has since
+    /// changed, so it is shown but does not count until re-confirmed.
+    pub stale: bool,
     pub hunks: Vec<Hunk>,
+    /// Hunk Decisions on hunks no longer in the diff (the hunk changed since you decided):
+    /// kept to show, never counted.
+    pub stale_hunks: Vec<StaleHunk>,
+}
+
+/// A hunk Decision whose hunk has since changed (a Stale decision). With `decision` Reject
+/// and `sent`, the agent revised the hunk after receiving the feedback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StaleHunk {
+    /// The id the hunk had when decided.
+    pub id: String,
+    /// The hunk's `@@` line when decided.
+    pub header: String,
+    pub decision: Decision,
+    pub comment: Option<String>,
+    /// The Hunk feedback had been sent to the agent.
+    pub sent: bool,
 }
 
 /// One hunk of a file's diff. `id` is stable while the hunk's own lines are unchanged:
@@ -1384,6 +1460,24 @@ pub struct WorktreeFacts {
     /// Files a merge of the base branch into this branch would conflict on, from a dry-run
     /// merge that never touches the working tree or the index. Empty when not behind.
     pub conflicts: Vec<String>,
+    /// Files the Changes view would list: working-tree changes against the index (renames
+    /// paired), untracked files, unmerged files and files in `conflicts`.
+    pub changed_files: u32,
+    /// Commits the History view would list: those ahead of the base branch, up to its limit.
+    pub commits: u32,
+}
+
+/// What kind of thing changed in a worktree (see [`Event::WorktreeChanged`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ChangeKind {
+    /// Files in the working tree that git does not ignore.
+    Files,
+    /// What git records: HEAD, the index, refs, the HEAD log, worktrees.
+    Git,
+    /// The Repository's configuration files.
+    Config,
 }
 
 /// A shell terminal in the dock: a PTY running the user's shell in a worktree. Shells

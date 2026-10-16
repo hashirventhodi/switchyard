@@ -1,16 +1,21 @@
 // Context's Instructions and Memory sections: the files the session's agent reads as
 // instructions in the worktree (CLAUDE.md, AGENTS.md…) and the memory Claude Code keeps for
 // it. Read through the core, shown read-only; edit them in the repository or the CLI.
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import type { ChangeKind } from "./schema/ChangeKind";
 import type { Command } from "./schema/Command";
 import type { ContextFile } from "./schema/ContextFile";
 import type { ContextKind } from "./schema/ContextKind";
 import type { SessionView, State } from "./state";
+import { useWorktreeChanged } from "./useWorktreeChanged";
+
+/** The instruction and memory files are configuration on disk. */
+const CONTEXT_KINDS: ChangeKind[] = ["config"];
 
 export function ContextFiles(props: { state: State; session: SessionView; send: (command: Command) => void }) {
   const { state, session, send } = props;
   const path = session.worktreePath;
-  useEffect(() => send({ type: "readContext", worktreePath: path }), [path, send]);
+  useWorktreeChanged(state.worktreeChanges, path, CONTEXT_KINDS, () => send({ type: "readContext", worktreePath: path }));
   const files = state.contextFiles[path];
   return (
     <>

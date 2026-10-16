@@ -14,10 +14,13 @@ pub struct GitWorktree {
 #[derive(Debug)]
 pub struct GitError(pub String);
 
+/// Run git in `dir`. Optional locks are off, so reading (`git status`) never rewrites the
+/// index: the core watches the index, and its own reads must not look like a change.
 fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .map_err(|e| GitError(format!("could not run git: {e}")))?;
     if out.status.success() {
@@ -32,16 +35,23 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
 /// directory, or what a linked worktree's `.git` file points at (through its `commondir`).
 /// `None` when `dir` is not the root of a worktree.
 pub fn common_dir(dir: &Path) -> Option<PathBuf> {
+    let gitdir = git_dir(dir)?;
+    match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => gitdir.join(common.trim()).canonicalize().ok(),
+        Err(_) => Some(gitdir),
+    }
+}
+
+/// The worktree rooted at `dir`'s own git directory (its HEAD, index, HEAD log), read from
+/// `dir/.git` without running git: the primary's `.git`, or a linked worktree's
+/// `.git/worktrees/<name>`. Links resolved; `None` when `dir` is not the root of a worktree.
+pub fn git_dir(dir: &Path) -> Option<PathBuf> {
     let dot_git = dir.join(".git");
     if dot_git.is_dir() {
         return dot_git.canonicalize().ok();
     }
     let text = std::fs::read_to_string(&dot_git).ok()?;
-    let gitdir = dir.join(text.trim().strip_prefix("gitdir:")?.trim());
-    match std::fs::read_to_string(gitdir.join("commondir")) {
-        Ok(common) => gitdir.join(common.trim()).canonicalize().ok(),
-        Err(_) => gitdir.canonicalize().ok(),
-    }
+    dir.join(text.trim().strip_prefix("gitdir:")?.trim()).canonicalize().ok()
 }
 
 /// True when `dir` is inside a git repository (any of its worktrees).
@@ -278,6 +288,34 @@ pub fn ahead_behind(dir: &Path, base: &str) -> Result<(u32, u32), GitError> {
     Ok((ahead, behind))
 }
 
+/// Which of `paths` (relative to the worktree at `dir`) git ignores, as given.
+pub fn ignored(dir: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, GitError> {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .args(["check-ignore", "--stdin", "-z"])
+        .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(path.to_string_lossy().as_bytes());
+        input.push(0);
+    }
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
+    let out = child.wait_with_output().map_err(|e| GitError(format!("could not run git: {e}")))?;
+    let _ = writer.join();
+    // Exit 1: none of them is ignored.
+    match out.status.code() {
+        Some(0) | Some(1) => Ok(nul_list(&String::from_utf8_lossy(&out.stdout)).into_iter().map(PathBuf::from).collect()),
+        _ => Err(GitError(String::from_utf8_lossy(&out.stderr).trim().to_string())),
+    }
+}
+
 /// Run git in `dir` with extra environment and no optional index writes.
 fn git_with(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Result<String, GitError> {
     let mut cmd = Command::new("git");
@@ -306,9 +344,26 @@ pub fn diff_against_index(dir: &Path) -> Result<String, GitError> {
         "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--full-index", "-M",
         "--src-prefix=a/", "--dst-prefix=b/",
     ];
+    diff_with_untracked(dir, DIFF)
+}
+
+/// The files [`diff_against_index`] and [`unmerged_paths`] together list (renames paired,
+/// by their new path), without computing the patch. Sorted, no duplicates.
+pub fn changed_paths(dir: &Path) -> Result<Vec<String>, GitError> {
+    const NAMES: &[&str] = &["-c", "core.quotePath=false", "diff", "--no-ext-diff", "-M", "--name-only", "-z"];
+    let mut list = nul_list(&diff_with_untracked(dir, NAMES)?);
+    list.extend(unmerged_paths(dir)?);
+    list.sort();
+    list.dedup();
+    Ok(list)
+}
+
+/// Run `git diff` with `args` against the index, untracked files marked intent-to-add in a
+/// throwaway copy of it (the real index is never written).
+fn diff_with_untracked(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     let untracked = nul_list(&git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?);
     if untracked.is_empty() {
-        return git_with(dir, DIFF, &[]);
+        return git_with(dir, args, &[]);
     }
     let scratch = Scratch::new()?;
     let index = scratch.0.join("index");
@@ -320,7 +375,7 @@ pub fn diff_against_index(dir: &Path) -> Result<String, GitError> {
     std::fs::write(&list, untracked.join("\0")).map_err(|e| GitError(e.to_string()))?;
     let list_arg = format!("--pathspec-from-file={}", list.display());
     git_with(dir, &["add", "-N", "--pathspec-file-nul", &list_arg], &[("GIT_INDEX_FILE", &index)])?;
-    git_with(dir, DIFF, &[("GIT_INDEX_FILE", &index)])
+    git_with(dir, args, &[("GIT_INDEX_FILE", &index)])
 }
 
 /// Paths git holds unmerged (a conflict stopped a merge or rebase here).

@@ -1,11 +1,10 @@
 // The Dashboard: KPIs, the sessions that need the user, and every session as a card.
 // Everything is derived from the core's events; nothing polls.
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { at } from "./chunked";
 import { sessionTitle } from "./ChangesTab";
 import type { NewSessionPreset } from "./NewSession";
 import type { AgentKind } from "./schema/AgentKind";
-import type { Command } from "./schema/Command";
 import { wants } from "./requests";
 import type { SessionStatus } from "./schema/SessionStatus";
 import { sessionOn, type Activity, type SessionView, type State } from "./state";
@@ -23,22 +22,18 @@ export function Dashboard(props: {
   setup?: ReactNode;
   /** The Spend today KPI. */
   spend?: ReactNode;
-  send?: (command: Command) => void;
   /** Open New session (on a free worktree from the occupancy strip). */
   onNewSession?: (preset: NewSessionPreset) => void;
 }) {
-  const { state, onOpenSession, onOpenInbox, setup, spend, send, onNewSession } = props;
+  const { state, onOpenSession, onOpenInbox, setup, spend, onNewSession } = props;
   const [agent, setAgent] = useState<AgentKind | "all">("all");
-  // Changed files counts what git last said; read it again when the Dashboard shows.
-  const repositories = state.repositories.length;
-  useEffect(() => {
-    if (repositories > 0) send?.({ type: "refreshWorktrees" });
-  }, [send, repositories]);
+  // Changed files counts what Changes would list, from the facts the core pushes (at attach
+  // and on every change on disk).
   const sessions = Object.values(state.sessions);
   const worktrees = state.repositories.flatMap((r) => r.worktrees.map((w) => ({ repo: r, worktree: w })));
   const changedFiles = worktrees
     .filter(({ worktree }) => !worktree.primary)
-    .reduce((n, { worktree }) => n + (state.worktreeFacts[worktree.path]?.dirty ?? 0), 0);
+    .reduce((n, { worktree }) => n + (state.worktreeFacts[worktree.path]?.changedFiles ?? 0), 0);
   const count = (s: SessionStatus) => sessions.filter((x) => x.status === s).length;
   const sorted = [...sessions].sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status]);
   const attention = sorted.filter((s) => s.status === "waiting" || s.status === "failed");
