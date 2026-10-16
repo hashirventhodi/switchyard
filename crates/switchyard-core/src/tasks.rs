@@ -292,9 +292,7 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     let mut inner = core.lock().expect("core lock");
     let failed = match read {
         Ok(issues) => {
-            let now = (inner.runtime.now_ms)();
-            let kept = github::save(inner.store.db(), &repo.id, &issues)
-                .and_then(|()| github::checked(inner.store.db(), &repo.id, now));
+            let kept = keep_issues(&inner, &repo.id, &issues);
             // Synced: the Forge poller keeps the issues current from here, starting afresh.
             forge::issues_synced(&mut inner, &repo.id);
             kept.err()
@@ -576,14 +574,17 @@ pub(crate) fn refresh_issues(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     let Some(repo) = worktrees::repository(&inner, repository_id) else { return };
     let changed = github::differ(inner.store.db(), &repo.id, &issues);
     forge::issues_polled(&mut inner, repository_id, changed);
-    let now = (inner.runtime.now_ms)();
-    let kept =
-        github::save(inner.store.db(), &repo.id, &issues).and_then(|()| github::checked(inner.store.db(), &repo.id, now));
-    if kept.is_ok() {
+    if keep_issues(&inner, &repo.id, &issues).is_ok() {
         if let Ok(tasks) = list(&inner, &repo) {
             inner.emit(tasks_changed(&inner, &repo, tasks));
         }
     }
+}
+
+/// Store `issues` as the repository's GitHub issues, read just now.
+fn keep_issues(inner: &Inner, repository_id: &str, issues: &[crate::forge::ForgeIssue]) -> Result<(), String> {
+    let now = (inner.runtime.now_ms)();
+    github::save(inner.store.db(), repository_id, issues).and_then(|()| github::checked(inner.store.db(), repository_id, now))
 }
 
 /// Is the repository's GitHub issues source one the Forge poller keeps current (synced

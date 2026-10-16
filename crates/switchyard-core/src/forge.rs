@@ -129,7 +129,7 @@ fn next_every(every: u32, changed: bool, hidden: bool) -> u32 {
     }
 }
 
-/// When a GitHub issues source is next read: the same back-off as a pull request's.
+/// When a polled item (a pull request, a GitHub issues source) is next asked about.
 struct Schedule {
     /// Ticks between polls now, and ticks left until the next one.
     every: u32,
@@ -137,6 +137,7 @@ struct Schedule {
 }
 
 impl Default for Schedule {
+    /// Due on the next tick, backing off from there.
     fn default() -> Self {
         Schedule { every: 1, wait: 0 }
     }
@@ -144,18 +145,31 @@ impl Default for Schedule {
 
 impl Schedule {
     fn polled(&mut self, changed: bool, hidden: bool) {
-        self.every = next_every(self.every, changed, hidden);
-        self.wait = self.every - 1;
+        self.every_ticks(next_every(self.every, changed, hidden));
+    }
+
+    /// Poll every `every` ticks from now.
+    fn every_ticks(&mut self, every: u32) {
+        self.every = every;
+        self.wait = every - 1;
+    }
+
+    /// Whether the item is due on this tick; counts down when it is not.
+    fn due(&mut self) -> bool {
+        if self.wait == 0 {
+            return true;
+        }
+        self.wait -= 1;
+        false
     }
 }
 
+#[derive(Default)]
 struct Track {
     pull_request: Option<ForgePullRequest>,
     /// When the Forge was last asked about it (ms since the Unix epoch).
     checked_at_ms: u64,
-    /// Ticks between polls now, and ticks left until the next one.
-    every: u32,
-    wait: u32,
+    schedule: Schedule,
     /// Merged, but the worktree was kept (an agent at work, uncommitted files): the Forge
     /// is not asked again; each tick tries the cleanup again until it succeeds.
     cleanup: Option<Cleanup>,
@@ -169,17 +183,14 @@ struct Cleanup {
     pull_request: Option<u32>,
 }
 
-impl Default for Track {
-    fn default() -> Self {
-        Track { pull_request: None, checked_at_ms: 0, every: 1, wait: 0, cleanup: None }
-    }
-}
-
 impl Track {
     fn polled(&mut self, changed: bool, hidden: bool) {
         let closed = self.pull_request.as_ref().is_some_and(|p| p.pull_request.state == PullRequestState::Closed);
-        self.every = if closed { CLOSED_TICKS } else { next_every(self.every, changed, hidden) };
-        self.wait = self.every - 1;
+        if closed {
+            self.schedule.every_ticks(CLOSED_TICKS);
+        } else {
+            self.schedule.polled(changed, hidden);
+        }
     }
 }
 
@@ -298,7 +309,7 @@ pub(crate) fn poll_now(core: &Arc<Mutex<Inner>>) {
     {
         let mut inner = core.lock().expect("core lock");
         for track in inner.forge.tracks.values_mut() {
-            (track.every, track.wait) = (1, 0);
+            track.schedule = Schedule::default();
         }
         for schedule in inner.forge.issues.values_mut() {
             *schedule = Schedule::default();
@@ -500,11 +511,11 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
         (inner.runtime.forge.clone(), inner.store.repositories().unwrap_or_default())
     };
     let candidates = candidates(&repos);
-    let remoted: Vec<String> =
+    let with_remote: Vec<String> =
         repos.iter().filter(|r| git::remote(Path::new(&r.path)).is_some()).map(|r| r.id.clone()).collect();
     let (due, issues_due) = {
         let mut inner = core.lock().expect("core lock");
-        (due(&mut inner, candidates), issues_due(&mut inner, remoted))
+        (due(&mut inner, candidates), issues_due(&mut inner, with_remote))
     };
     let results: Vec<_> = due
         .into_iter()
@@ -541,17 +552,14 @@ pub(crate) fn poll(core: &Arc<Mutex<Inner>>) {
 /// The repositories (of those with a remote) whose GitHub issues are to be read on this
 /// tick; counts down the others. Only repositories synced once are polled; forgets those
 /// that are gone.
-fn issues_due(inner: &mut Inner, remoted: Vec<String>) -> Vec<String> {
-    let synced: Vec<String> = remoted.into_iter().filter(|id| tasks::issues_synced(inner, id)).collect();
+fn issues_due(inner: &mut Inner, with_remote: Vec<String>) -> Vec<String> {
+    let synced: Vec<String> = with_remote.into_iter().filter(|id| tasks::issues_synced(inner, id)).collect();
     inner.forge.issues.retain(|id, _| synced.contains(id));
     let mut list = Vec::new();
     for id in synced {
-        let schedule = inner.forge.issues.entry(id.clone()).or_default();
-        if schedule.wait > 0 {
-            schedule.wait -= 1;
-            continue;
+        if inner.forge.issues.entry(id.clone()).or_default().due() {
+            list.push(id);
         }
-        list.push(id);
     }
     list
 }
@@ -586,8 +594,7 @@ fn due(inner: &mut Inner, candidates: Vec<Candidate>) -> Vec<Due> {
         if track.cleanup.is_some() {
             continue;
         }
-        if track.wait > 0 {
-            track.wait -= 1;
+        if !track.schedule.due() {
             continue;
         }
         list.push(Due { repository_id: c.repository_id, path: c.path, branch: c.branch, base: c.base });
