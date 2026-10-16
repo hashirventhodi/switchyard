@@ -177,7 +177,7 @@ pub(super) fn resolve(inner: &mut Inner, id: &str, request_id: &str, verdict: Ve
     // A Model switch that waited on the answer goes just before it, so the agent's request
     // after the answer is the first on the new Model.
     if last {
-        super::send_queued_switch(inner, id);
+        super::model_switch::send_queued_switch(inner, id);
     }
     send_to_agent(inner, id, AgentCommand::AnswerRequest { request_id: request_id.into(), verdict: agent_verdict });
 }
