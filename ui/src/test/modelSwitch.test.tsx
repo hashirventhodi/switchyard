@@ -120,3 +120,25 @@ test("an Explore session switches Models too", () => {
 
   expect(sent).toContainEqual({ type: "setModel", sessionId: "session-1", model: "claude-haiku-4-5" });
 });
+
+const checked = (switchModelLive: boolean): Event => ({
+  type: "agentsChecked",
+  agents: [{ agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" }, switchModelLive }],
+});
+
+test("on a CLI that cannot switch live, the control reads that a switch applies on resume", () => {
+  const { sent, emit } = launch(checked(false), { type: "sessionStarted", session }, runningOn("claude-opus-5-5"));
+  expect(within(control()).getByRole("note").textContent).toBe("Applies on resume");
+
+  switchTo("claude-sonnet-5-5");
+  expect(sent).toContainEqual({ type: "setModel", sessionId: "session-1", model: "claude-sonnet-5-5" });
+  act(() => emit(switchState("claude-sonnet-5-5")));
+
+  expect(within(control()).getByRole("status").textContent).toBe("Switches to claude-sonnet-5-5 when the session resumes.");
+});
+
+test("on a CLI that switches live, there is no such note", () => {
+  launch(checked(true), { type: "sessionStarted", session }, runningOn("claude-opus-5-5"));
+
+  expect(within(control()).queryByRole("note")).toBeNull();
+});

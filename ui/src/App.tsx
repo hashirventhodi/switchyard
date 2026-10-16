@@ -20,6 +20,7 @@ import { BehindBadge, BranchPane, branchOf } from "./History";
 import { SetupPanel, type OpenLink } from "./Setup";
 import { PrBadge, PullRequestActions } from "./PullRequest";
 import { SpendToday } from "./spend";
+import { switchesModelLive } from "./model";
 import type { CoreConnection } from "./core";
 import { Dashboard } from "./Dashboard";
 import { Inbox } from "./Inbox";
@@ -541,6 +542,7 @@ export function App({
                 send={core.send}
                 pending={state.requests[shownSession.id] ?? NONE}
                 policy={state.policies[shownSession.repositoryId]}
+                switchModelLive={switchesModelLive(state.agents, shownSession.agent)}
                 revealRequest={reveal}
                 branchState={
                   <>

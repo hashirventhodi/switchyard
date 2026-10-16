@@ -16,7 +16,7 @@ const repoEvents: Event[] = [
 
 const claude = (state: AgentSetupState): Event => ({
   type: "agentsChecked",
-  agents: [{ agent: "claudeCode", name: "Claude Code", state }],
+  agents: [{ agent: "claudeCode", name: "Claude Code", state, switchModelLive: true }],
 });
 
 const missing = claude({

@@ -54,6 +54,17 @@ fn attaching_reports_an_installed_supported_cli_as_ready() {
 }
 
 #[test]
+fn each_agent_says_whether_its_model_switches_live_or_apply_on_resume() {
+    let mut core = Harness::launch();
+
+    let agents = agents_checked(&core.send(Command::Attach));
+
+    let live = |kind| agents.iter().find(|a| a.agent == kind).expect("listed").switch_model_live;
+    assert!(live(AgentKind::ClaudeCode), "its adapter's manifest says so");
+    assert!(!live(AgentKind::Codex), "a switch on Codex applies on resume");
+}
+
+#[test]
 fn a_cli_newer_than_this_build_blocks_new_sessions_with_an_update_link() {
     let (mut core, _repo, worktree) = setup();
     core.probe.cli_prints(Some("2.2.0 (Claude Code)"));

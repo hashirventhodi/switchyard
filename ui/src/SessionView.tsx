@@ -39,6 +39,9 @@ export interface SessionViewProps {
   onToggleChanges?: () => void;
   /** The repository's policy: its ceiling caps the composer's mode segment. */
   policy?: Policy;
+  /** The agent switches its Model live; otherwise the composer's Model control reads
+   * "applies on resume". */
+  switchModelLive?: boolean;
   /** Show the review pane on its Changes tab (the Finished and Paused boxes). */
   onReviewChanges?: () => void;
   /** Open a shell in the session's worktree (the Error box). */
@@ -128,6 +131,7 @@ export function SessionView(props: SessionViewProps) {
         input={composer}
         draft={draft}
         ceiling={policy?.ceiling ?? null}
+        switchModelLive={props.switchModelLive ?? true}
       />
     </section>
   );
@@ -404,8 +408,9 @@ function Composer(props: {
   /** Text something else (Ask agent in review) drafted for the user to finish and send. */
   draft: Draft;
   ceiling: PermissionMode | null;
+  switchModelLive: boolean;
 }) {
-  const { session, send, pending, input, draft, ceiling } = props;
+  const { session, send, pending, input, draft, ceiling, switchModelLive } = props;
   const [text, setText] = useState("");
   useEffect(() => {
     if (draft.seq === 0) return;
@@ -449,7 +454,7 @@ function Composer(props: {
       <div className="composer">
         <div className="composer-controls">
           <ModeSegment session={session} send={send} ceiling={ceiling} />
-          {choosesModel(session.agent) && <ModelSwitch session={session} send={send} />}
+          {choosesModel(session.agent) && <ModelSwitch session={session} send={send} live={switchModelLive} />}
         </div>
         <textarea
           ref={input}

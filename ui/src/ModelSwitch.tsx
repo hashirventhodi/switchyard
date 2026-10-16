@@ -1,12 +1,14 @@
 // The composer's Model control: switch a running Session's Model. A switch applies from the
 // agent's next request and shows as pending until the core confirms the agent runs on it; a
-// switch that did not take shows why and the control goes back to the Model running.
+// switch that did not take shows why and the control goes back to the Model running. On a
+// CLI that cannot switch `live` it reads "applies on resume": the switch is recorded, the
+// running process is left alone, and the Session resumes on it.
 import { useEffect, useState } from "react";
 import type { Command } from "./schema/Command";
 import type { SessionView } from "./state";
 
-export function ModelSwitch(props: { session: SessionView; send: (command: Command) => void }) {
-  const { session, send } = props;
+export function ModelSwitch(props: { session: SessionView; send: (command: Command) => void; live: boolean }) {
+  const { session, send, live } = props;
   const running = session.facts.model ?? "";
   const pending = session.pendingModel ?? null;
   const failed = session.modelSwitchFailed ?? null;
@@ -38,9 +40,14 @@ export function ModelSwitch(props: { session: SessionView; send: (command: Comma
       <button className="btn" type="submit" disabled={!model || model === shown}>
         Switch
       </button>
+      {!live && (
+        <span role="note" className="model-switch-note">
+          Applies on resume
+        </span>
+      )}
       {pending && (
         <span role="status" className="model-switch-note">
-          Switching to {pending} from the agent's next request…
+          {live ? `Switching to ${pending} from the agent's next request…` : `Switches to ${pending} when the session resumes.`}
         </span>
       )}
       {failed && !pending && (

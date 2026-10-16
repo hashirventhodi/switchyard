@@ -244,7 +244,7 @@ pub(crate) fn switches_model_live(inner: &mut Inner, agent: AgentKind) -> bool {
     if inner.compat.checked.is_none() {
         detect(inner);
     }
-    checked(inner, agent).and_then(|c| c.adapter.as_ref()).is_some_and(|m| m.switch_model_live)
+    checked(inner, agent).is_some_and(|c| c.setup.switch_model_live)
 }
 
 /// Append one record to the compat log. `cli_version` is what the agent reported, when it
@@ -309,8 +309,13 @@ fn detect(inner: &mut Inner) {
 
 fn detect_one(inner: &Inner, agent: &AgentEntry) -> (Checked, Option<(FailureClass, String)>) {
     let probe = &inner.runtime.probe;
-    let done = |state, cli_version, adapter| Checked {
-        setup: AgentSetup { agent: agent.agent, name: agent.name.clone(), state },
+    let done = |state, cli_version, adapter: Option<AdapterManifest>| Checked {
+        setup: AgentSetup {
+            agent: agent.agent,
+            name: agent.name.clone(),
+            state,
+            switch_model_live: adapter.as_ref().is_some_and(|m| m.switch_model_live),
+        },
         cli_version,
         adapter,
     };
