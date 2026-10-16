@@ -36,8 +36,10 @@ export type ProtocolEvent =
   | { type: "turn_complete" }
   | { type: "done"; summary: string | null }
   | { type: "error"; message: string; fatal: boolean }
+  /** Running totals on one Model (null: the Session's Model), superseding the last report for it. */
   | {
       type: "token_usage";
+      model: string | null;
       input_tokens: number;
       output_tokens: number;
       cache_read_tokens: number;

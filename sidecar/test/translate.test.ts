@@ -63,7 +63,7 @@ test("resume by the CLI's session id becomes a resume op", () => {
   ]);
 });
 
-test("a result's usage counts cache writes apart from input and cache reads", () => {
+test("a result reports each Model's usage separately, with that Model's own cost", () => {
   const t = new ClaudeTranslator();
   const result = {
     type: "result",
@@ -72,16 +72,25 @@ test("a result's usage counts cache writes apart from input and cache reads", ()
     result: "ok",
     total_cost_usd: 0.05,
     modelUsage: {
-      a: { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 300, cacheCreationInputTokens: 4000 },
-      b: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 5 },
+      a: { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 300, cacheCreationInputTokens: 4000, costUSD: 0.04 },
+      b: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 0, costUSD: 0.01 },
     },
   };
-  expect(t.ingest(JSON.stringify(result))[0]).toEqual({
-    type: "token_usage",
-    input_tokens: 11,
-    output_tokens: 22,
-    cache_read_tokens: 303,
-    cache_write_tokens: 4005,
-    cost_usd: 0.05,
-  });
+  expect(t.ingest(JSON.stringify(result)).slice(0, 2)).toEqual([
+    { type: "token_usage", model: "a", input_tokens: 10, output_tokens: 20, cache_read_tokens: 300, cache_write_tokens: 4000, cost_usd: 0.04 },
+    { type: "token_usage", model: "b", input_tokens: 1, output_tokens: 2, cache_read_tokens: 3, cost_usd: 0.01 },
+  ]);
+});
+
+test("a lone Model without its own cost carries the result's total; one of several gets none", () => {
+  const usage = (modelUsage: object) =>
+    new ClaudeTranslator()
+      .ingest(JSON.stringify({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.05, modelUsage }))
+      .filter((e) => e.type === "token_usage")
+      .map((e) => e.type === "token_usage" && [e.model, e.cost_usd]);
+  expect(usage({ a: { inputTokens: 1 } })).toEqual([["a", 0.05]]);
+  expect(usage({ a: { inputTokens: 1 }, b: { inputTokens: 1, costUSD: 0.01 } })).toEqual([
+    ["a", null],
+    ["b", 0.01],
+  ]);
 });
