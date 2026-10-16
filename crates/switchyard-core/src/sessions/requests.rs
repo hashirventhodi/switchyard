@@ -167,11 +167,17 @@ pub(super) fn resolve(inner: &mut Inner, id: &str, request_id: &str, verdict: Ve
         Verdict::Answer { text } => (RequestState::Answered, Some(text.clone()), AgentVerdict::Answer { text }),
     };
     let mut events: Vec<Event> = settle(state, request_id, settled, answer).into_iter().collect();
-    if !has_pending(state) {
+    let last = !has_pending(state);
+    if last {
         events.extend(change_status(state, &Cause::RequestAnswered));
     }
     for event in events {
         inner.emit(event);
+    }
+    // A Model switch that waited on the answer goes just before it, so the agent's request
+    // after the answer is the first on the new Model.
+    if last {
+        super::send_queued_switch(inner, id);
     }
     send_to_agent(inner, id, AgentCommand::AnswerRequest { request_id: request_id.into(), verdict: agent_verdict });
 }

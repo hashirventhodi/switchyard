@@ -24,6 +24,7 @@ impl Adapter for EchoAdapter {
         AdapterManifest {
             name: "echo".into(),
             implements: VersionReq::parse("^0.2").expect("valid range"),
+            switch_model_live: false,
         }
     }
 

@@ -51,11 +51,12 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             agents::protocol_mode(row.session.permission_mode, sandboxed)
         });
         let saved = Saved {
-            row: Some((row.session.status, row.facts.clone(), expected_mode, row.external_id.clone(), row.process.clone(), transcript.len())),
+            row: Some((row.session.status, row.facts.clone(), expected_mode, row.external_id.clone(), row.process.clone(), transcript.len(), (row.session.pending_model.clone(), row.session.switched_model.clone()))),
             entries: transcript.len(),
             chunks: Default::default(),
             usage: usage.len(),
         };
+        let pending_switch = row.session.pending_model.is_some();
         let mut state = SessionState {
             session: row.session,
             facts: row.facts,
@@ -68,6 +69,8 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             agent: None,
             external_id: row.external_id,
             process: row.process,
+            // A switch still pending when the app went away goes to the agent once it runs again.
+            switch_queued: pending_switch,
             saved,
         };
         recover(inner, &mut state);

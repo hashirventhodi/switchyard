@@ -264,6 +264,8 @@ fn persistence_commands_and_events_use_camel_case() {
         agent: AgentKind::ClaudeCode,
         permission_mode: PermissionMode::AskFirst,
         model: ModelChoice::Default,
+        switched_model: None,
+        pending_model: None,
         status: SessionStatus::Idle,
         started_at_ms: 5,
     };
@@ -444,4 +446,34 @@ fn command_names_are_the_wire_tags() {
     let command = Command::OpenPullRequest { worktree_path: "/wt".into() };
     assert_eq!(serde_json::to_value(&command).unwrap()["type"], command.name());
     assert_eq!(Command::Attach.name(), "attach");
+}
+
+#[test]
+fn a_model_switch_on_the_wire() {
+    let set: Command = serde_json::from_value(json!({"type": "setModel", "sessionId": "session-1", "model": "claude-sonnet-5-5"})).unwrap();
+    assert_eq!(set, Command::SetModel { session_id: "session-1".into(), model: "claude-sonnet-5-5".into() });
+    let changed = Event::SessionModelChanged {
+        session_id: "session-1".into(),
+        pending_model: Some("claude-sonnet-5-5".into()),
+        switched_model: None,
+    };
+    assert_eq!(
+        serde_json::to_value(changed).unwrap(),
+        json!({"type": "sessionModelChanged", "sessionId": "session-1", "pendingModel": "claude-sonnet-5-5", "switchedModel": null})
+    );
+    let failed = Event::ModelSwitchFailed { session_id: "session-1".into(), model: "x".into(), reason: None };
+    assert_eq!(
+        serde_json::to_value(failed).unwrap(),
+        json!({"type": "modelSwitchFailed", "sessionId": "session-1", "model": "x", "reason": null})
+    );
+}
+
+#[test]
+fn a_session_stored_before_model_switching_has_no_switch() {
+    let session: switchyard_schema::Session = serde_json::from_value(json!({
+        "id": "session-1", "repositoryId": "repo-1", "worktreePath": "/wt", "branch": null, "agent": "claudeCode",
+        "permissionMode": "askFirst", "status": "idle", "startedAtMs": 5
+    }))
+    .unwrap();
+    assert_eq!((session.switched_model, session.pending_model), (None, None));
 }

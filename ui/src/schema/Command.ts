@@ -28,4 +28,8 @@ model: ModelChoice, prompt: string, } | { "type": "readArchivedSession", session
 /**
  * The Model to start on; Default (also when left out) passes none to the CLI.
  */
-model: ModelChoice, prompt: string, } | { "type": "readSecrets", repositoryId: string, } | { "type": "grantSecret", repositoryId: string, name: string, } | { "type": "revokeSecret", repositoryId: string, name: string, } | { "type": "addSecret", repositoryId: string, name: string, } | { "type": "removeSecret", repositoryId: string, name: string, } | { "type": "setSecretValue", repositoryId: string, name: string, value: string, } | { "type": "readModels", agent: AgentKind, } | { "type": "readModelPrefill", agent: AgentKind, repositoryId: string, };
+model: ModelChoice, prompt: string, } | { "type": "readSecrets", repositoryId: string, } | { "type": "grantSecret", repositoryId: string, name: string, } | { "type": "revokeSecret", repositoryId: string, name: string, } | { "type": "addSecret", repositoryId: string, name: string, } | { "type": "removeSecret", repositoryId: string, name: string, } | { "type": "setSecretValue", repositoryId: string, name: string, value: string, } | { "type": "readModels", agent: AgentKind, } | { "type": "setModel", sessionId: string, 
+/**
+ * A Model id.
+ */
+model: string, } | { "type": "readModelPrefill", agent: AgentKind, repositoryId: string, };

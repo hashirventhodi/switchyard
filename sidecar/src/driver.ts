@@ -108,6 +108,8 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   let q = null as Query | null;
   // The CLI-facing mode to start in; a switch before the first prompt changes it.
   let cliMode: string = CLI_MODE[config.permission_mode];
+  // The Model to start on (none for Default); a switch before the first prompt changes it.
+  let model = config.model;
   let started: (q: Query | null) => void = () => {};
   const ready = new Promise<Query | null>((resolve) => (started = resolve));
   const start = (resume?: string) => {
@@ -120,7 +122,7 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
         // Bypass-everything is only ever made available where the policy declares a sandbox.
         ...(config.allow_bypass ? { allowDangerouslySkipPermissions: true } : {}),
         // Only a chosen Model; for Default the CLI (or the user's own settings) decides.
-        ...(config.model ? { model: config.model } : {}),
+        ...(model ? { model } : {}),
         pathToClaudeCodeExecutable: config.claude_path ?? undefined,
         // Grants are Switchyard's data, passed per spawn as flags; never written into the
         // CLI's settings files (ADR-0004).
@@ -168,8 +170,15 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
           if (q) await q.setPermissionMode(op.mode as Parameters<Query["setPermissionMode"]>[0]);
           else cliMode = op.mode;
           mode = op.permission_mode;
-        }
-        else if (op.op === "list_models") {
+        } else if (op.op === "set_model") {
+          // Before the first prompt there is nothing live to switch: the CLI starts on it.
+          if (!q) model = op.model;
+          else
+            await q.setModel(op.model).catch((e) => {
+              const message = (e as Error)?.message ?? String(e);
+              ingest(JSON.stringify({ type: "switchyard", subtype: "set_model_failed", model: op.model, message }));
+            });
+        } else if (op.op === "list_models") {
           // Answered whenever the CLI is ready (after the first prompt, if it has not come
           // yet), never holding up the commands behind it.
           void (async () => {

@@ -1,0 +1,3 @@
+{"after_input":0,"command":{"type":"send_text","text":"Read the docs."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Read the docs."},"parent_tool_use_id":null}}]}
+{"after_input":3,"command":{"type":"set_model","model":"claude-nonexistent-1"},"expect_responses":[{"op":"set_model","model":"claude-nonexistent-1"}]}
+{"after_input":4,"command":{"type":"send_text","text":"Carry on."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Carry on."},"parent_tool_use_id":null}}]}

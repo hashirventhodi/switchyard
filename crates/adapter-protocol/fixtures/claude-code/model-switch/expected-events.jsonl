@@ -1,0 +1,11 @@
+{"type":"session_init","external_session_id":"8e3f5a41-0d77-4f88-2d4c-5c3f6b2a1e43","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":"claude-opus-5-5"}
+{"type":"agent_text","text":"The links in docs/ look fine."}
+{"type":"token_usage","model":"claude-opus-5-5","input_tokens":8,"output_tokens":20,"cache_read_tokens":9000,"cost_usd":0.012}
+{"type":"turn_complete"}
+{"type":"model_changed","model":"claude-sonnet-5-5"}
+{"type":"agent_text","text":"README links fixed."}
+{"type":"agent_text","text":"Nothing else needed changing."}
+{"type":"token_usage","model":"claude-opus-5-5","input_tokens":8,"output_tokens":20,"cache_read_tokens":9000,"cost_usd":0.012}
+{"type":"token_usage","model":"claude-sonnet-5-5","input_tokens":8,"output_tokens":20,"cache_read_tokens":9000,"cost_usd":0.0031}
+{"type":"turn_complete"}
+{"type":"done","summary":"Nothing else needed changing."}

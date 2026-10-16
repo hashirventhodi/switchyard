@@ -94,3 +94,13 @@ test("a lone Model without its own cost carries the result's total; one of sever
     ["b", 0.01],
   ]);
 });
+
+test("a switch back to the Model the main agent runs on withdraws the check", () => {
+  const t = new ClaudeTranslator();
+  const said = (id: string, model: string) =>
+    t.ingest(JSON.stringify({ type: "assistant", message: { id, model, content: [] }, parent_tool_use_id: null }));
+  said("msg_01", "claude-opus-5-5");
+  t.command({ type: "set_model", model: "claude-sonnet-5-5" });
+  t.command({ type: "set_model", model: "claude-opus-5-5" });
+  expect(said("msg_02", "claude-opus-5-5")).toEqual([]);
+});

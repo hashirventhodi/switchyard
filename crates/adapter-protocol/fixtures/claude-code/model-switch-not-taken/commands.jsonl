@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"send_text","text":"Check the README."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Check the README."},"parent_tool_use_id":null}}]}
+{"after_input":0,"command":{"type":"set_model","model":"claude-sonnet-5-5"},"expect_responses":[{"op":"set_model","model":"claude-sonnet-5-5"}]}

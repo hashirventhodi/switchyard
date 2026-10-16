@@ -12,7 +12,17 @@ permissionMode: PermissionMode,
 /**
  * The Model chosen at start (a Model id, or Default).
  */
-model: ModelChoice, status: SessionStatus, 
+model: ModelChoice, 
+/**
+ * The Model the user last switched to, once the agent's own requests were confirmed
+ * on it; none before the first confirmed switch.
+ */
+switchedModel?: string | null, 
+/**
+ * A switch the user asked for that is neither confirmed nor failed yet (also one
+ * waiting for a Permission request's answer, or for the agent to be running again).
+ */
+pendingModel?: string | null, status: SessionStatus, 
 /**
  * Milliseconds since the Unix epoch.
  */

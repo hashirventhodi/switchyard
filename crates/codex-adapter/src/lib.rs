@@ -43,6 +43,8 @@ pub fn manifest() -> AdapterManifest {
     AdapterManifest {
         name: NAME.into(),
         implements: VersionReq::parse("^0.2").expect("valid range"),
+        // Not yet: a host never sends this adapter set_model, and it never sends model_changed.
+        switch_model_live: false,
     }
 }
 
@@ -795,6 +797,9 @@ impl Adapter for CodexAdapter {
             // Not yet mapped onto the app-server's model listing: nothing is asked, so the
             // host's cache stays as it was and New session offers free text.
             Command::ListModels => vec![],
+            Command::SetModel { .. } => {
+                return Err(AdapterError("Codex does not switch Models live (switch_model_live is false)".into()))
+            }
         })
     }
 
