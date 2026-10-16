@@ -729,6 +729,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}{why}") }));
                 out.push(facts(state));
             }
+            AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. } => {}
         },
         AgentOutput::Unreadable { line } => {
             failure = Some((compat::classify_unreadable(&line), format!("unreadable adapter output: {line}")));

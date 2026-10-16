@@ -322,3 +322,42 @@ fn commands() {
         );
     }
 }
+
+#[test]
+fn list_models_is_answered_by_the_models_the_cli_offers() {
+    round_trip_command(json!({ "type": "list_models" }), Command::ListModels);
+    round_trip_event(
+        json!({
+            "type": "models_listed",
+            "models": [
+                { "id": "opus", "display_name": "Opus" },
+                { "id": "claude-sonnet-5-5", "display_name": "Sonnet 5.5" }
+            ]
+        }),
+        Event::ModelsListed {
+            models: vec![
+                ListedModel {
+                    id: "opus".into(),
+                    display_name: "Opus".into(),
+                },
+                ListedModel {
+                    id: "claude-sonnet-5-5".into(),
+                    display_name: "Sonnet 5.5".into(),
+                },
+            ],
+        },
+    );
+}
+
+#[test]
+fn a_cli_that_cannot_list_models_says_so() {
+    round_trip_event(
+        json!({ "type": "cannot_list_models", "reason": "this CLI has no model list" }),
+        Event::CannotListModels {
+            reason: Some("this CLI has no model list".into()),
+        },
+    );
+    let parsed: Event =
+        serde_json::from_value(json!({ "type": "cannot_list_models" })).expect("parses");
+    assert_eq!(parsed, Event::CannotListModels { reason: None });
+}
