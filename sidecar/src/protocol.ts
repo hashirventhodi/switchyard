@@ -47,7 +47,14 @@ export type ProtocolEvent =
       cache_write_tokens?: number;
       cost_usd: number | null;
     }
-  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null };
+  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null }
+  /** The answer to list_models: the Models the CLI offers, in its order. */
+  | { type: "models_listed"; models: ListedModel[] }
+  /** The answer to list_models from a CLI that cannot list its Models (or could not this time). */
+  | { type: "cannot_list_models"; reason: string | null };
+
+/** One Model a CLI offers: `id` is what the CLI takes to run on it. */
+export type ListedModel = { id: string; display_name: string };
 
 export type Verdict =
   | { decision: "allow_once" }
@@ -60,4 +67,5 @@ export type ProtocolCommand =
   | { type: "answer_request"; request_id: string; verdict: Verdict }
   | { type: "interrupt" }
   | { type: "set_permission_mode"; permission_mode: PermissionMode }
-  | { type: "resume"; external_session_id: string };
+  | { type: "resume"; external_session_id: string }
+  | { type: "list_models" };
