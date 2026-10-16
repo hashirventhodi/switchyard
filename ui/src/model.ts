@@ -8,8 +8,8 @@ import type { SessionFacts } from "./schema/SessionFacts";
 
 export const DEFAULT_MODEL: ModelChoice = { type: "default" };
 
-/** Agents whose Model can be chosen at start (Codex's comes with #39). */
-const CHOOSES_MODEL: Record<AgentKind, boolean> = { claudeCode: true, codex: false };
+/** Agents whose Model can be chosen at start and switched (live, or on resume). */
+const CHOOSES_MODEL: Record<AgentKind, boolean> = { claudeCode: true, codex: true };
 
 export function choosesModel(agent: AgentKind): boolean {
   return CHOOSES_MODEL[agent];

@@ -90,16 +90,18 @@ test("an Explore session gets the same Model field", () => {
   });
 });
 
-test("Codex has no Model field yet and starts on Default", () => {
+test("a Codex Session starts on the Model chosen for it", () => {
   const { sent } = launch();
   const dialog = newSession();
 
-  fireEvent.change(dialog.getByLabelText("Model"), { target: { value: "claude-sonnet-5-5" } });
   fireEvent.change(dialog.getByLabelText("Agent"), { target: { value: "codex" } });
-  expect(dialog.queryByLabelText("Model")).toBeNull();
+  fireEvent.change(dialog.getByLabelText("Model"), { target: { value: "gpt-5.6-sol" } });
   start(dialog);
 
-  expect(sent.find((c) => c.type === "startSessionOnNewWorktree")).toMatchObject({ agent: "codex", model: { type: "default" } });
+  expect(sent.find((c) => c.type === "startSessionOnNewWorktree")).toMatchObject({
+    agent: "codex",
+    model: { type: "model", id: "gpt-5.6-sol" },
+  });
 });
 
 const modelCell = () => {

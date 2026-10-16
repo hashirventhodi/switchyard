@@ -60,6 +60,27 @@ test("opening New session asks the core for the agent's Model list", () => {
   expect(sent).toContainEqual({ type: "readModels", agent: "codex" });
 });
 
+test("a Codex Session picks from Codex's own cached list", () => {
+  const codexListed: ModelList = {
+    type: "listed",
+    models: [
+      { id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra" },
+      { id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol" },
+    ],
+    fetchedAtMs: 1_760_000_000_000,
+  };
+  const { sent } = launch(modelsChanged(listed), { type: "modelsChanged", agent: "codex", models: codexListed });
+  const dialog = newSession();
+  fireEvent.change(dialog.getByLabelText("Agent"), { target: { value: "codex" } });
+
+  const picker = dialog.getByLabelText("Model") as HTMLSelectElement;
+  expect([...picker.options].map((o) => o.textContent)).toEqual(["Default", "GPT-5.6 Terra", "GPT-5.6 Sol"]);
+  fireEvent.change(picker, { target: { value: "gpt-5.6-sol" } });
+  start(dialog);
+
+  expect(startedModel(sent)).toEqual({ type: "model", id: "gpt-5.6-sol" });
+});
+
 test("with no list yet, the Model is free text with a note that the list comes later", () => {
   launch(modelsChanged({ type: "empty" }));
   const dialog = newSession();

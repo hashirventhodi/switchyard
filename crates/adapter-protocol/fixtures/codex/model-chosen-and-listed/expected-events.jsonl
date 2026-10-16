@@ -1,0 +1,5 @@
+{"type":"session_init","external_session_id":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a10","permission_mode":"ask_first","cli_permission_mode":"untrusted / workspace-write","cli":{"name":"codex","version":"0.144.1"},"model":"gpt-5.6-sol"}
+{"type":"models_listed","models":[{"id":"gpt-5.6-terra","display_name":"GPT-5.6 Terra"},{"id":"gpt-5.6-sol","display_name":"GPT-5.6 Sol"},{"id":"gpt-5.6-luna","display_name":"GPT-5.6 Luna"}]}
+{"type":"agent_text","text":"Tidied the queue module."}
+{"type":"token_usage","model":"gpt-5.6-sol","input_tokens":2000,"output_tokens":200,"cache_read_tokens":2000,"cost_usd":null}
+{"type":"turn_complete"}

@@ -1,0 +1,4 @@
+{"type":"session_init","external_session_id":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a12","permission_mode":"ask_first","cli_permission_mode":"untrusted / workspace-write","cli":{"name":"codex","version":"0.144.1"},"model":"gpt-5.6-luna"}
+{"type":"agent_text","text":"Carrying on with the tests."}
+{"type":"token_usage","model":"gpt-5.6-luna","input_tokens":2000,"output_tokens":120,"cache_read_tokens":1000,"cost_usd":null}
+{"type":"turn_complete"}

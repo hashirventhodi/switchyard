@@ -15,6 +15,8 @@
 //! 2. The thread's result is `session_init` (the thread id is the external session id; the
 //!    mode is read back from the policy Codex actually applied). Queued prompts become the
 //!    first `turn/start`.
+//!    The thread starts (or resumes) on the launch's Model (`model`), none meaning Default;
+//!    `list_models` is `model/list`, held until the thread exists.
 //! 3. Items map to agent text and tool calls; server requests (approvals, questions, MCP
 //!    tool approvals) to Permission requests, answered with the same JSON-RPC id; token
 //!    usage to running totals; `turn/completed` to `turn_complete`.
@@ -26,7 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use adapter_protocol::{
-    Adapter, AdapterError, AdapterManifest, CliInfo, Command, Event, McpServerState,
+    Adapter, AdapterError, AdapterManifest, CliInfo, Command, Event, ListedModel, McpServerState,
     McpServerStatus, PermissionMode, RequestDetail, Verdict,
 };
 use semver::VersionReq;
@@ -43,7 +45,12 @@ pub fn manifest() -> AdapterManifest {
     AdapterManifest {
         name: NAME.into(),
         implements: VersionReq::parse("^0.2").expect("valid range"),
-        // Not yet: a host never sends this adapter set_model, and it never sends model_changed.
+        // The app-server reports no Model per request (token usage, turns and items carry
+        // none; `thread/settings/updated` echoes a setting, `model/rerouted` only a safety
+        // reroute), so a switch could never be confirmed against the main agent's next
+        // request. A switch applies on resume instead (`thread/resume`'s `model`), and the
+        // host confirms it from the resumed thread's Model; this adapter never sends
+        // model_changed.
         switch_model_live: false,
     }
 }
@@ -55,6 +62,10 @@ pub struct Launch {
     pub cwd: String,
     /// The mode to ask Codex for (bypass only when the repository declares a sandbox).
     pub permission_mode: PermissionMode,
+    /// The Model to start the thread on (`thread/start`'s `model`); none is Default: Codex's
+    /// own config decides.
+    #[serde(default)]
+    pub model: Option<String>,
     /// Per-spawn config overrides, as config.toml dotted keys to JSON values, passed as the
     /// thread's `config` (never written to Codex's own files). The MCP servers Switchyard
     /// gives this session are defined here (`mcp_servers.<name>.command`, ...).
@@ -86,6 +97,7 @@ enum Call {
     ConfigRead,
     Thread,
     TurnStart,
+    ModelList,
     Other,
 }
 
@@ -138,6 +150,13 @@ pub struct CodexAdapter {
     turn_id: Option<String>,
     /// The thread's Model, from `thread/start` or `thread/resume`: what its usage is spent on.
     model: Option<String>,
+    /// The Model the thread was resumed on, until a request of this launch has run: an error
+    /// naming it before then means the CLI cannot run on it ([`Self::refused`]).
+    resumed_on: Option<String>,
+    /// The host asked for the Model list before the thread existed: asked once it does.
+    list_wanted: bool,
+    /// The Model list's pages so far.
+    listed: Vec<ListedModel>,
     /// From `initialize`'s user agent: the running CLI's version.
     cli_version: Option<String>,
     /// A mode switch to carry on the next `turn/start`.
@@ -167,6 +186,9 @@ impl CodexAdapter {
             thread_id: None,
             turn_id: None,
             cli_version: None,
+            resumed_on: None,
+            list_wanted: false,
+            listed: Vec::new(),
             mode_override: None,
             pending: HashMap::new(),
             file_changes: HashMap::new(),
@@ -247,6 +269,9 @@ impl CodexAdapter {
         // Prompts route to Switchyard, never to Codex's own reviewer.
         params.insert("approvalsReviewer".into(), json!("user"));
         params.insert("sandbox".into(), json!(sandbox));
+        if let Some(model) = &self.launch.model {
+            params.insert("model".into(), json!(model));
+        }
         if !config.is_empty() {
             params.insert("config".into(), Value::Object(config));
         }
@@ -320,17 +345,22 @@ impl CodexAdapter {
                     } else {
                         "start a thread"
                     };
-                    return self.fail(format!(
-                        "Codex could not {what}: {}",
-                        error_message(error.unwrap_or(&Value::Null))
-                    ));
+                    let message = error_message(error.unwrap_or(&Value::Null));
+                    let refused = self.refused(&message);
+                    return refused
+                        .into_iter()
+                        .chain(self.fail(format!("Codex could not {what}: {message}")))
+                        .collect();
                 };
                 let thread_id = str_at(result, "/thread/id").unwrap_or_default();
                 self.model = str_at(result, "/model");
                 self.thread_id = Some(thread_id.clone());
                 self.phase = Phase::Ready;
-                let (permission_mode, cli_permission_mode) =
-                    mode::read_back(result.get("approvalPolicy"), result.get("sandbox"), self.launch.permission_mode);
+                let (permission_mode, cli_permission_mode) = mode::read_back(
+                    result.get("approvalPolicy"),
+                    result.get("sandbox"),
+                    self.launch.permission_mode,
+                );
                 let version = self
                     .cli_version
                     .clone()
@@ -352,17 +382,22 @@ impl CodexAdapter {
                     let turn = self.turn_start(texts);
                     self.replies.push(turn);
                 }
+                if std::mem::take(&mut self.list_wanted) {
+                    let list = self.model_list(None);
+                    self.replies.push(list);
+                }
                 vec![init]
             }
             Call::TurnStart => match error {
                 // The prompt never became a turn: report it and hand the session back.
-                Some(error) => vec![
-                    Event::Error {
-                        message: format!("Codex did not start the turn: {}", error_message(error)),
+                Some(error) => {
+                    let message = error_message(error);
+                    let failed = self.refused(&message).unwrap_or_else(|| Event::Error {
+                        message: format!("Codex did not start the turn: {message}"),
                         fatal: false,
-                    },
-                    Event::TurnComplete,
-                ],
+                    });
+                    vec![failed, Event::TurnComplete]
+                }
                 None => {
                     if let Some(turn_id) = str_at(message, "/result/turn/id") {
                         self.turn_id = Some(turn_id);
@@ -370,8 +405,61 @@ impl CodexAdapter {
                     vec![]
                 }
             },
+            Call::ModelList => self.on_model_list(message),
             Call::Other => vec![],
         }
+    }
+
+    /// `model/list`, one page from `cursor` on.
+    fn model_list(&mut self, cursor: Option<String>) -> String {
+        let params = match cursor {
+            Some(cursor) => json!({ "cursor": cursor }),
+            None => json!({}),
+        };
+        self.request(Call::ModelList, "model/list", params)
+    }
+
+    /// A page of `model/list`: the next one is asked for, and the last one answers the host
+    /// with every page's Models. Each Model's id is its `model` slug, what `thread/start`
+    /// and `thread/resume` take.
+    fn on_model_list(&mut self, message: &Value) -> Vec<Event> {
+        let Some(result) = message
+            .get("result")
+            .filter(|_| message.get("error").is_none())
+        else {
+            self.listed.clear();
+            let reason = message.get("error").map(error_message);
+            return vec![Event::CannotListModels { reason }];
+        };
+        let page = result
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        self.listed.extend(page.iter().filter_map(|m| {
+            let id = str_at(m, "/model").or_else(|| str_at(m, "/id"))?;
+            let display_name = str_at(m, "/displayName").unwrap_or_else(|| id.clone());
+            Some(ListedModel { id, display_name })
+        }));
+        if let Some(cursor) = str_at(result, "/nextCursor") {
+            let next = self.model_list(Some(cursor));
+            self.replies.push(next);
+            return vec![];
+        }
+        vec![Event::ModelsListed {
+            models: std::mem::take(&mut self.listed),
+        }]
+    }
+
+    /// `model_change_failed` for the Model the thread was resumed on, when `message` (an
+    /// error before any request of this launch ran) names it: Codex has no error code for
+    /// an unknown or inaccessible Model, only a message saying which.
+    fn refused(&mut self, message: &str) -> Option<Event> {
+        let model = self.resumed_on.take_if(|m| message.contains(m.as_str()))?;
+        Some(Event::ModelChangeFailed {
+            model,
+            reason: Some(message.to_string()),
+        })
     }
 
     fn fail(&mut self, message: String) -> Vec<Event> {
@@ -398,10 +486,10 @@ impl CodexAdapter {
                 {
                     let message = str_at(params, "/turn/error/message")
                         .unwrap_or_else(|| "The turn failed".into());
-                    events.push(Event::Error {
+                    events.push(self.refused(&message).unwrap_or(Event::Error {
                         message,
                         fatal: false,
-                    });
+                    }));
                 }
                 events.push(Event::TurnComplete);
                 events
@@ -415,10 +503,10 @@ impl CodexAdapter {
                 }
                 let message = str_at(params, "/error/message")
                     .unwrap_or_else(|| "Codex reported an error".into());
-                vec![Event::Error {
+                vec![self.refused(&message).unwrap_or(Event::Error {
                     message,
                     fatal: false,
-                }]
+                })]
             }
             "mcpServer/startupStatus/updated" => self.mcp_startup(params),
             "item/started" => self.item_started(params.get("item").unwrap_or(&Value::Null)),
@@ -736,7 +824,7 @@ impl Adapter for CodexAdapter {
             .map_err(|e| AdapterError(format!("not a JSON-RPC message ({e}): {raw}")))?;
         let method = message.get("method").and_then(Value::as_str);
         let params = message.get("params").unwrap_or(&Value::Null);
-        Ok(match (method, message.get("id")) {
+        let events = match (method, message.get("id")) {
             (Some(method), Some(id)) => self.on_server_request(id, method, params),
             (Some(method), None) => self.on_notification(method, params),
             (None, Some(id)) => match id.as_u64() {
@@ -744,20 +832,32 @@ impl Adapter for CodexAdapter {
                 None => vec![],
             },
             (None, None) => vec![],
-        })
+        };
+        // A request ran: the Model it resumed on works.
+        if events.iter().any(|e| {
+            matches!(
+                e,
+                Event::AgentText { .. } | Event::ToolCallStarted { .. } | Event::TurnComplete
+            )
+        }) {
+            self.resumed_on = None;
+        }
+        Ok(events)
     }
 
     fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError> {
         Ok(match command {
-            // The Model to resume on is not passed to codex yet (#39).
+            // The thread resumes on `model` (`thread/resume`'s `model`); none is Default.
             Command::Resume {
                 external_session_id,
-                ..
+                model,
             } => {
                 if self.phase != Phase::New {
                     return Err(AdapterError("resume must be the first command".into()));
                 }
                 self.resume = Some(external_session_id.clone());
+                self.launch.model = model.clone();
+                self.resumed_on = model.clone();
                 vec![self.initialize()]
             }
             Command::SendText { text } => match self.phase {
@@ -796,11 +896,21 @@ impl Adapter for CodexAdapter {
                 }
                 vec![]
             }
-            // Not yet mapped onto the app-server's model listing: nothing is asked, so the
-            // host's cache stays as it was and New session offers free text.
-            Command::ListModels => vec![],
+            // model/list needs the thread's process initialised: until the thread exists the
+            // ask is held, and goes out after its first turn/start.
+            Command::ListModels => match self.phase {
+                Phase::Ready => vec![self.model_list(None)],
+                Phase::New | Phase::Starting => {
+                    self.list_wanted = true;
+                    vec![]
+                }
+                Phase::Failed => vec![],
+            },
             Command::SetModel { .. } => {
-                return Err(AdapterError("Codex does not switch Models live (switch_model_live is false)".into()))
+                return Err(AdapterError(
+                    "Codex does not switch Models live (switch_model_live is false): resume on the Model instead"
+                        .into(),
+                ))
             }
         })
     }

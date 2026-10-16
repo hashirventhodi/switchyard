@@ -13,8 +13,10 @@ while IFS= read -r line; do
       echo '{"id":1,"result":{"userAgent":"switchyard/0.144.1 (fake)","codexHome":"/tmp","platformFamily":"unix","platformOs":"macos"}}' ;;
     *'"method":"config/read"'*)
       echo '{"id":2,"result":{"config":{"mcp_servers":{"notion":{"url":"https://mcp.notion.com/mcp"}}},"origins":{},"layers":null}}' ;;
-    *'"method":"thread/start"'*)
-      echo '{"id":3,"result":{"thread":{"id":"thread-fake","cliVersion":"0.144.1"},"model":"gpt-5.6-terra","approvalPolicy":"untrusted","sandbox":{"type":"workspaceWrite","writableRoots":[],"networkAccess":false}}}' ;;
+    *'"method":"thread/start"'*|*'"method":"thread/resume"'*)
+      # The thread runs on the Model it was asked for, else on the config's.
+      model=$(printf '%s\n' "$line" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')
+      echo '{"id":3,"result":{"thread":{"id":"thread-fake","cliVersion":"0.144.1"},"model":"'"${model:-gpt-5.6-terra}"'","approvalPolicy":"untrusted","sandbox":{"type":"workspaceWrite","writableRoots":[],"networkAccess":false}}}' ;;
     *'"method":"turn/start"'*'ask'*)
       echo '{"id":4,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
       echo '{"method":"item/commandExecution/requestApproval","id":0,"params":{"threadId":"thread-fake","turnId":"turn-1","itemId":"c1","command":"pnpm test","cwd":"/wt","reason":"Run the tests"}}' ;;
