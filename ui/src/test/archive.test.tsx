@@ -21,6 +21,7 @@ const session = (id: string, status: SessionStatus): Session => ({
   branch: "fix/readme",
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status,
   startedAtMs: 1_760_000_000_000,
 });
@@ -102,6 +103,7 @@ test("New session on a worktree with a Paused session offers stop and replace", 
     sessionId: "session-1",
     agent: "claudeCode",
     permissionMode: "askFirst",
+    model: { type: "default" },
     prompt: "Try again",
   });
 });

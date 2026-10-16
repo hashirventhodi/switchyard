@@ -6,6 +6,7 @@ import type { Policy } from "./schema/Policy";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
+import { modelLabel } from "./model";
 import { RequestCard } from "./RequestCard";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
@@ -220,7 +221,7 @@ function SummaryStrip({ session }: { session: Session }) {
   const [cost, costDetail] = sessionCost(session);
   const cells: [string, string, string?][] = [
     ["Agent", AGENT_LABEL[session.agent]],
-    ["Model", facts.model ?? "—"],
+    ["Model", modelLabel(session.model, facts)],
     ["CLI", facts.cliVersion ?? "—"],
     ["Worktree", session.worktreePath],
     ["Mode", MODE_LABEL[session.permissionMode] + cliMode],
