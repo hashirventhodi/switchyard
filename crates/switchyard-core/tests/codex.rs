@@ -40,6 +40,7 @@ fn start(core: &mut Harness, worktree: &Path, agent: AgentKind, mode: Permission
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent,
         permission_mode: mode,
+        model: Default::default(),
         prompt: prompt.into(),
     }))
 }

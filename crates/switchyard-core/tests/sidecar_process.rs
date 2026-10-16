@@ -24,6 +24,7 @@ fn start(worktree: &std::path::Path) -> Command {
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent: switchyard_schema::AgentKind::ClaudeCode,
         permission_mode: switchyard_schema::PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: "hello".into(),
     }
 }
@@ -129,6 +130,7 @@ fn the_sidecar_and_the_processes_it_starts_see_granted_secrets_and_none_of_the_o
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent: switchyard_schema::AgentKind::ClaudeCode,
         permission_mode: switchyard_schema::PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: "env SY26_NPM_TOKEN SY26_STRIPE_KEY".into(),
     });
     let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
@@ -152,11 +154,35 @@ fn full_auto_in_a_declared_sandbox_launches_the_sidecar_in_bypass() {
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent: switchyard_schema::AgentKind::ClaudeCode,
         permission_mode: switchyard_schema::PermissionMode::FullAuto,
+        model: Default::default(),
         prompt: "hello".into(),
     });
     let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
 
     assert!(agent_texts(&events).contains(&"mode=bypass allow_bypass".to_string()), "{events:#?}");
+}
+
+#[test]
+fn the_sidecar_is_told_the_chosen_model_and_nothing_for_default() {
+    let repo = TempRepo::new("acme");
+    let chosen = repo.add_worktree("feat/x");
+    let default = repo.add_worktree("feat/y");
+    let mut core = Harness::launch_with(fake_sidecar());
+    core.add_repository(&repo.path);
+
+    core.dispatch(Command::StartSession {
+        worktree_path: chosen.to_string_lossy().into_owned(),
+        agent: switchyard_schema::AgentKind::ClaudeCode,
+        permission_mode: switchyard_schema::PermissionMode::AskFirst,
+        model: switchyard_schema::ModelChoice::Model { id: "claude-sonnet-5-5".into() },
+        prompt: "hello".into(),
+    });
+    let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+    assert!(agent_texts(&events).contains(&r#"model="claude-sonnet-5-5""#.to_string()), "{events:#?}");
+
+    core.dispatch(start(&default));
+    let events = core.wait_for(|seen| agent_texts(seen).iter().any(|t| t == "you said: hello"));
+    assert!(agent_texts(&events).iter().all(|t| !t.starts_with("model=")), "{events:#?}");
 }
 
 #[test]

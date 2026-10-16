@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
 use switchyard_schema::command_name;
 use switchyard_schema::{
-    AgentKind, ChecklistItem, Event, PermissionMode, Task, TaskColumn, TaskKind, TaskSessionTarget, TaskSourceKind,
+    AgentKind, ChecklistItem, Event, ModelChoice, PermissionMode, Task, TaskColumn, TaskKind, TaskSessionTarget, TaskSourceKind,
 };
 
 use crate::store::StoredRepository;
@@ -419,6 +419,7 @@ fn advance(inner: &Inner, repo: &StoredRepository, found: &Task, to: TaskColumn,
 }
 
 /// [`Command::StartTaskSession`](switchyard_schema::Command::StartTaskSession).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_session(
     inner: &mut Inner,
     core: &Arc<Mutex<Inner>>,
@@ -426,6 +427,7 @@ pub(crate) fn start_session(
     target: TaskSessionTarget,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
 ) {
     const COMMAND: &str = command_name::START_TASK_SESSION;
@@ -438,13 +440,13 @@ pub(crate) fn start_session(
     let before = sessions::live_ids(inner);
     match target {
         TaskSessionTarget::NewWorktree { branch } => {
-            worktrees::start_session_on_new(inner, core, &repo.id, &branch, agent, permission_mode, prompt)
+            worktrees::start_session_on_new(inner, core, &repo.id, &branch, agent, permission_mode, model, prompt)
         }
         TaskSessionTarget::Worktree { worktree_path } => {
-            sessions::start(inner, core, &worktree_path, agent, permission_mode, prompt)
+            sessions::start(inner, core, &worktree_path, agent, permission_mode, model, prompt)
         }
         TaskSessionTarget::Replace { session_id } => {
-            sessions::replace(inner, core, &session_id, agent, permission_mode, prompt)
+            sessions::replace(inner, core, &session_id, agent, permission_mode, model, prompt)
         }
     }
     // The session that started (none when it was refused) is linked to the task.

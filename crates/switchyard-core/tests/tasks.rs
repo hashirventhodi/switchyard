@@ -95,6 +95,7 @@ impl Board {
             target,
             agent: AgentKind::ClaudeCode,
             permission_mode: PermissionMode::AskFirst,
+            model: Default::default(),
             prompt: format!("Work on {}: {}.", task.key, task.title),
         })
     }
@@ -219,6 +220,7 @@ fn a_session_that_cannot_start_links_nothing_and_moves_nothing() {
         target: TaskSessionTarget::Worktree { worktree_path: path(&wt) },
         agent: AgentKind::ClaudeCode,
         permission_mode: PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: "x".into(),
     });
     assert_eq!(refusal(&events), "There is no task nope");

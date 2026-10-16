@@ -32,7 +32,7 @@ fn events_serialize_with_camel_case_fields() {
 
 #[test]
 fn session_commands_and_transcript_entries_use_camel_case() {
-    use switchyard_schema::{AgentKind, Entry, PermissionMode, ToolState};
+    use switchyard_schema::{AgentKind, Entry, ModelChoice, PermissionMode, ToolState};
     let command: Command = serde_json::from_value(json!({
         "type": "startSession",
         "worktreePath": "/wt/a",
@@ -47,6 +47,8 @@ fn session_commands_and_transcript_entries_use_camel_case() {
             worktree_path: "/wt/a".into(),
             agent: AgentKind::ClaudeCode,
             permission_mode: PermissionMode::AskFirst,
+            // Sent without a Model (as before #34): Default.
+            model: ModelChoice::Default,
             prompt: "Fix it".into(),
         }
     );
@@ -206,8 +208,31 @@ fn rebase_and_history_commands_and_events_are_camel_case() {
 }
 
 #[test]
+fn a_session_starts_on_a_chosen_model_or_on_default() {
+    use switchyard_schema::{AgentKind, ModelChoice, PermissionMode};
+    let chosen: Command = serde_json::from_value(json!({
+        "type": "startSession", "worktreePath": "/wt/a", "agent": "claudeCode", "permissionMode": "explore",
+        "model": {"type": "model", "id": "claude-sonnet-5-5"}, "prompt": "Look around"
+    }))
+    .unwrap();
+    assert_eq!(
+        chosen,
+        Command::StartSession {
+            worktree_path: "/wt/a".into(),
+            agent: AgentKind::ClaudeCode,
+            permission_mode: PermissionMode::Explore,
+            model: ModelChoice::Model { id: "claude-sonnet-5-5".into() },
+            prompt: "Look around".into(),
+        }
+    );
+    assert_eq!(serde_json::to_value(ModelChoice::Default).unwrap(), json!({"type": "default"}));
+    assert_eq!(ModelChoice::Model { id: "claude-sonnet-5-5".into() }.id(), Some("claude-sonnet-5-5"));
+    assert_eq!(ModelChoice::Default.id(), None);
+}
+
+#[test]
 fn persistence_commands_and_events_use_camel_case() {
-    use switchyard_schema::{AgentKind, ArchivedSession, PermissionMode, Session, SessionStatus, Settings};
+    use switchyard_schema::{AgentKind, ArchivedSession, ModelChoice, PermissionMode, Session, SessionStatus, Settings};
     let replace: Command = serde_json::from_value(json!({
         "type": "replaceSession", "sessionId": "session-1", "agent": "claudeCode",
         "permissionMode": "autoEdit", "prompt": "again"
@@ -219,6 +244,7 @@ fn persistence_commands_and_events_use_camel_case() {
             session_id: "session-1".into(),
             agent: AgentKind::ClaudeCode,
             permission_mode: PermissionMode::AutoEdit,
+            model: ModelChoice::Default,
             prompt: "again".into()
         }
     );
@@ -237,6 +263,7 @@ fn persistence_commands_and_events_use_camel_case() {
         branch: Some("fix/a".into()),
         agent: AgentKind::ClaudeCode,
         permission_mode: PermissionMode::AskFirst,
+        model: ModelChoice::Default,
         status: SessionStatus::Idle,
         started_at_ms: 5,
     };

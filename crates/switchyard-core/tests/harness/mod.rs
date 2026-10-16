@@ -28,7 +28,7 @@ use switchyard_core::processes::ProcessTable;
 use switchyard_core::forge::GhForge;
 use switchyard_core::watcher::{ChangeSink, Watch, WatchReport, Watcher};
 use switchyard_core::{Core, Runtime};
-use switchyard_schema::{AgentKind, Command, Event, PermissionMode, Repository};
+use switchyard_schema::{AgentKind, Command, Event, ModelChoice, PermissionMode, Repository};
 use tempfile::TempDir;
 
 pub mod gh;
@@ -276,10 +276,16 @@ impl Harness {
     }
 
     pub fn start_session_in(&mut self, worktree: &Path, mode: PermissionMode, prompt: &str) -> Vec<Event> {
+        self.start_session_on(worktree, mode, ModelChoice::Default, prompt)
+    }
+
+    /// Start a Claude Code session in `mode` on the Model `model`.
+    pub fn start_session_on(&mut self, worktree: &Path, mode: PermissionMode, model: ModelChoice, prompt: &str) -> Vec<Event> {
         self.send(Command::StartSession {
             worktree_path: worktree.to_string_lossy().into_owned(),
             agent: AgentKind::ClaudeCode,
             permission_mode: mode,
+            model,
             prompt: prompt.into(),
         })
     }

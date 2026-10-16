@@ -1,7 +1,7 @@
 // A stand-in for the Claude Code sidecar that speaks the adapter protocol on stdio without
 // any SDK or CLI: it reports its working directory and launch config (allowed/disallowed
-// tools, when it was given any), echoes prompts as a finished turn, writes unreadable lines
-// on "garbage" and exits on "crash". "env A B" reports A and B as it and a child process see them.
+// tools, MCP servers and Model, when it was given any), echoes prompts as a finished turn,
+// writes unreadable lines on "garbage" and exits on "crash". "env A B" reports A and B as it and a child process see them.
 import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
 
@@ -21,6 +21,7 @@ if (config.allowed_tools?.length || config.disallowed_tools?.length)
   say({ type: "agent_text", text: `allowed=${config.allowed_tools.join(",")} disallowed=${config.disallowed_tools.join(",")}` });
 if (config.mcp_servers && Object.keys(config.mcp_servers).length)
   say({ type: "agent_text", text: `mcp=${JSON.stringify(config.mcp_servers)}` });
+if ("model" in config) say({ type: "agent_text", text: `model=${JSON.stringify(config.model)}` });
 if (config.allow_bypass) say({ type: "agent_text", text: `mode=${config.permission_mode} allow_bypass` });
 
 for await (const line of createInterface({ input: process.stdin })) {

@@ -8,7 +8,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use switchyard_schema::command_name;
-use switchyard_schema::{AgentKind, ArchivedSession, Entry, Event, PermissionMode, SessionStatus, Settings};
+use switchyard_schema::{AgentKind, ArchivedSession, Entry, Event, ModelChoice, PermissionMode, SessionStatus, Settings};
 
 use super::{append, begin, change_status, persist, requests, status_label, Cause};
 use crate::processes;
@@ -25,6 +25,7 @@ pub(crate) fn replace(
     id: &str,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
 ) {
     const COMMAND: &str = command_name::REPLACE_SESSION;
@@ -36,7 +37,7 @@ pub(crate) fn replace(
         return inner.refuse(COMMAND, format!("A {label} session is never replaced; stop it first"));
     }
     let worktree_path = state.session.worktree_path.clone();
-    begin(inner, core, COMMAND, &worktree_path, agent, permission_mode, prompt, Some(id));
+    begin(inner, core, COMMAND, &worktree_path, agent, permission_mode, model, prompt, Some(id));
 }
 
 /// Paused, Finished and Error sessions may be replaced or archived; an agent at work never is.

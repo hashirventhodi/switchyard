@@ -141,6 +141,7 @@ impl Tracker {
             target: TaskSessionTarget::NewWorktree { branch: branch.into() },
             agent: AgentKind::ClaudeCode,
             permission_mode: PermissionMode::AskFirst,
+            model: Default::default(),
             prompt: format!("Work on {}: {}.", task.key, task.title),
         });
         let wt = events

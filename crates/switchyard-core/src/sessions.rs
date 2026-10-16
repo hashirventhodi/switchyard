@@ -11,7 +11,7 @@ use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, PermissionM
 use serde_json::Value;
 use switchyard_schema::command_name;
 use switchyard_schema::{
-    AgentKind, ArchivedSession, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
+    AgentKind, ArchivedSession, Entry, Event, ModelChoice, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
     Verdict,
 };
 
@@ -144,9 +144,10 @@ pub(crate) fn start(
     worktree_path: &str,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
 ) {
-    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, prompt, None);
+    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, model, prompt, None);
 }
 
 /// Start a session on a worktree; when `replacing` names its (Paused, Finished or Error)
@@ -159,6 +160,7 @@ fn begin(
     worktree_path: &str,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
     replacing: Option<&str>,
 ) {
@@ -209,6 +211,7 @@ fn begin(
         agent,
         cwd: worktree.path.clone(),
         permission_mode,
+        model: model.id().map(str::to_string),
         sandboxed,
         allowed_tools,
         disallowed_tools,
@@ -235,6 +238,7 @@ fn begin(
         branch: worktree.branch,
         agent,
         permission_mode,
+        model,
         status: SessionStatus::Running,
         started_at_ms: (inner.runtime.now_ms)(),
     };
@@ -352,6 +356,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         ));
     };
     let (cwd, permission_mode) = (state.session.worktree_path.clone(), state.session.permission_mode);
+    let state_model = state.session.model.id().map(str::to_string);
     let repository_id = state.session.repository_id.clone();
     // Grants as they are now: some may have been made or revoked since the session began.
     let repository = policy::repository(inner, &repository_id);
@@ -372,6 +377,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         agent,
         cwd: cwd.into(),
         permission_mode,
+        // The Model chosen at start (#38 resumes on the Session's current Model).
+        model: state_model,
         sandboxed,
         allowed_tools,
         disallowed_tools,

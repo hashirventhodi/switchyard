@@ -36,6 +36,7 @@ fn starting_a_session_launches_claude_code_in_the_worktree_and_sends_the_prompt(
                     branch: Some("fix/readme".into()),
                     agent: AgentKind::ClaudeCode,
                     permission_mode: PermissionMode::AskFirst,
+                    model: Default::default(),
                     status: SessionStatus::Running,
                     started_at_ms: NOW_MS,
                 },
@@ -49,7 +50,7 @@ fn starting_a_session_launches_claude_code_in_the_worktree_and_sends_the_prompt(
     );
     assert_eq!(
         core.agents.launches(),
-        vec![LaunchSpec { agent: AgentKind::ClaudeCode, cwd: worktree, permission_mode: PermissionMode::AskFirst, sandboxed: false, allowed_tools: vec![], disallowed_tools: vec![], mcp_servers: vec![], env: Default::default() }]
+        vec![LaunchSpec { agent: AgentKind::ClaudeCode, cwd: worktree, permission_mode: PermissionMode::AskFirst, model: None, sandboxed: false, allowed_tools: vec![], disallowed_tools: vec![], mcp_servers: vec![], env: Default::default() }]
     );
     assert_eq!(
         core.agents.commands(0),

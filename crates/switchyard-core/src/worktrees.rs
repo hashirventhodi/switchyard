@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use switchyard_schema::command_name;
-use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
+use switchyard_schema::{AgentKind, Event, ModelChoice, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
 use crate::{git, repo_policy, review, sessions, shells, Inner};
@@ -79,6 +79,7 @@ pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, bran
 
 /// "Create new from base": a fresh worktree, then a session on it. A session that cannot
 /// start leaves the worktree free rather than deleting what was just made.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_session_on_new(
     inner: &mut Inner,
     core: &Arc<Mutex<Inner>>,
@@ -86,6 +87,7 @@ pub(crate) fn start_session_on_new(
     branch: &str,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
 ) {
     const COMMAND: &str = command_name::START_SESSION_ON_NEW_WORKTREE;
@@ -102,7 +104,7 @@ pub(crate) fn start_session_on_new(
         }
     }
     if let Some(worktree) = create(inner, COMMAND, repository_id, branch) {
-        sessions::start(inner, core, &worktree.path, agent, permission_mode, prompt);
+        sessions::start(inner, core, &worktree.path, agent, permission_mode, model, prompt);
     }
 }
 
