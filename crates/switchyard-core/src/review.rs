@@ -80,6 +80,63 @@ pub(crate) fn forget(inner: &mut Inner, worktree_path: &str) {
     save(inner, worktree_path);
 }
 
+/// Discard the worktree's Decisions on files that are no longer changed (committed or
+/// reverted, in Switchyard or outside it), and hunk reviews that no longer apply: on such a
+/// file, or a lone comment whose hunk is gone (`has_hunk` says which hunks the diff has).
+/// Whether anything was discarded.
+fn prune(inner: &mut Inner, worktree_path: &str, changed: &[&str], has_hunk: impl Fn(&str) -> bool) -> bool {
+    let mut lapsed = false;
+    if let Some(decided) = inner.review.by_worktree.get_mut(worktree_path) {
+        let before = decided.len();
+        decided.retain(|path, _| changed.contains(&path.as_str()));
+        lapsed |= decided.len() != before;
+    }
+    if let Some(reviews) = inner.review.hunks.get_mut(worktree_path) {
+        let before = reviews.len();
+        reviews.retain(|id, r| has_hunk(id) || (r.decision.is_some() && changed.contains(&r.path.as_str())));
+        lapsed |= reviews.len() != before;
+    }
+    lapsed
+}
+
+/// The worktree changed on disk: discard the Decisions on files git no longer lists as
+/// changed (committed or reverted in a shell, say), without computing the diff. Nothing is
+/// read from git for a worktree with nothing decided.
+pub(crate) fn prune_settled(inner: &mut Inner, worktree_path: &str) {
+    let decided = inner.review.by_worktree.get(worktree_path).is_some_and(|d| !d.is_empty())
+        || inner.review.hunks.get(worktree_path).is_some_and(|r| !r.is_empty());
+    if !decided {
+        return;
+    }
+    let Ok(changed) = git::changed_paths(Path::new(worktree_path)) else { return };
+    let changed: Vec<&str> = changed.iter().map(String::as_str).collect();
+    // Without the diff, any hunk on a file still changed may still be there (as may one
+    // stored before reviews named their file): left for the next read to judge.
+    let keep: Vec<String> = inner
+        .review
+        .hunks
+        .get(worktree_path)
+        .into_iter()
+        .flatten()
+        .filter(|(_, r)| r.path.is_empty() || changed.contains(&r.path.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if prune(inner, worktree_path, &changed, |id| keep.iter().any(|k| k == id)) {
+        save(inner, worktree_path);
+    }
+}
+
+/// Discard the Decisions and hunk reviews on `paths`, just committed.
+fn discard(inner: &mut Inner, worktree_path: &str, paths: &[String]) {
+    if let Some(decided) = inner.review.by_worktree.get_mut(worktree_path) {
+        decided.retain(|path, _| !paths.contains(path));
+    }
+    if let Some(reviews) = inner.review.hunks.get_mut(worktree_path) {
+        reviews.retain(|_, r| !paths.contains(&r.path));
+    }
+    save(inner, worktree_path);
+}
+
 /// Read the worktree's changes from git, with the decisions that still apply.
 fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u64)>, String> {
     let dir = Path::new(worktree_path);
@@ -105,12 +162,11 @@ fn changes(inner: &mut Inner, worktree_path: &str) -> Result<Vec<(ChangedFile, u
         }
     }
     // Decisions are kept when their content changes (a file reverted to it counts again);
-    // only a lone comment on a hunk that is gone lapses.
+    // those on a file no longer changed go, and a lone comment on a hunk that is gone lapses.
+    let changed: Vec<&str> = parsed.iter().map(|p| p.file.path.as_str()).collect();
+    let lapsed = prune(inner, worktree_path, &changed, |id| parsed.iter().any(|p| p.file.hunks.iter().any(|h| h.id == id)));
     let decided = inner.review.by_worktree.entry(worktree_path.to_string()).or_default();
     let reviews = inner.review.hunks.entry(worktree_path.to_string()).or_default();
-    let before = reviews.len();
-    reviews.retain(|id, r| r.decision.is_some() || parsed.iter().any(|p| p.file.hunks.iter().any(|h| &h.id == id)));
-    let lapsed = reviews.len() != before;
     let mut list: Vec<(ChangedFile, u64)> = parsed
         .into_iter()
         .map(|mut p| {
@@ -262,11 +318,14 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
     let skipped_stale: Vec<String> = list.iter().map(|(f, _)| f).filter(|f| stale_accept(f)).map(|f| f.path.clone()).collect();
     if accepted.is_empty() {
         if !skipped_stale.is_empty() {
-            let them = if skipped_stale.len() == 1 { "it" } else { "them" };
-            return inner.refuse(
-                COMMAND,
-                format!("{} changed since you decided; re-confirm {them} before committing", skipped_stale.join(", ")),
-            );
+            // Every accepted file changed since you decided: nothing to commit, and why.
+            return inner.emit(Event::Committed {
+                worktree_path: worktree_path.into(),
+                branch: worktree.branch,
+                commit: String::new(),
+                files: Vec::new(),
+                skipped_stale,
+            });
         }
         if let Some((f, _)) = list.iter().find(|(f, _)| blocked(f)) {
             return inner.refuse(
@@ -295,7 +354,8 @@ pub(crate) fn commit(inner: &mut Inner, worktree_path: &str, message: &str) {
         Ok(c) => c,
         Err(git::GitError(e)) => return inner.refuse(COMMAND, format!("Could not commit: {e}")),
     };
-    forget(inner, worktree_path);
+    // Decisions on what was not committed (a skipped Stale decision, say) stay.
+    discard(inner, worktree_path, &paths);
     inner.emit(Event::Committed {
         worktree_path: worktree_path.into(),
         branch: worktree.branch,

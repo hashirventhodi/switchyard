@@ -146,3 +146,11 @@ test("a commit that skipped stale Accepts says which and why", () => {
     "Committed 1 file to fix/readme (abc1234); skipped a.ts: changed since you decided",
   );
 });
+
+test("a commit that skipped every accepted file says nothing was committed and why", () => {
+  const { emit } = launch([changed("a.ts", { decision: "accept", stale: true })]);
+  act(() => emit({ type: "committed", worktreePath: WT, branch: "fix/readme", commit: "", files: [], skippedStale: ["a.ts"] }));
+  expect(screen.getByRole("status").textContent).toContain(
+    "Nothing committed: a.ts changed since you decided; re-confirm to commit",
+  );
+});

@@ -805,13 +805,15 @@ pub enum Event {
         path: String,
         decision: Option<Decision>,
     },
-    /// Accepted files were committed on the worktree's branch.
+    /// Accepted files were committed on the worktree's branch; or, when every accepted file
+    /// changed since you decided, nothing was (`commit` empty, `files` empty, `skippedStale`
+    /// naming them).
     Committed {
         #[serde(rename = "worktreePath")]
         #[ts(rename = "worktreePath")]
         worktree_path: String,
         branch: Option<String>,
-        /// Abbreviated commit id.
+        /// Abbreviated commit id; empty when nothing was committed.
         commit: String,
         /// Paths committed (for a rename, the new path).
         files: Vec<String>,

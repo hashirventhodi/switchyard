@@ -12,7 +12,7 @@ use switchyard_schema::{ChangeKind, Event, Worktree};
 
 use crate::store::StoredRepository;
 use crate::watcher::{ChangeSink, Watch, WatchReport};
-use crate::{context, git, mcp, policy, repo_policy, sessions, tasks, worktrees, Inner};
+use crate::{context, git, mcp, policy, repo_policy, review, sessions, tasks, worktrees, Inner};
 
 /// What kinds of thing changed in a Worktree. Each kind has its own branch in
 /// [`worktree_changed`].
@@ -153,8 +153,9 @@ pub(crate) fn worktree_changed(inner: &mut Inner, worktree_path: &str, kinds: Ki
     if !kinds.any() {
         return;
     }
-    if kinds.files {
-        files_changed(inner, worktree_path);
+    if kinds.files || kinds.git {
+        // A file committed or reverted outside Switchyard takes its Decisions with it.
+        review::prune_settled(inner, worktree_path);
     }
     if kinds.git {
         git_changed(inner, worktree_path);
@@ -173,9 +174,6 @@ fn signal(inner: &Inner, worktree_path: &str, kinds: Kinds) {
     let kinds = list.into_iter().filter(|(on, _)| *on).map(|(_, kind)| kind).collect();
     inner.emit(Event::WorktreeChanged { worktree_path: worktree_path.into(), kinds });
 }
-
-/// Working-tree files changed. Nothing beyond the facts yet.
-fn files_changed(_inner: &mut Inner, _worktree_path: &str) {}
 
 /// Git's records changed (a commit, a fetch, a checkout, a worktree added, removed or
 /// renamed in a shell): re-list the Repository's worktrees from git.
