@@ -8,12 +8,25 @@ export function checkedAgo(ms: number): string {
   return s < 60 ? `checked ${s} s ago` : `checked ${Math.floor(s / 60)} min ago`;
 }
 
-/** The time since `at` (ms since the epoch). The timer only repaints the label; it reads no data. */
+/** The time since `at` (ms since the epoch). The timer only repaints the label; it reads no
+ * data, and it stops while the window is hidden so it never wakes a background window. */
 export function CheckedAgo({ at }: { at: number }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const follow = () => {
+      clearInterval(timer);
+      timer = undefined;
+      if (document.visibilityState === "hidden") return;
+      setNow(Date.now());
+      timer = setInterval(() => setNow(Date.now()), 1000);
+    };
+    follow();
+    document.addEventListener("visibilitychange", follow);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", follow);
+    };
   }, []);
   return (
     <span className="checked-ago" title={new Date(at).toLocaleString()}>

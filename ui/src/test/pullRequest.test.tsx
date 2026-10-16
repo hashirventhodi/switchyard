@@ -312,3 +312,30 @@ test("the pull request card says how long ago the Forge was checked; no local vi
   expect(header().textContent).not.toContain("checked");
   expect(sidebar().textContent).not.toContain("checked");
 });
+
+test("the checked-ago label stops repainting while the window is hidden and catches up when shown", () => {
+  const NOW = 1_760_000_000_000;
+  vi.useFakeTimers({ now: NOW });
+  const setVisibility = (state: "visible" | "hidden") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    act(() => {
+      document.dispatchEvent(new window.Event("visibilitychange"));
+    });
+  };
+  onTestFinished(() => {
+    setVisibility("visible");
+    vi.useRealTimers();
+  });
+  const { emit } = launch([{ type: "sessionStarted", session: finished }, prChanged(pr(), "/wt/acme/login", NOW - 12_000)]);
+  openSession();
+  fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+  act(() => emit({ type: "worktreeHistory", worktreePath: "/wt/acme/login", base: "main", commits: [] }));
+  const section = () => screen.getByRole("region", { name: "Pull request" });
+
+  setVisibility("hidden");
+  act(() => vi.advanceTimersByTime(30_000));
+  expect(section().textContent).toContain("checked 12 s ago");
+
+  setVisibility("visible");
+  expect(section().textContent).toContain("checked 42 s ago");
+});
