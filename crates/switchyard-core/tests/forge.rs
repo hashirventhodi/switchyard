@@ -437,6 +437,17 @@ fn becoming_visible_polls_at_once_and_backs_off_afresh() {
 }
 
 #[test]
+fn being_told_it_is_visible_while_it_already_is_polls_nothing() {
+    let mut r = with_remote();
+    open_pr(&mut r.core, &r.wt);
+    let before = r.core.gh.calls_of(["pr", "list"]);
+
+    r.core.send(Command::WindowVisibility { visible: true });
+
+    assert_eq!(r.core.gh.calls_of(["pr", "list"]), before, "the renderer says so at startup: no extra poll");
+}
+
+#[test]
 fn a_closed_pull_request_is_still_polled_now_and_then_and_a_reopen_is_seen() {
     let mut r = with_remote();
     open_pr(&mut r.core, &r.wt);

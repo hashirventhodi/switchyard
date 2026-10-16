@@ -155,15 +155,38 @@ export function App({
     };
   }, [core]);
 
-  // The core watches git and pushes every change (ADR-0008); only the Forge is polled. On
-  // returning to the app, poll it now; while hidden, the core polls it at its slowest.
+  // The core watches git and pushes every change (ADR-0008); only the Forge is polled. The
+  // core is told whether anyone is looking (the window shown and focused), from startup and
+  // on each change only, and polls at its slowest while nobody is. Returning to the window
+  // is one Forge poll: the core polls when told it is visible again; a focus that changes
+  // nothing it knows asks for the poll itself.
   useEffect(() => {
-    const onFocus = () => core.send({ type: "pollForgeNow" });
-    const onVisibility = () => core.send({ type: "windowVisibility", visible: document.visibilityState !== "hidden" });
+    let told: boolean | null = null;
+    let focused = true;
+    const looking = () => focused && document.visibilityState !== "hidden";
+    const tell = () => {
+      const visible = looking();
+      if (visible === told) return false;
+      told = visible;
+      core.send({ type: "windowVisibility", visible });
+      return true;
+    };
+    const onFocus = () => {
+      focused = true;
+      if (!tell()) core.send({ type: "pollForgeNow" });
+    };
+    const onBlur = () => {
+      focused = false;
+      tell();
+    };
+    const onVisibility = () => tell();
+    tell();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [core]);

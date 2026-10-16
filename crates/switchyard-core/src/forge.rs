@@ -282,10 +282,12 @@ pub(crate) fn issues_polled(inner: &mut Inner, repository_id: &str, changed: boo
     inner.forge.issues.entry(repository_id.to_string()).or_default().polled(changed, hidden);
 }
 
-/// The window is shown or hidden. Shown, it polls at once ([`poll_now`]).
+/// The window is shown or hidden. Shown after being hidden, it polls at once
+/// ([`poll_now`]); told it is shown while it already was (as the renderer says at startup),
+/// nothing more happens, so returning to the window costs one poll.
 pub(crate) fn set_visible(core: &Arc<Mutex<Inner>>, visible: bool) {
-    core.lock().expect("core lock").forge.hidden = !visible;
-    if visible {
+    let was_hidden = std::mem::replace(&mut core.lock().expect("core lock").forge.hidden, !visible);
+    if visible && was_hidden {
         poll_now(core);
     }
 }

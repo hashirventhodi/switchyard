@@ -11,7 +11,7 @@ test("attaches to the core on start and shows repositories with their worktrees"
   const { core, sent, emit } = fakeCore();
   render(<App core={core} pickFolder={async () => null} />);
 
-  expect(sent).toEqual([{ type: "attach" }]);
+  expect(sent).toEqual([{ type: "attach" }, { type: "windowVisibility", visible: true }]);
 
   act(() =>
     emit(
