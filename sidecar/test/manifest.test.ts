@@ -10,5 +10,5 @@ const main = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 test("--manifest prints the adapter's name and implemented protocol range", () => {
   const out = execFileSync(process.execPath, [main, "--manifest"], { encoding: "utf8" });
 
-  expect(JSON.parse(out)).toEqual({ name: "claude-code", implements: "^0.2" });
+  expect(JSON.parse(out)).toEqual({ name: "claude-code", implements: "^0.2", switch_model_live: true });
 });

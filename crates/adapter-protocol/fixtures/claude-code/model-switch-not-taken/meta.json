@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.2.0",
+  "description": "A live Model switch that does not take: set_model claude-sonnet-5-5 arrives while the turn's first request is in flight, which is left alone (no failure for it), but the main agent's next request is still on claude-opus-5-5, so the adapter sends model_change_failed with no reason (the CLI gave none). Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
+}

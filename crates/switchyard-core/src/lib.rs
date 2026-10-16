@@ -259,6 +259,7 @@ impl Core {
             Command::SetPermissionMode { session_id, permission_mode } => {
                 sessions::set_mode(&mut inner, &session_id, permission_mode)
             }
+            Command::SetModel { session_id, model } => sessions::set_model(&mut inner, &session_id, &model),
             Command::OpenShell { worktree_path, cols, rows } => {
                 shells::open(&mut inner, &self.inner, &worktree_path, cols, rows)
             }

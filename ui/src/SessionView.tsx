@@ -6,7 +6,8 @@ import type { Policy } from "./schema/Policy";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
-import { modelLabel } from "./model";
+import { choosesModel, modelLabel } from "./model";
+import { ModelSwitch } from "./ModelSwitch";
 import { RequestCard } from "./RequestCard";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
@@ -446,7 +447,10 @@ function Composer(props: {
         ))}
       </div>
       <div className="composer">
-        <ModeSegment session={session} send={send} ceiling={ceiling} />
+        <div className="composer-controls">
+          <ModeSegment session={session} send={send} ceiling={ceiling} />
+          {choosesModel(session.agent) && <ModelSwitch session={session} send={send} />}
+        </div>
         <textarea
           ref={input}
           aria-label="Message the agent"

@@ -66,6 +66,13 @@
 .seg label{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line-2);border-radius:var(--radius)}
 .seg label.off{opacity:.5}
 .mode-seg{display:flex;width:100%}
+.composer-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%}
+.composer-controls .mode-seg{width:auto}
+.model-switch{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-left:auto}
+.model-switch input{width:190px;font-size:11.5px;padding:2px 8px;background:var(--bg-1);border:1px solid var(--line-2);border-radius:var(--radius)}
+.model-switch .btn{font-size:11.5px;padding:2px 9px}
+.model-switch-note{font-size:11.5px;color:var(--fg-2)}
+.model-switch-note.failed{color:var(--warn)}
 .mode-seg label{font-size:11.5px;padding:2px 9px;cursor:pointer}
 .mode-seg label.on{border-color:var(--accent);background:var(--accent-soft)}
 .mode-seg input{position:absolute;opacity:0;pointer-events:none}

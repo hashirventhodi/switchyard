@@ -350,6 +350,16 @@ fn list_models_is_answered_by_the_models_the_cli_offers() {
 }
 
 #[test]
+fn set_model_switches_the_running_cli_to_a_model_id() {
+    round_trip_command(
+        json!({ "type": "set_model", "model": "claude-sonnet-5-5" }),
+        Command::SetModel {
+            model: "claude-sonnet-5-5".into(),
+        },
+    );
+}
+
+#[test]
 fn a_cli_that_cannot_list_models_says_so() {
     round_trip_event(
         json!({ "type": "cannot_list_models", "reason": "this CLI has no model list" }),
@@ -360,4 +370,54 @@ fn a_cli_that_cannot_list_models_says_so() {
     let parsed: Event =
         serde_json::from_value(json!({ "type": "cannot_list_models" })).expect("parses");
     assert_eq!(parsed, Event::CannotListModels { reason: None });
+}
+
+#[test]
+fn model_changed_names_the_model_the_main_agent_now_runs_on() {
+    round_trip_event(
+        json!({ "type": "model_changed", "model": "claude-sonnet-5-5" }),
+        Event::ModelChanged {
+            model: "claude-sonnet-5-5".into(),
+        },
+    );
+}
+
+#[test]
+fn model_change_failed_carries_the_clis_reason_when_it_gives_one() {
+    round_trip_event(
+        json!({ "type": "model_change_failed", "model": "claude-sonnet-5-5", "reason": "Unknown model" }),
+        Event::ModelChangeFailed {
+            model: "claude-sonnet-5-5".into(),
+            reason: Some("Unknown model".into()),
+        },
+    );
+    round_trip_event(
+        json!({ "type": "model_change_failed", "model": "claude-sonnet-5-5", "reason": null }),
+        Event::ModelChangeFailed {
+            model: "claude-sonnet-5-5".into(),
+            reason: None,
+        },
+    );
+}
+
+#[test]
+fn a_manifest_declares_whether_it_switches_models_live() {
+    let manifest = AdapterManifest {
+        name: "claude-code".into(),
+        implements: "^0.2".parse().unwrap(),
+        switch_model_live: true,
+    };
+    let wire = json!({ "name": "claude-code", "implements": "^0.2", "switch_model_live": true });
+    assert_eq!(serde_json::to_value(&manifest).unwrap(), wire);
+    assert_eq!(
+        serde_json::from_value::<AdapterManifest>(wire).unwrap(),
+        manifest
+    );
+}
+
+#[test]
+fn a_manifest_from_before_0_2_cannot_switch_models_live() {
+    let manifest: AdapterManifest =
+        serde_json::from_value(json!({ "name": "old", "implements": "^0.1" })).unwrap();
+    assert!(!manifest.switch_model_live);
 }

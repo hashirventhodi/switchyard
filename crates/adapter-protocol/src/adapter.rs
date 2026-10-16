@@ -10,6 +10,12 @@ use crate::protocol::{Command, Event};
 pub struct AdapterManifest {
     pub name: String,
     pub implements: VersionReq,
+    /// The adapter switches its CLI's Model live ([`Command::SetModel`]) and can tell the
+    /// main agent's requests from subagent and background calls, so it reports
+    /// [`Event::ModelChanged`] truthfully. False (also when left out): a switch applies only
+    /// when the Session resumes, and the adapter never sends `model_changed`.
+    #[serde(default)]
+    pub switch_model_live: bool,
 }
 
 /// A translator between one agent CLI's structured output and the protocol.

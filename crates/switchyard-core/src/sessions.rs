@@ -66,12 +66,16 @@ struct SessionState {
     external_id: Option<String>,
     /// The agent process, recorded so a relaunch after a crash can kill it.
     process: Option<Recorded>,
+    /// The pending Model switch (`session.pending_model`) is not yet sent to the agent: it
+    /// waits for a Permission request's answer, or for the agent to be running again.
+    switch_queued: bool,
     saved: Saved,
 }
 
 /// The stored row's changing parts: status, facts, expected mode, external id, process,
-/// entry count.
-type RowFacts = (SessionStatus, SessionFacts, ProtocolMode, Option<String>, Option<Recorded>, usize);
+/// entry count, and the Model switch (pending, last confirmed).
+type RowFacts =
+    (SessionStatus, SessionFacts, ProtocolMode, Option<String>, Option<Recorded>, usize, (Option<String>, Option<String>));
 
 /// What of a session is already in the store.
 #[derive(Default)]
@@ -239,6 +243,8 @@ fn begin(
         agent,
         permission_mode,
         model,
+        switched_model: None,
+        pending_model: None,
         status: SessionStatus::Running,
         started_at_ms: (inner.runtime.now_ms)(),
     };
@@ -255,6 +261,7 @@ fn begin(
         agent: Some(handle),
         external_id: None,
         process,
+        switch_queued: false,
         saved: Saved::default(),
     });
     let state = inner.sessions.list.last_mut().expect("just pushed");
@@ -318,6 +325,7 @@ pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str,
     let entry = append(state, Entry::User { text: text.into() });
     inner.emit(status);
     inner.emit(entry);
+    send_queued_switch(inner, id);
     send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
@@ -341,6 +349,7 @@ pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
     let entry = append(state, Entry::System { text: "Resumed by you.".into() });
     inner.emit(status);
     inner.emit(entry);
+    send_queued_switch(inner, id);
     send_to_agent(inner, id, AgentCommand::SendText { text: CONTINUE.into() });
 }
 
@@ -428,6 +437,7 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
         state.external_id.clone(),
         state.process.clone(),
         state.transcript.len(),
+        (state.session.pending_model.clone(), state.session.switched_model.clone()),
     );
     let mut chunks = std::mem::take(&mut state.saved.chunks);
     if state.saved.entries < state.transcript.len() {
@@ -517,6 +527,66 @@ pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
         inner.emit(event);
     }
     send_to_agent(inner, id, AgentCommand::SetPermissionMode { permission_mode: expected });
+}
+
+/// The `setModel` command: the composer's Model control. The switch is pending from now
+/// until the agent's own requests run on the new Model (`model_changed`) or it fails.
+pub(crate) fn set_model(inner: &mut Inner, id: &str, model: &str) {
+    const COMMAND: &str = command_name::SET_MODEL;
+    let Some(state) = find(inner, id) else {
+        return inner.refuse(COMMAND, crate::no_session(&id));
+    };
+    let model = model.trim();
+    if model.is_empty() {
+        return inner.refuse(COMMAND, "Choose a Model to switch to".into());
+    }
+    if state.session.pending_model.as_deref() == Some(model)
+        || (state.session.pending_model.is_none() && state.facts.model.as_deref() == Some(model))
+    {
+        return;
+    }
+    // Back to the Model it runs on: the pending switch is withdrawn, and a CLI already told
+    // to switch is told to stay. There is nothing to confirm.
+    if state.facts.model.as_deref() == Some(model) {
+        state.session.pending_model = None;
+        let sent = !std::mem::take(&mut state.switch_queued);
+        let event = model_switch(state);
+        inner.emit(event);
+        if sent {
+            send_to_agent(inner, id, AgentCommand::SetModel { model: model.into() });
+        }
+        return;
+    }
+    state.session.pending_model = Some(model.into());
+    // While a Permission request is pending the switch waits for the answer: the request
+    // stays exactly as asked, and the switch's one-request check starts after it.
+    state.switch_queued = true;
+    let event = model_switch(state);
+    inner.emit(event);
+    if !requests::has_pending(find(inner, id).expect("found above")) {
+        send_queued_switch(inner, id);
+    }
+}
+
+/// Send the agent the pending Model switch that waited (for an answer, or for the agent).
+fn send_queued_switch(inner: &mut Inner, id: &str) {
+    let Some(state) = find(inner, id) else { return };
+    if !state.switch_queued || state.agent.is_none() {
+        return;
+    }
+    state.switch_queued = false;
+    if let Some(model) = state.session.pending_model.clone() {
+        send_to_agent(inner, id, AgentCommand::SetModel { model });
+    }
+}
+
+/// The Session's Model switch as it now stands.
+fn model_switch(state: &SessionState) -> Event {
+    Event::SessionModelChanged {
+        session_id: state.session.id.clone(),
+        pending_model: state.session.pending_model.clone(),
+        switched_model: state.session.switched_model.clone(),
+    }
 }
 
 /// The worktree path and status of session `id`, if it exists.
@@ -749,6 +819,32 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
             }
             event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. }) => {
                 model_list = crate::models::from_agent(event, (inner.runtime.now_ms)());
+            }
+            AgentEvent::ModelChanged { model } => {
+                // The main agent's own requests run on `model` now: the user's switch took (one
+                // still waiting to be sent cannot have).
+                if !state.switch_queued && state.session.pending_model.take().is_some() {
+                    state.session.switched_model = Some(model.clone());
+                    out.push(model_switch(state));
+                }
+                out.push(append(state, Entry::System { text: format!("Model → {model}") }));
+                state.facts.model = Some(model);
+                out.push(facts(state));
+            }
+            AgentEvent::ModelChangeFailed { model, reason } => {
+                // Noted, never retried; the Session carries on as it was, in the same status.
+                let running = state.facts.model.as_deref().unwrap_or("the Model it was on");
+                let text = match &reason {
+                    Some(reason) => format!("Model switch to {model} failed: {reason}"),
+                    None => format!("Model switch to {model} did not take: the agent's next request was still on {running}"),
+                };
+                out.push(append(state, Entry::System { text }));
+                // A failure for a switch since superseded by another leaves that one pending.
+                if !state.switch_queued && state.session.pending_model.as_deref() == Some(model.as_str()) {
+                    state.session.pending_model = None;
+                    out.push(model_switch(state));
+                    out.push(Event::ModelSwitchFailed { session_id: id.into(), model, reason });
+                }
             }
         },
         AgentOutput::Unreadable { line } => {

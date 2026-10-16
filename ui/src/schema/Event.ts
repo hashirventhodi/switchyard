@@ -78,4 +78,4 @@ pullRequest: number | null, removed: boolean, kept: string | null, } | { "type":
  * When the GitHub issues were last read from the Forge, in milliseconds since the
  * Unix epoch; `null` when they never were (no remote, or never synced).
  */
-checkedAtMs: number | null, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, } | { "type": "modelsChanged", agent: AgentKind, models: ModelList, };
+checkedAtMs: number | null, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, } | { "type": "modelsChanged", agent: AgentKind, models: ModelList, } | { "type": "sessionModelChanged", sessionId: string, pendingModel: string | null, switchedModel: string | null, } | { "type": "modelSwitchFailed", sessionId: string, model: string, reason: string | null, };

@@ -42,6 +42,8 @@ export interface SessionView extends Session {
   rawEvents: RawLog;
   /** Running spend totals as recorded, oldest first. */
   spend: SpendSample[];
+  /** The last Model switch that did not take, until the next switch. */
+  modelSwitchFailed?: { model: string; reason: string | null } | null;
 }
 
 /** A Permission request waiting for the user. */
@@ -353,6 +355,19 @@ export function reduce(state: State, event: Event): State {
       return updateSession(state, event.sessionId, (s) => ({ ...s, permissionMode: event.permissionMode }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
+    case "sessionModelChanged":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        pendingModel: event.pendingModel,
+        switchedModel: event.switchedModel,
+        // A new switch puts the last failure behind it.
+        modelSwitchFailed: event.pendingModel ? null : s.modelSwitchFailed,
+      }));
+    case "modelSwitchFailed":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        modelSwitchFailed: { model: event.model, reason: event.reason },
+      }));
     case "spendRecorded":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
