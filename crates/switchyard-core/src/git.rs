@@ -35,16 +35,23 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, GitError> {
 /// directory, or what a linked worktree's `.git` file points at (through its `commondir`).
 /// `None` when `dir` is not the root of a worktree.
 pub fn common_dir(dir: &Path) -> Option<PathBuf> {
+    let gitdir = git_dir(dir)?;
+    match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => gitdir.join(common.trim()).canonicalize().ok(),
+        Err(_) => Some(gitdir),
+    }
+}
+
+/// The worktree rooted at `dir`'s own git directory (its HEAD, index, HEAD log), read from
+/// `dir/.git` without running git: the primary's `.git`, or a linked worktree's
+/// `.git/worktrees/<name>`. Links resolved; `None` when `dir` is not the root of a worktree.
+pub fn git_dir(dir: &Path) -> Option<PathBuf> {
     let dot_git = dir.join(".git");
     if dot_git.is_dir() {
         return dot_git.canonicalize().ok();
     }
     let text = std::fs::read_to_string(&dot_git).ok()?;
-    let gitdir = dir.join(text.trim().strip_prefix("gitdir:")?.trim());
-    match std::fs::read_to_string(gitdir.join("commondir")) {
-        Ok(common) => gitdir.join(common.trim()).canonicalize().ok(),
-        Err(_) => gitdir.canonicalize().ok(),
-    }
+    dir.join(text.trim().strip_prefix("gitdir:")?.trim()).canonicalize().ok()
 }
 
 /// True when `dir` is inside a git repository (any of its worktrees).

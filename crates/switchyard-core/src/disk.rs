@@ -175,7 +175,7 @@ fn signal(inner: &Inner, worktree_path: &str, kinds: Kinds) {
     inner.emit(Event::WorktreeChanged { worktree_path: worktree_path.into(), kinds });
 }
 
-/// Git's records changed (a commit, a fetch, a checkout, a worktree added, removed or
+/// Git's records changed (a commit, a fetch, a branch switch, a worktree added, removed or
 /// renamed in a shell): re-list the Repository's worktrees from git.
 fn git_changed(inner: &mut Inner, worktree_path: &str) {
     let owner = inner.listed.iter().find(|(_, list)| list.iter().any(|w| w.path == worktree_path));
@@ -298,12 +298,15 @@ fn classify(worktree: &Path, paths: &[PathBuf]) -> Kinds {
         return kinds;
     }
     let common = git::common_dir(worktree);
+    // Where this Worktree's own HEAD and index live in `common`: at its root for the
+    // primary, under `worktrees/<name>` for a linked one.
+    let own = git::git_dir(worktree).zip(common.as_deref()).and_then(|(g, c)| g.strip_prefix(c).ok().map(Path::to_path_buf));
     let canonical = worktree.canonicalize().ok();
     let mut files = Vec::new();
     for path in paths {
         let path = if path.is_relative() { worktree.join(path) } else { path.clone() };
         if let Some(rel) = common.as_deref().and_then(|c| path.strip_prefix(c).ok()) {
-            kinds.git |= is_git_record(rel);
+            kinds.git |= own.as_deref().is_some_and(|own| is_git_record(rel, own));
             continue;
         }
         let rel = path.strip_prefix(worktree).ok().or_else(|| canonical.as_deref().and_then(|c| path.strip_prefix(c).ok()));
@@ -321,11 +324,22 @@ fn classify(worktree: &Path, paths: &[PathBuf]) -> Kinds {
     kinds
 }
 
-fn is_git_record(rel: &Path) -> bool {
-    rel == Path::new("HEAD")
-        || rel == Path::new("index")
-        || rel == Path::new("packed-refs")
-        || rel == Path::new("logs/HEAD")
-        || rel.starts_with("refs")
-        || rel.starts_with("worktrees")
+/// Whether `rel`, under the Repository's `.git`, is one of git's records for the Worktree
+/// whose own git directory is `own` (relative to `.git`; empty for the primary). Refs and
+/// packed refs are every Worktree's; HEAD, the index and the HEAD log only their own
+/// Worktree's. Another worktree's directory under `worktrees/` counts only when it comes or
+/// goes (the directory itself, or its `gitdir` file, which also moves with it), so one
+/// worktree's commits do not re-derive its neighbours.
+fn is_git_record(rel: &Path, own: &Path) -> bool {
+    if rel == Path::new("packed-refs") || rel.starts_with("refs") {
+        return true;
+    }
+    if let Ok(mine) = rel.strip_prefix(own) {
+        if mine == Path::new("HEAD") || mine == Path::new("index") || mine == Path::new("logs/HEAD") {
+            return true;
+        }
+    }
+    let Ok(entry) = rel.strip_prefix("worktrees") else { return false };
+    let parts: Vec<_> = entry.components().collect();
+    parts.len() <= 1 || (parts.len() == 2 && parts[1].as_os_str() == "gitdir")
 }

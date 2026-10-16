@@ -68,7 +68,7 @@ fn a_commit_in_a_shell_pushes_the_worktrees_facts() {
 fn base_moving_in_a_shell_pushes_behind_for_the_worktree() {
     let (repo, worktree, mut core) = attached();
 
-    // A pull or fetch into main from the primary checkout.
+    // A pull or fetch into main from the Primary worktree.
     std::fs::write(repo.path.join("CHANGELOG"), "base moved\n").unwrap();
     git(&repo.path, &["add", "CHANGELOG"]);
     git(&repo.path, &["commit", "-q", "-m", "base moved"]);
@@ -281,4 +281,47 @@ fn a_file_edit_and_a_commit_together_signal_both_kinds() {
     let events = core.disk_changed(&worktree, &[&worktree.join("README"), &repo.path.join(".git/refs/heads/feat/login")]);
 
     assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Files, ChangeKind::Git]);
+}
+
+#[test]
+fn another_worktrees_index_and_head_changing_pushes_nothing() {
+    let (repo, worktree, mut core) = attached();
+    let other = repo.add_worktree("spike/cache");
+    core.disk_changed(&worktree, &[&gitdir_of(&repo, &other)]);
+
+    let theirs = gitdir_of(&repo, &other);
+    let events = core.disk_changed(
+        &worktree,
+        &[&theirs.join("index"), &theirs.join("HEAD"), &theirs.join("logs/HEAD"), &repo.path.join(".git/index"), &repo.path.join(".git/HEAD")],
+    );
+
+    assert_eq!(events, vec![]);
+}
+
+#[test]
+fn a_worktree_added_beside_it_is_seen_from_its_gitdir_file() {
+    let (repo, worktree, mut core) = attached();
+    let other = repo.add_worktree("spike/cache");
+
+    let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &other).join("gitdir")]);
+
+    assert!(events.iter().any(|e| matches!(e, Event::WorktreeAdded { worktree, .. } if Path::new(&worktree.path) == other)), "{events:#?}");
+}
+
+#[test]
+fn its_own_index_changing_signals_git() {
+    let (repo, worktree, mut core) = attached();
+
+    let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &worktree).join("index")]);
+
+    assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Git]);
+}
+
+#[test]
+fn the_primary_worktrees_own_index_changing_signals_git() {
+    let (repo, _worktree, mut core) = attached();
+
+    let events = core.disk_changed(&repo.path, &[&repo.path.join(".git/index")]);
+
+    assert_eq!(changed_kinds(&events, &repo.path), vec![ChangeKind::Git]);
 }
