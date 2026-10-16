@@ -94,6 +94,22 @@ pub enum Event {
         detail: String,
         reason: Option<String>,
     },
+    /// The main agent's own requests now run on `model`, a different Model from its last
+    /// request: a [`Command::SetModel`] took, or the CLI moved on its own. Never sent for a
+    /// subagent's, a compaction's or any other background call's Model (their usage still
+    /// comes as [`Event::TokenUsage`] on that Model). An adapter that cannot tell the main
+    /// agent's requests from the others never sends it, and says so in its manifest
+    /// (`switch_model_live: false`).
+    ModelChanged {
+        model: String,
+    },
+    /// A [`Command::SetModel`] to `model` did not take: the CLI refused it (`reason`, when it
+    /// gives one), or the main agent's next request was still on the old Model. The CLI
+    /// carries on as it was.
+    ModelChangeFailed {
+        model: String,
+        reason: Option<String>,
+    },
 }
 
 /// An MCP server's connection state, as the CLI reports it.
@@ -180,6 +196,13 @@ pub enum Command {
     },
     Resume {
         external_session_id: String,
+    },
+    /// Switch the running CLI to another Model, from the main agent's next request on (the
+    /// request in flight is left alone). Answered by [`Event::ModelChanged`] once the main
+    /// agent runs on it, or [`Event::ModelChangeFailed`]. Only sent to an adapter whose
+    /// manifest has `switch_model_live`.
+    SetModel {
+        model: String,
     },
 }
 

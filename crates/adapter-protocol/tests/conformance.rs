@@ -15,6 +15,7 @@ impl Adapter for Claiming {
         AdapterManifest {
             name: "claiming".into(),
             implements: VersionReq::parse(self.0).unwrap(),
+            switch_model_live: false,
         }
     }
     fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError> {
@@ -201,6 +202,7 @@ impl Adapter for Ponging {
         AdapterManifest {
             name: "ponging".into(),
             implements: VersionReq::parse("^0.2").unwrap(),
+            switch_model_live: false,
         }
     }
     fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError> {

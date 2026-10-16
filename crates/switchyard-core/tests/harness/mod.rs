@@ -554,7 +554,7 @@ struct FakeProbeInner {
 
 impl Default for FakeProbe {
     fn default() -> Self {
-        let manifest = AdapterManifest { name: "claude-code".into(), implements: "^0.2".parse().unwrap() };
+        let manifest = AdapterManifest { name: "claude-code".into(), implements: "^0.2".parse().unwrap(), switch_model_live: true };
         FakeProbe {
             inner: Arc::new(Mutex::new(FakeProbeInner {
                 cli: Ok(Some("2.1.300 (Claude Code)".into())),
@@ -574,7 +574,7 @@ impl FakeProbe {
 
     /// The adapter now declares it implements `range`.
     pub fn adapter_implements(&self, range: &str) {
-        let manifest = AdapterManifest { name: "claude-code".into(), implements: range.parse().unwrap() };
+        let manifest = AdapterManifest { name: "claude-code".into(), implements: range.parse().unwrap(), switch_model_live: true };
         self.inner.lock().unwrap().manifest = Ok(manifest);
     }
 

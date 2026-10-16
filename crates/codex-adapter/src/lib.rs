@@ -43,6 +43,8 @@ pub fn manifest() -> AdapterManifest {
     AdapterManifest {
         name: NAME.into(),
         implements: VersionReq::parse("^0.2").expect("valid range"),
+        // Not yet: a host never sends this adapter set_model, and it never sends model_changed.
+        switch_model_live: false,
     }
 }
 
@@ -791,6 +793,9 @@ impl Adapter for CodexAdapter {
                     self.mode_override = Some(*permission_mode);
                 }
                 vec![]
+            }
+            Command::SetModel { .. } => {
+                return Err(AdapterError("Codex does not switch Models live (switch_model_live is false)".into()))
             }
         })
     }

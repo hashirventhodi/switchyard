@@ -10,11 +10,12 @@ This crate is self-contained (no dependency on the rest of Switchyard) so it can
 
 - `PROTOCOL_VERSION` is the version this crate defines. It follows semver: while it is `0.x`, a minor bump is breaking.
 - Every adapter declares the range it implements in its `AdapterManifest` (`implements`, a semver requirement such as `^0.2`). Hosts and the runner refuse an adapter whose range does not include `PROTOCOL_VERSION`.
+- The manifest also declares `switch_model_live`: true when the adapter switches its CLI's Model live (`set_model`) and can tell the main agent's requests from subagent and background calls, so its `model_changed` is truthful. An adapter that cannot make that distinction must declare false (the default) and never send `model_changed`; the host then applies a switch only when the Session resumes.
 - Every fixture records the protocol version its expected events are written in (`meta.json` `protocol`). The runner refuses a fixture whose version is not caret-compatible with its own (for example a `0.3.0` fixture under a `0.2.0` runner).
 
 ## Changes
 
-- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model.
+- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. Live Model switching: the `set_model` command, the `model_changed` and `model_change_failed` events, and the manifest's `switch_model_live` (false when left out, as from a 0.1 adapter).
 - **0.1.0**: first version.
 
 ## Wire format
@@ -36,6 +37,8 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 | `error` | `message`, `fatal` |
 | `token_usage` | `model` (the Model these tokens were spent on; absent or `null` means the Session's Model, as in 0.1), `input_tokens` (excluding cache reads and writes), `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (cache creation; optional, 0 when absent), `cost_usd` (the CLI's cost for these tokens, only when it reports one): running totals for everything the session has spent on that Model, each report superseding the last for the same Model. A CLI that uses several Models (its own subagent or background calls, a switch) sends one per Model, never one summed total |
 | `classifier_denial` | `tool`, `detail`, `reason`: never a Permission request |
+| `model_changed` | `model`: the main agent's own requests now run on this Model, a different one from its last request (a `set_model` took, or the CLI moved on its own). Never sent for a subagent's, a compaction's or another background call's Model, whose usage still comes as `token_usage` on that Model. An adapter that cannot tell the main agent's requests apart never sends it |
+| `model_change_failed` | `model` (the Model `set_model` asked for), `reason` (the CLI's, when it gives one): the switch did not take, because the CLI refused it or the main agent's next request was still on the old Model. The CLI carries on as it was |
 
 A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 
@@ -56,6 +59,7 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `interrupt` | (none) |
 | `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
 | `resume` | `external_session_id` |
+| `set_model` | `model` (a Model id): switch the live CLI to this Model from the main agent's next request on, leaving the request in flight alone. Answered by `model_changed` or `model_change_failed`. Only sent to an adapter whose manifest has `switch_model_live` |
 
 `resume` is only ever the first command a freshly started adapter receives: the host relaunched it for a Session whose process is gone (after a crash or quit) and the CLI must reload that conversation by its own session id (from `session_init`) so the agent keeps its context. A `send_text` follows it.
 
