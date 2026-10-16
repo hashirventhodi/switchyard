@@ -1,8 +1,10 @@
-// Spend: a session's cost (header) and Spend today (status bar, Dashboard KPI).
-// The core sends running totals (`spendRecorded`); a cost is either reported by the CLI
-// or estimated from the price table, and the two sums are never folded into one figure
-// without a tilde marking the estimate.
+// Spend: a session's cost and its breakdown by Model (header) and Spend today (status bar,
+// Dashboard KPI). The core sends running totals (`spendRecorded`); a cost is either
+// reported by the CLI or estimated from the price table, and the two sums are never folded
+// into one figure without a tilde marking the estimate. A Model with neither is unpriced:
+// shown as such with its tokens, never as $0.
 import { useEffect, useState } from "react";
+import type { ModelSpend } from "./schema/ModelSpend";
 import type { Spend } from "./schema/Spend";
 import type { SessionView } from "./state";
 
@@ -82,16 +84,58 @@ export function SpendToday({ sessions, variant }: { sessions: SessionView[]; var
   );
 }
 
+const tokensText = (s: Spend | ModelSpend) =>
+  `${count(s.inputTokens)} in · ${count(s.outputTokens)} out · ${count(s.cacheReadTokens)} cache reads · ${count(s.cacheWriteTokens ?? 0)} cache writes`;
+
+/** How a Model is named; null when the agent named none and the Session's is not known. */
+const modelName = (m: ModelSpend) => m.model ?? "the Session's Model";
+
+const isUnpriced = (m: ModelSpend) => m.reportedUsd === null && m.estimatedUsd === null;
+
+/** `s`'s cost: [value, tooltip parts], or null when none of it is priced. */
+function priced(s: Spend | ModelSpend): [string, string[]] | null {
+  const { reportedUsd: reported, estimatedUsd: estimated } = s;
+  if (reported === null && estimated === null) return null;
+  const parts = [
+    ...(reported !== null ? [`Reported by the CLI: $${reported}`] : []),
+    ...(estimated !== null ? [`Estimated from price table ${s.priceTableVersion}: ~$${estimated.toFixed(4)}`] : []),
+  ];
+  return [totalsText({ reported: reported ?? 0, estimated: estimated ?? 0 }), parts];
+}
+
 /** A session's cost for the summary strip: [value, tooltip]. */
 export function sessionCost(session: SessionView): [string, string] {
   const latest = session.spend[session.spend.length - 1]?.spend;
   if (!latest) return ["—", "No usage reported yet"];
-  const tokens = `${count(latest.inputTokens)} in · ${count(latest.outputTokens)} out · ${count(latest.cacheReadTokens)} cache reads · ${count(latest.cacheWriteTokens ?? 0)} cache writes`;
-  if (latest.reportedUsd !== null) return [usd(latest.reportedUsd), `Reported by the CLI: $${latest.reportedUsd} · ${tokens}`];
-  if (latest.estimatedUsd !== null)
-    return [
-      `~${usd(latest.estimatedUsd)}`,
-      `Estimated from price table ${latest.priceTableVersion}: ~$${latest.estimatedUsd.toFixed(4)} · ${tokens}`,
-    ];
-  return ["—", `No price for this model in the price table · ${tokens}`];
+  const unpriced = latest.byModel.filter(isUnpriced).map(modelName);
+  const cost = priced(latest);
+  if (!cost) {
+    const which = unpriced.length ? unpriced.join(", ") : "this Model";
+    return ["Unpriced", `No price for ${which} in the price table · ${tokensText(latest)}`];
+  }
+  const [value, parts] = cost;
+  if (!unpriced.length) return [value, [...parts, tokensText(latest)].join(" · ")];
+  return [`${value} + unpriced`, [...parts, `Unpriced: ${unpriced.join(", ")}`, tokensText(latest)].join(" · ")];
+}
+
+/** What each Model cost, when a Session used more than one. */
+export function SpendByModel({ session }: { session: SessionView }) {
+  const models = session.spend[session.spend.length - 1]?.spend.byModel ?? [];
+  if (models.length < 2) return null;
+  return (
+    <div className="c by-model">
+      <div className="l">By Model</div>
+      <ul aria-label="Spend by Model">
+        {models.map((m) => {
+          const cost = priced(m);
+          const [value, parts] = cost ?? ["unpriced", [`No price for ${modelName(m)} in the price table`]];
+          return (
+            <li key={modelName(m)} title={[...parts, tokensText(m)].join(" · ")}>
+              <span className="m">{modelName(m)}</span> <span className={cost ? "v" : "v unpriced"}>{value}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
