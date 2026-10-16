@@ -122,6 +122,18 @@ pub enum Event {
     },
 }
 
+impl Event {
+    /// True when the event shows that a request of the agent's ran: it said or did
+    /// something, or its turn ended. A host or adapter waiting on a relaunched CLI's first
+    /// request (to confirm the Model it resumed on) counts from these.
+    pub fn shows_a_request_ran(&self) -> bool {
+        matches!(
+            self,
+            Event::AgentText { .. } | Event::ToolCallStarted { .. } | Event::TurnComplete
+        )
+    }
+}
+
 /// One Model a CLI offers: `id` is what the CLI takes to run on it, `display_name` what
 /// the user reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

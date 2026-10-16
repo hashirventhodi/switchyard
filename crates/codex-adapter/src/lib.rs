@@ -151,7 +151,7 @@ pub struct CodexAdapter {
     /// The thread's Model, from `thread/start` or `thread/resume`: what its usage is spent on.
     model: Option<String>,
     /// The Model the thread was resumed on, until a request of this launch has run: an error
-    /// naming it before then means the CLI cannot run on it ([`Self::refused`]).
+    /// naming it before then means the CLI cannot run on it ([`Self::resume_model_unavailable`]).
     resumed_on: Option<String>,
     /// The host asked for the Model list before the thread existed: asked once it does.
     list_wanted: bool,
@@ -346,8 +346,8 @@ impl CodexAdapter {
                         "start a thread"
                     };
                     let message = error_message(error.unwrap_or(&Value::Null));
-                    let refused = self.refused(&message);
-                    return refused
+                    let unavailable = self.resume_model_unavailable(&message);
+                    return unavailable
                         .into_iter()
                         .chain(self.fail(format!("Codex could not {what}: {message}")))
                         .collect();
@@ -392,11 +392,8 @@ impl CodexAdapter {
                 // The prompt never became a turn: report it and hand the session back.
                 Some(error) => {
                     let message = error_message(error);
-                    let failed = self.refused(&message).unwrap_or_else(|| Event::Error {
-                        message: format!("Codex did not start the turn: {message}"),
-                        fatal: false,
-                    });
-                    vec![failed, Event::TurnComplete]
+                    let shown = format!("Codex did not start the turn: {message}");
+                    vec![self.turn_error(&message, shown), Event::TurnComplete]
                 }
                 None => {
                     if let Some(turn_id) = str_at(message, "/result/turn/id") {
@@ -454,12 +451,23 @@ impl CodexAdapter {
     /// `model_change_failed` for the Model the thread was resumed on, when `message` (an
     /// error before any request of this launch ran) names it: Codex has no error code for
     /// an unknown or inaccessible Model, only a message saying which.
-    fn refused(&mut self, message: &str) -> Option<Event> {
+    fn resume_model_unavailable(&mut self, message: &str) -> Option<Event> {
         let model = self.resumed_on.take_if(|m| message.contains(m.as_str()))?;
         Some(Event::ModelChangeFailed {
             model,
             reason: Some(message.to_string()),
         })
+    }
+
+    /// A turn's error, `message` as Codex gave it: the Model the thread resumed on is
+    /// unavailable ([`Self::resume_model_unavailable`]), else a recoverable `error` reading
+    /// `shown`.
+    fn turn_error(&mut self, message: &str, shown: String) -> Event {
+        self.resume_model_unavailable(message)
+            .unwrap_or(Event::Error {
+                message: shown,
+                fatal: false,
+            })
     }
 
     fn fail(&mut self, message: String) -> Vec<Event> {
@@ -486,10 +494,7 @@ impl CodexAdapter {
                 {
                     let message = str_at(params, "/turn/error/message")
                         .unwrap_or_else(|| "The turn failed".into());
-                    events.push(self.refused(&message).unwrap_or(Event::Error {
-                        message,
-                        fatal: false,
-                    }));
+                    events.push(self.turn_error(&message, message.clone()));
                 }
                 events.push(Event::TurnComplete);
                 events
@@ -503,10 +508,7 @@ impl CodexAdapter {
                 }
                 let message = str_at(params, "/error/message")
                     .unwrap_or_else(|| "Codex reported an error".into());
-                vec![self.refused(&message).unwrap_or(Event::Error {
-                    message,
-                    fatal: false,
-                })]
+                vec![self.turn_error(&message, message.clone())]
             }
             "mcpServer/startupStatus/updated" => self.mcp_startup(params),
             "item/started" => self.item_started(params.get("item").unwrap_or(&Value::Null)),
@@ -834,12 +836,7 @@ impl Adapter for CodexAdapter {
             (None, None) => vec![],
         };
         // A request ran: the Model it resumed on works.
-        if events.iter().any(|e| {
-            matches!(
-                e,
-                Event::AgentText { .. } | Event::ToolCallStarted { .. } | Event::TurnComplete
-            )
-        }) {
+        if events.iter().any(Event::shows_a_request_ran) {
             self.resumed_on = None;
         }
         Ok(events)

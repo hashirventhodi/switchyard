@@ -701,7 +701,7 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
     let mut fall_back = None;
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     // A resumed agent's first request has run once it says or does something, or its turn ends.
-    if matches!(output, AgentOutput::Event(AgentEvent::AgentText { .. } | AgentEvent::ToolCallStarted { .. } | AgentEvent::TurnComplete)) {
+    if matches!(&output, AgentOutput::Event(event) if event.shows_a_request_ran()) {
         out.extend(first_request(state));
     }
     match output {
