@@ -1,0 +1,4 @@
+{"after_input":1,"message":{"method":"initialized"}}
+{"after_input":1,"message":{"method":"config/read","id":2,"params":{"includeLayers":false,"cwd":"/wt/acme/feat-billing"}}}
+{"after_input":2,"message":{"method":"thread/start","id":3,"params":{"cwd":"/wt/acme/feat-billing","approvalPolicy":"untrusted","approvalsReviewer":"user","sandbox":"workspace-write"}}}
+{"after_input":3,"message":{"method":"turn/start","id":4,"params":{"threadId":"019a1f2e-7c3d-7e41-9b2a-4c5d6e7f8a11","input":[{"type":"text","text":"Run the tests.","text_elements":[]}]}}}

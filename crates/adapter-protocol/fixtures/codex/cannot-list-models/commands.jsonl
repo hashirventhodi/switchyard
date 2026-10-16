@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"send_text","text":"Run the tests."},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
+{"after_input":4,"command":{"type":"list_models"},"expect_responses":[{"method":"model/list","id":5,"params":{}}]}

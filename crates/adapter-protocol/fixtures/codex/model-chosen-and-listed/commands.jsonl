@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"send_text","text":"Tidy the billing queue."},"expect_responses":[{"method":"initialize","id":1,"params":{"clientInfo":{"name":"switchyard","title":"Switchyard","version":"0.1.0"},"capabilities":null}}]}
+{"after_input":0,"command":{"type":"list_models"},"expect_responses":[]}
