@@ -12,6 +12,7 @@ import type { Decision } from "./Decision";
 import type { DeclaredMcpServer } from "./DeclaredMcpServer";
 import type { Entry } from "./Entry";
 import type { ForgeSetup } from "./ForgeSetup";
+import type { ModelChoice } from "./ModelChoice";
 import type { ModelList } from "./ModelList";
 import type { PermissionMode } from "./PermissionMode";
 import type { Policy } from "./Policy";
@@ -78,4 +79,4 @@ pullRequest: number | null, removed: boolean, kept: string | null, } | { "type":
  * When the GitHub issues were last read from the Forge, in milliseconds since the
  * Unix epoch; `null` when they never were (no remote, or never synced).
  */
-checkedAtMs: number | null, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, } | { "type": "modelsChanged", agent: AgentKind, models: ModelList, } | { "type": "sessionModelChanged", sessionId: string, pendingModel: string | null, switchedModel: string | null, } | { "type": "modelSwitchFailed", sessionId: string, model: string, reason: string | null, };
+checkedAtMs: number | null, } | { "type": "taskCreated", task: Task, } | { "type": "taskLinked", sessionId: string, taskId: string | null, } | { "type": "secretsChanged", repositoryId: string, secrets: Array<Secret>, } | { "type": "modelsChanged", agent: AgentKind, models: ModelList, } | { "type": "sessionModelChanged", sessionId: string, pendingModel: string | null, switchedModel: string | null, } | { "type": "modelSwitchFailed", sessionId: string, model: string, reason: string | null, } | { "type": "modelPrefill", agent: AgentKind, repositoryId: string, choice: ModelChoice, retired: string | null, };
