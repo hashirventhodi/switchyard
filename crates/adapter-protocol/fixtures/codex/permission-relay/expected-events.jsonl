@@ -11,5 +11,5 @@
 {"type":"permission_request","request_id":"3","request":{"kind":"question","question":"Should dist/ stay in git?","options":["Keep it","Ignore it"]},"reason":"Build output"}
 {"type":"permission_request","request_id":"4","request":{"kind":"mcp_tool","server":"linear","tool":"create_issue","input":{"title":"Flaky billing test"}},"reason":"Allow linear to run create_issue?"}
 {"type":"agent_text","text":"Fixed the failing test; dist/ is now ignored."}
-{"type":"token_usage","input_tokens":12000,"output_tokens":2100,"cache_read_tokens":40000,"cost_usd":null}
+{"type":"token_usage","model":"gpt-5.6-terra","input_tokens":12000,"output_tokens":2100,"cache_read_tokens":40000,"cost_usd":null}
 {"type":"turn_complete"}

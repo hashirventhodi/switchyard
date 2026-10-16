@@ -134,6 +134,8 @@ pub struct CodexAdapter {
     resume: Option<String>,
     thread_id: Option<String>,
     turn_id: Option<String>,
+    /// The thread's Model, from `thread/start` or `thread/resume`: what its usage is spent on.
+    model: Option<String>,
     /// From `initialize`'s user agent: the running CLI's version.
     cli_version: Option<String>,
     /// A mode switch to carry on the next `turn/start`.
@@ -158,6 +160,7 @@ impl CodexAdapter {
             calls: HashMap::new(),
             replies: Vec::new(),
             queued: Vec::new(),
+            model: None,
             resume: None,
             thread_id: None,
             turn_id: None,
@@ -321,6 +324,7 @@ impl CodexAdapter {
                     ));
                 };
                 let thread_id = str_at(result, "/thread/id").unwrap_or_default();
+                self.model = str_at(result, "/model");
                 self.thread_id = Some(thread_id.clone());
                 self.phase = Phase::Ready;
                 let (permission_mode, cli_permission_mode) =
@@ -338,7 +342,7 @@ impl CodexAdapter {
                         name: NAME.into(),
                         version,
                     },
-                    model: str_at(result, "/model"),
+                    model: self.model.clone(),
                     mcp_servers: self.mcp_at_init(),
                 };
                 if !self.queued.is_empty() {
@@ -422,7 +426,7 @@ impl CodexAdapter {
                 let count = |name: &str| total.get(name).and_then(Value::as_u64).unwrap_or(0);
                 let cached = count("cachedInputTokens");
                 vec![Event::TokenUsage {
-                    model: None,
+                    model: self.model.clone(),
                     // The protocol's input excludes cache reads; Codex's includes them.
                     input_tokens: count("inputTokens").saturating_sub(cached),
                     output_tokens: count("outputTokens"),
