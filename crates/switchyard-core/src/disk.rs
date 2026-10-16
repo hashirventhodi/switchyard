@@ -54,7 +54,7 @@ pub(crate) fn watch(inner: &mut Inner, worktree: &Path) {
     }
 }
 
-fn start(inner: &Inner, worktree: &Path) -> Result<(), String> {
+fn start(inner: &mut Inner, worktree: &Path) -> Result<(), String> {
     let mut roots = vec![worktree.to_path_buf()];
     let mut primary = false;
     // A primary worktree's `.git` is inside it already.
@@ -65,13 +65,35 @@ fn start(inner: &Inner, worktree: &Path) -> Result<(), String> {
         }
         primary = inside;
     }
-    roots.extend(memory_root(inner, worktree));
+    let memory = memory_root(inner, worktree);
+    roots.extend(memory.clone());
     // The Repository's own configuration is watched once, with its primary worktree.
     if primary {
         roots.extend(tasks_root(inner, worktree));
     }
     let watch = Watch { worktree: worktree.to_path_buf(), roots };
-    inner.runtime.watcher.watch(watch, sink(inner, worktree))
+    inner.runtime.watcher.watch(watch, sink(inner, worktree))?;
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    match memory {
+        Some(memory) => inner.watched_memory.insert(worktree_path, memory),
+        None => inner.watched_memory.remove(&worktree_path),
+    };
+    Ok(())
+}
+
+/// Claude makes a Worktree's memory directory (and the project directory it sits in) when
+/// it first writes there, which nothing watched may cover yet: once it is there, watch the
+/// Worktree again so it is. A Worktree whose watcher cannot run is left to the fallback.
+pub(crate) fn watch_new_memory(inner: &mut Inner, worktree_path: &str) {
+    let announced = inner.listed.values().any(|list| list.iter().any(|w| w.path == worktree_path));
+    if inner.unwatched.contains_key(worktree_path) || !announced {
+        return;
+    }
+    let worktree = Path::new(worktree_path);
+    let now = memory_root(inner, worktree);
+    if now.is_some() && now.as_ref() != inner.watched_memory.get(worktree_path) {
+        watch(inner, worktree);
+    }
 }
 
 /// The Worktree at `worktree` is watched: if it was not, live updates resume.
@@ -86,6 +108,7 @@ fn watched(inner: &mut Inner, worktree: &Path) {
 pub(crate) fn unwatch(inner: &mut Inner, worktree: &Path) {
     inner.runtime.watcher.unwatch(worktree);
     inner.unwatched.remove(&*worktree.to_string_lossy());
+    inner.watched_memory.remove(&*worktree.to_string_lossy());
     for list in inner.listed.values_mut() {
         list.retain(|w| Path::new(&w.path) != worktree);
     }

@@ -106,6 +106,25 @@ fn the_agent_writing_its_memory_pushes_the_worktrees_context() {
     assert_eq!(texts(&context_of(&events, &worktree)), vec![("MEMORY.md", "- [Prefers pnpm](pnpm.md)\n")]);
 }
 
+#[test]
+fn memory_claude_makes_during_a_turn_is_read_at_its_end_and_watched_from_then_on() {
+    let mut s = attached();
+    let memory = memory_dir(&s.core, &s.worktree);
+    harness::started_session(&s.core.start_session(&s.worktree, "Remember pnpm."));
+    assert!(!s.core.watcher.roots(&s.worktree).iter().any(|root| memory.starts_with(root)));
+
+    std::fs::create_dir_all(&memory).unwrap();
+    std::fs::write(memory.join("MEMORY.md"), "- pnpm\n").unwrap();
+    let events = s.core.agent_says(0, adapter_protocol::Event::TurnComplete);
+
+    assert_eq!(texts(&context_of(&events, &s.worktree)), vec![("MEMORY.md", "- pnpm\n")]);
+    assert!(
+        s.core.watcher.roots(&s.worktree).iter().any(|root| memory.starts_with(root)),
+        "memory is watched: {:?}",
+        s.core.watcher.roots(&s.worktree)
+    );
+}
+
 /// The policy pushed in `events` (the last one).
 fn policy_in(events: &[Event]) -> Policy {
     events

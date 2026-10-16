@@ -145,6 +145,9 @@ pub(crate) struct Inner {
     listed: std::collections::HashMap<String, Vec<Worktree>>,
     /// Worktrees whose watcher cannot run, by path, with why: re-derived on a slow cadence.
     unwatched: std::collections::BTreeMap<String, String>,
+    /// The directory each watched Worktree's Claude memory is watched through, by path
+    /// (none until Claude makes one).
+    watched_memory: std::collections::HashMap<String, PathBuf>,
 }
 
 #[derive(Debug)]
@@ -175,6 +178,7 @@ impl Core {
             me: Weak::new(),
             listed: Default::default(),
             unwatched: Default::default(),
+            watched_memory: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
