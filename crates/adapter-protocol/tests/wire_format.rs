@@ -334,7 +334,9 @@ fn resume_may_carry_the_model_to_resume_on() {
         },
     );
     // A 0.1 resume names no Model: Default.
-    let old: Command = serde_json::from_value(json!({ "type": "resume", "external_session_id": "sess-1" })).unwrap();
+    let old: Command =
+        serde_json::from_value(json!({ "type": "resume", "external_session_id": "sess-1" }))
+            .unwrap();
     assert_eq!(
         old,
         Command::Resume {
