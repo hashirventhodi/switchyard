@@ -161,7 +161,11 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       for (const op of ops) {
         if (op.op === "resume") {
           if (q) emit({ type: "error", message: "resume must come before any prompt", fatal: false });
-          else start(op.session_id);
+          else {
+            // The Session's current Model, or Default: never the Model it started on.
+            model = op.model;
+            start(op.session_id);
+          }
         } else if (op.op === "push_user_message") {
           q ?? start();
           prompts.push(op.message as SDKUserMessage);

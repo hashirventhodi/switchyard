@@ -26,8 +26,9 @@
 //   {"op":"interrupt"}                                   await query.interrupt()
 //   {"op":"resolve_permission","request_id","result":PermissionResult}
 //                                                        settle that canUseTool call
-//   {"op":"resume","session_id"}                         start the query on that CLI session
-//                                                        (options.resume); first op only
+//   {"op":"resume","session_id","model"?}                start the query on that CLI session
+//                                                        (options.resume), on `model` when
+//                                                        given, else on Default; first op only
 //   {"op":"set_permission_mode","mode":"<CLI mode>","permission_mode":"<protocol mode>"}
 //                                                        await query.setPermissionMode(mode)
 //   {"op":"list_models"}                                 query.supportedModels(), written back
@@ -39,6 +40,9 @@
 // request on a different Model from the last one is model_changed. After set_model, the
 // first main request that starts after it is checked: still on the old Model is
 // model_change_failed. A request already in flight when set_model came is left alone.
+// A request the CLI fails with model_not_found (its synthetic error message) is
+// model_change_failed, with the CLI's message, for the Model it was last asked to run on
+// by set_model or resume: the host falls back to Default.
 
 import {
   PROTOCOL_RANGE,
@@ -85,7 +89,7 @@ export type DriverOp =
   | { op: "push_user_message"; message: { type: "user"; message: { role: "user"; content: string }; parent_tool_use_id: null } }
   | { op: "interrupt" }
   | { op: "resolve_permission"; request_id: string; result: PermissionResult }
-  | { op: "resume"; session_id: string }
+  | { op: "resume"; session_id: string; model?: string }
   | { op: "set_permission_mode"; mode: string; permission_mode: PermissionMode }
   | { op: "list_models" }
   | { op: "set_model"; model: string };
@@ -129,6 +133,8 @@ export class ClaudeTranslator {
   private inFlight = false;
   /** A set_model awaiting its check; `skip` while the request in flight at the switch is still to come. */
   private switching: { model: string; skip: boolean } | null = null;
+  /** The Model the CLI was last asked to run on (by resume or set_model); null for Default. */
+  private asked: string | null = null;
 
   ingest(raw: string): ProtocolEvent[] {
     let msg: Json;
@@ -172,11 +178,15 @@ export class ClaudeTranslator {
         if (this.abandoned.delete(command.request_id)) return [];
         return [this.answer(command.request_id, command.verdict)];
       case "resume":
+        this.asked = command.model ?? null;
         // The CLI reloads the conversation itself (`--resume <id>`), so the agent keeps its context.
-        return [{ op: "resume", session_id: command.external_session_id }];
+        return [
+          { op: "resume", session_id: command.external_session_id, ...(command.model ? { model: command.model } : {}) },
+        ];
       case "list_models":
         return [{ op: "list_models" }];
       case "set_model":
+        this.asked = command.model;
         // Back to the Model the main agent runs on: nothing to check.
         this.switching =
           command.model === (this.mainModel ?? this.initModel) ? null : { model: command.model, skip: this.inFlight };
@@ -215,6 +225,9 @@ export class ClaudeTranslator {
   private assistant(msg: Json): ProtocolEvent[] {
     // Subagent traffic (parent_tool_use_id set) is summarised by its parent Task tool call.
     if (msg.parent_tool_use_id) return [];
+    // The CLI's own message for a request that failed (its model is "<synthetic>"): no
+    // request ran, so it says nothing about the Model the main agent runs on.
+    if (msg.error) return this.failedRequest(msg);
     const events: ProtocolEvent[] = this.mainRequest(msg.message?.id ?? null, msg.message?.model ?? null);
     for (const block of msg.message?.content ?? []) {
       if (block.type === "text" && block.text) events.push({ type: "agent_text", text: block.text });
@@ -223,6 +236,21 @@ export class ClaudeTranslator {
         events.push({ type: "tool_call_started", call_id: block.id, tool: block.name, input: block.input ?? {} });
     }
     return events;
+  }
+
+  /** A request the CLI could not make. When the Model it was asked for is unavailable
+   * (retired, or this account has no access), that Model fails: the switch, or the resume. */
+  private failedRequest(msg: Json): ProtocolEvent[] {
+    this.inFlight = false;
+    const texts: string[] = (msg.message?.content ?? [])
+      .filter((block: Json) => block.type === "text" && block.text)
+      .map((block: Json) => block.text);
+    const model = this.switching?.model ?? this.asked;
+    if (msg.error === "model_not_found" && model) {
+      this.switching = null;
+      return [{ type: "model_change_failed", model, reason: texts.join("\n") || null }];
+    }
+    return texts.map((text) => ({ type: "agent_text" as const, text }));
   }
 
   /** A main-agent assistant message: a new request (by message id) may change the Model or

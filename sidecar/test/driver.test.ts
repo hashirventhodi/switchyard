@@ -206,6 +206,27 @@ test("resume starts the query on the CLI's own session, then takes prompts", asy
   expect(events[0]).toMatchObject({ type: "session_init", external_session_id: S });
 });
 
+test("resume with a Model starts the CLI on it; without one, on Default", async () => {
+  const resumeOn = async (model: string | null) => {
+    const stdin = lines();
+    const { query, calls } = fakeQuery(() => []);
+    const done = drive({
+      // The Model the Session started on no longer counts: the resume names its current one.
+      config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null, model: "claude-opus-5-5" },
+      commands: stdin,
+      emit: () => {},
+      query,
+    });
+    stdin.push({ type: "resume", external_session_id: S, model });
+    stdin.close();
+    await done;
+    return calls.options;
+  };
+
+  expect(await resumeOn("claude-sonnet-5-5")).toMatchObject({ resume: S, model: "claude-sonnet-5-5" });
+  expect((await resumeOn(null)).model).toBeUndefined();
+});
+
 test("a new session starts the query without resuming anything", async () => {
   const stdin = lines();
   const { query, calls } = fakeQuery(() => []);

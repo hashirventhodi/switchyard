@@ -1,0 +1,4 @@
+{"type":"session_init","external_session_id":"5b0c2d1e-7a44-4c55-9a1f-2f0e3c9d8b10","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":"claude-opus-4-1"}
+{"type":"model_change_failed","model":"claude-opus-4-1","reason":"There's an issue with the selected model (claude-opus-4-1). It may not exist or you may not have access to it. Run /model to pick a different model."}
+{"type":"error","message":"There's an issue with the selected model (claude-opus-4-1). It may not exist or you may not have access to it. Run /model to pick a different model.","fatal":false}
+{"type":"turn_complete"}
