@@ -8,7 +8,7 @@ import type { ModelChoice } from "./schema/ModelChoice";
 import type { PermissionMode } from "./schema/PermissionMode";
 import type { Task } from "./schema/Task";
 import { taskBranch, taskPrompt } from "./tasks";
-import { sessionOn, type State } from "./state";
+import { prefillKey, sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { AGENT_LABEL, AGENTS, MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
 import { choosesModel, DEFAULT_MODEL } from "./model";
@@ -51,9 +51,8 @@ export function NewSession(props: {
   // refuses too); say why here, before the first session, not mid-session.
   const [agent, setAgent] = useState<AgentKind>("claudeCode");
   const blocked = agentProblem(state.agents, agent);
-  const [modelChosen, setModel] = useState<ModelChoice>(DEFAULT_MODEL);
-  // An agent whose Model cannot be chosen yet starts on Default.
-  const model = choosesModel(agent) ? modelChosen : DEFAULT_MODEL;
+  // Until the user picks one, the Model is the last choice for this agent in this Repository.
+  const [modelChosen, setModelChosen] = useState<ModelChoice | null>(null);
   const [mode, setMode] = useState<PermissionMode>(preset.mode ?? "askFirst");
   // Until the user (or the preset) picks one, the mode follows the repository's default.
   const [modeTouched, setModeTouched] = useState(preset.mode !== undefined);
@@ -93,6 +92,9 @@ export function NewSession(props: {
     where === "new" ? repositoryId : state.repositories.find((r) => r.worktrees.some((w) => w.path === worktree))?.id;
   const policy = policyRepo ? state.policies[policyRepo] : undefined;
   const modes = MODES.filter((m) => withinCeiling(m, policy?.ceiling ?? null));
+  const prefill = policyRepo && !modelChosen ? state.modelPrefills[prefillKey(agent, policyRepo)] : undefined;
+  // An agent whose Model cannot be chosen yet starts on Default.
+  const model = choosesModel(agent) ? (modelChosen ?? prefill?.choice ?? DEFAULT_MODEL) : DEFAULT_MODEL;
   useEffect(() => {
     if (policyRepo) send({ type: "readPolicy", repositoryId: policyRepo });
   }, [policyRepo, send]);
@@ -101,6 +103,10 @@ export function NewSession(props: {
   useEffect(() => {
     send({ type: "readModels", agent });
   }, [agent, send]);
+  // The last Model choice for this agent here, remembered by the core (never in the Repository).
+  useEffect(() => {
+    if (policyRepo) send({ type: "readModelPrefill", agent, repositoryId: policyRepo });
+  }, [agent, policyRepo, send]);
   useEffect(() => {
     if (!modeTouched && policy?.defaultMode) setMode(policy.defaultMode);
   }, [modeTouched, policy?.defaultMode]);
@@ -164,7 +170,12 @@ export function NewSession(props: {
               ))}
             </select>
           </label>
-          {choosesModel(agent) && <ModelField value={modelChosen} onChange={setModel} list={state.modelLists[agent]} />}
+          {choosesModel(agent) && <ModelField value={model} onChange={setModelChosen} list={state.modelLists[agent]} />}
+          {choosesModel(agent) && prefill?.retired && (
+            <span className="hint" role="note" aria-label="Remembered Model">
+              {prefill.retired}, your last choice here, is no longer offered: Default instead
+            </span>
+          )}
           {task && (
             <div className="field" role="group" aria-label="Task">
               <span>Task</span>

@@ -492,6 +492,14 @@ pub enum Command {
         /// A Model id.
         model: String,
     },
+    /// New session is on `agent` in a Repository: the core answers with
+    /// [`Event::ModelPrefill`], the last Model choice made for that agent there.
+    ReadModelPrefill {
+        agent: AgentKind,
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
 }
 
 /// Every [`Command`]'s wire name (its `type` tag), for refusals raised before or apart from
@@ -556,8 +564,9 @@ pub mod command_name {
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
     pub const READ_MODELS: &str = "readModels";
     pub const SET_MODEL: &str = "setModel";
+    pub const READ_MODEL_PREFILL: &str = "readModelPrefill";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, READ_MODELS, SET_MODEL];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, READ_MODELS, SET_MODEL, READ_MODEL_PREFILL];
 }
 
 impl Command {
@@ -623,6 +632,7 @@ impl Command {
             Command::SetSecretValue { .. } => command_name::SET_SECRET_VALUE,
             Command::ReadModels { .. } => command_name::READ_MODELS,
             Command::SetModel { .. } => command_name::SET_MODEL,
+            Command::ReadModelPrefill { .. } => command_name::READ_MODEL_PREFILL,
         }
     }
 }
@@ -1063,6 +1073,18 @@ pub enum Event {
         session_id: String,
         model: String,
         reason: Option<String>,
+    },
+    /// What New session pre-fills for `agent` in a Repository, after
+    /// [`Command::ReadModelPrefill`]: the last choice made there (Default stays Default),
+    /// kept in Switchyard's store and never in the Repository. A remembered Model the cached
+    /// list no longer offers comes back as Default, naming it in `retired`.
+    ModelPrefill {
+        agent: AgentKind,
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        choice: ModelChoice,
+        retired: Option<String>,
     },
 }
 

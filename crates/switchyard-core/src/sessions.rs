@@ -234,6 +234,7 @@ fn begin(
         archive::archive(inner, old);
     }
     inner.sessions.next_id += 1;
+    crate::models::remember(inner, agent, &repo.id, &model);
     let state_repo = repo.id.clone();
     let session = Session {
         id: id.clone(),

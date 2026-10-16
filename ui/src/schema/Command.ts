@@ -32,4 +32,4 @@ model: ModelChoice, prompt: string, } | { "type": "readSecrets", repositoryId: s
 /**
  * A Model id.
  */
-model: string, };
+model: string, } | { "type": "readModelPrefill", agent: AgentKind, repositoryId: string, };
