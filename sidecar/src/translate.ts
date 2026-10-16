@@ -14,6 +14,8 @@
 //   {"type":"switchyard","subtype":"mcp_status","servers":[McpServerStatus]}
 //                                                               query.mcpServerStatus() result
 //                                                               (asked while a server is pending)
+//   {"type":"switchyard","subtype":"set_model_failed","model","message"}
+//                                                               query.setModel(model) rejected
 //
 // Raw responses are "driver ops" the sidecar performs on the live query:
 //   {"op":"push_user_message","message":SDKUserMessage}  push into the streaming input
@@ -24,6 +26,13 @@
 //                                                        (options.resume); first op only
 //   {"op":"set_permission_mode","mode":"<CLI mode>","permission_mode":"<protocol mode>"}
 //                                                        await query.setPermissionMode(mode)
+//   {"op":"set_model","model"}                           await query.setModel(model)
+//
+// Model switches: only the main agent's own requests (assistant messages with no
+// parent_tool_use_id) count; a subagent's or background call's Model never does. A main
+// request on a different Model from the last one is model_changed. After set_model, the
+// first main request that starts after it is checked: still on the old Model is
+// model_change_failed. A request already in flight when set_model came is left alone.
 
 import {
   PROTOCOL_RANGE,
@@ -36,7 +45,8 @@ import {
   type Verdict,
 } from "./protocol.ts";
 
-export const MANIFEST = { name: "claude-code", implements: PROTOCOL_RANGE };
+// It tells the main agent's requests from subagent and background ones, so it switches live.
+export const MANIFEST = { name: "claude-code", implements: PROTOCOL_RANGE, switch_model_live: true };
 
 /** Switchyard's permission mode to the CLI's (`--permission-mode`). */
 export const CLI_MODE: Record<PermissionMode, string> = {
@@ -69,7 +79,8 @@ export type DriverOp =
   | { op: "interrupt" }
   | { op: "resolve_permission"; request_id: string; result: PermissionResult }
   | { op: "resume"; session_id: string }
-  | { op: "set_permission_mode"; mode: string; permission_mode: PermissionMode };
+  | { op: "set_permission_mode"; mode: string; permission_mode: PermissionMode }
+  | { op: "set_model"; model: string };
 
 /** The Agent SDK's answer to canUseTool. Never carries `updatedPermissions`: grants are
  * Switchyard data and are never written into the CLI's settings (ADR-0004). */
@@ -102,6 +113,14 @@ export class ClaudeTranslator {
   private abandoned = new Set<string>();
   /** Each MCP server's state as last reported, by name. */
   private mcp = new Map<string, McpServerStatus>();
+  /** The Model init reported, and the one the main agent's last request ran on. */
+  private initModel: string | null = null;
+  private mainModel: string | null = null;
+  /** The main agent's last request (message id), and whether one is in flight (asked, unanswered). */
+  private lastRequest: string | null = null;
+  private inFlight = false;
+  /** A set_model awaiting its check; `skip` while the request in flight at the switch is still to come. */
+  private switching: { model: string; skip: boolean } | null = null;
 
   ingest(raw: string): ProtocolEvent[] {
     let msg: Json;
@@ -129,6 +148,7 @@ export class ClaudeTranslator {
   command(command: ProtocolCommand): DriverOp[] {
     switch (command.type) {
       case "send_text":
+        this.inFlight = true;
         return [
           {
             op: "push_user_message",
@@ -146,6 +166,9 @@ export class ClaudeTranslator {
       case "resume":
         // The CLI reloads the conversation itself (`--resume <id>`), so the agent keeps its context.
         return [{ op: "resume", session_id: command.external_session_id }];
+      case "set_model":
+        this.switching = { model: command.model, skip: this.inFlight };
+        return [{ op: "set_model", model: command.model }];
     }
   }
 
@@ -154,6 +177,7 @@ export class ClaudeTranslator {
       // A re-sent init only says something new about MCP servers.
       if (this.initialisedSession === msg.session_id) return this.mcpChanges(msg.mcp_servers);
       this.initialisedSession = msg.session_id;
+      this.initModel = msg.model ?? null;
       const servers = mcpStatuses(msg.mcp_servers);
       this.mcp = new Map(servers.map((s) => [s.name, s]));
       return [
@@ -179,7 +203,7 @@ export class ClaudeTranslator {
   private assistant(msg: Json): ProtocolEvent[] {
     // Subagent traffic (parent_tool_use_id set) is summarised by its parent Task tool call.
     if (msg.parent_tool_use_id) return [];
-    const events: ProtocolEvent[] = [];
+    const events: ProtocolEvent[] = this.mainRequest(msg.message?.id ?? null, msg.message?.model ?? null);
     for (const block of msg.message?.content ?? []) {
       if (block.type === "text" && block.text) events.push({ type: "agent_text", text: block.text });
       else if (block.type === "tool_use" && block.name === QUESTION_TOOL) this.questionCalls.add(block.id);
@@ -189,10 +213,41 @@ export class ClaudeTranslator {
     return events;
   }
 
+  /** A main-agent assistant message: a new request (by message id) may change the Model or
+   * settle a switch. Several messages of one request share an id. */
+  private mainRequest(id: string | null, model: string | null): ProtocolEvent[] {
+    this.inFlight = false;
+    if (id !== null && id === this.lastRequest) return [];
+    this.lastRequest = id;
+    if (!model) return [];
+    const last = this.mainModel;
+    this.mainModel = model;
+    const switching = this.switching;
+    if (switching?.skip) {
+      // The request that was in flight at the switch: not the one the switch applies to.
+      switching.skip = false;
+      if (last === null || model === last) return [];
+    }
+    // The first request seen: a switch is checked against init's Model; otherwise it only
+    // sets where the main agent stands.
+    const before = last ?? (switching ? this.initModel : model);
+    if (before !== null && model !== before) {
+      this.switching = null;
+      return [{ type: "model_changed", model }];
+    }
+    if (switching) {
+      this.switching = null;
+      return [{ type: "model_change_failed", model: switching.model, reason: null }];
+    }
+    return [];
+  }
+
   private user(msg: Json): ProtocolEvent[] {
     if (msg.parent_tool_use_id) return [];
     const content = msg.message?.content;
     if (!Array.isArray(content)) return [];
+    // Tool results go back to the model: the main agent's next request is in flight.
+    if (content.some((block: Json) => block.type === "tool_result")) this.inFlight = true;
     return content
       .filter((block: Json) => block.type === "tool_result" && !this.questionCalls.has(block.tool_use_id))
       .map((block: Json) => ({
@@ -239,6 +294,10 @@ export class ClaudeTranslator {
     if (msg.subtype === "can_use_tool") return [this.permissionRequest(msg)];
     if (msg.subtype === "can_use_tool_aborted" && this.pending.delete(msg.request_id)) this.abandoned.add(msg.request_id);
     if (msg.subtype === "mcp_status") return this.mcpChanges(msg.servers);
+    if (msg.subtype === "set_model_failed") {
+      if (this.switching?.model === msg.model) this.switching = null;
+      return [{ type: "model_change_failed", model: String(msg.model), reason: msg.message ? String(msg.message) : null }];
+    }
     return [];
   }
 

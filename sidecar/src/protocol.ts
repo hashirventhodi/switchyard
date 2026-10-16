@@ -47,7 +47,11 @@ export type ProtocolEvent =
       cache_write_tokens?: number;
       cost_usd: number | null;
     }
-  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null };
+  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null }
+  /** The main agent's own requests now run on another Model (never a subagent's or background call's). */
+  | { type: "model_changed"; model: string }
+  /** A set_model did not take: the CLI refused it (its reason), or the next request was still on the old Model. */
+  | { type: "model_change_failed"; model: string; reason: string | null };
 
 export type Verdict =
   | { decision: "allow_once" }
@@ -60,4 +64,5 @@ export type ProtocolCommand =
   | { type: "answer_request"; request_id: string; verdict: Verdict }
   | { type: "interrupt" }
   | { type: "set_permission_mode"; permission_mode: PermissionMode }
-  | { type: "resume"; external_session_id: string };
+  | { type: "resume"; external_session_id: string }
+  | { type: "set_model"; model: string };
