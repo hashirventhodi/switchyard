@@ -148,6 +148,10 @@ pub(crate) struct Inner {
     /// The directory each watched Worktree's Claude memory is watched through, by path
     /// (none until Claude makes one).
     watched_memory: std::collections::HashMap<String, PathBuf>,
+    /// A fingerprint of each Worktree's configuration files as last re-read, by path: what
+    /// the slow cadence and the end of a turn compare with, so unchanged configuration is
+    /// not pushed again.
+    config_stamps: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Debug)]
@@ -179,6 +183,7 @@ impl Core {
             listed: Default::default(),
             unwatched: Default::default(),
             watched_memory: Default::default(),
+            config_stamps: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;

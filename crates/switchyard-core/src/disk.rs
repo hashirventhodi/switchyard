@@ -48,10 +48,23 @@ pub(crate) fn watch(inner: &mut Inner, worktree: &Path) {
         Ok(()) => watched(inner, worktree),
         Err(reason) => {
             let worktree_path = worktree.to_string_lossy().into_owned();
+            fall_back(inner, &worktree_path);
             inner.unwatched.insert(worktree_path.clone(), reason.clone());
             inner.emit(Event::WorktreeUnwatched { worktree_path, reason });
         }
     }
+}
+
+/// The Worktree at `worktree_path` starts falling back: its configuration as it is now is
+/// the baseline the slow cadence compares with.
+fn fall_back(inner: &mut Inner, worktree_path: &str) {
+    let stamp = config_stamp(inner, worktree_path);
+    inner.config_stamps.insert(worktree_path.to_string(), stamp);
+}
+
+/// Whether the Worktree at `worktree_path` is one the core announced (and so watches).
+fn announced(inner: &Inner, worktree_path: &str) -> bool {
+    inner.listed.values().any(|list| list.iter().any(|w| w.path == worktree_path))
 }
 
 fn start(inner: &mut Inner, worktree: &Path) -> Result<(), String> {
@@ -85,8 +98,7 @@ fn start(inner: &mut Inner, worktree: &Path) -> Result<(), String> {
 /// it first writes there, which nothing watched may cover yet: once it is there, watch the
 /// Worktree again so it is. A Worktree whose watcher cannot run is left to the fallback.
 pub(crate) fn watch_new_memory(inner: &mut Inner, worktree_path: &str) {
-    let announced = inner.listed.values().any(|list| list.iter().any(|w| w.path == worktree_path));
-    if inner.unwatched.contains_key(worktree_path) || !announced {
+    if inner.unwatched.contains_key(worktree_path) || !announced(inner, worktree_path) {
         return;
     }
     let worktree = Path::new(worktree_path);
@@ -109,15 +121,23 @@ pub(crate) fn unwatch(inner: &mut Inner, worktree: &Path) {
     inner.runtime.watcher.unwatch(worktree);
     inner.unwatched.remove(&*worktree.to_string_lossy());
     inner.watched_memory.remove(&*worktree.to_string_lossy());
+    inner.config_stamps.remove(&*worktree.to_string_lossy());
     for list in inner.listed.values_mut() {
         list.retain(|w| Path::new(&w.path) != worktree);
     }
 }
 
 /// The watch on `worktree` failed after it started: fall back until it can be watched again.
+/// A failure reported after the Worktree was removed (it was on its way) is moot.
 fn failed(inner: &mut Inner, worktree: &Path, reason: String) {
-    inner.runtime.watcher.unwatch(worktree);
     let worktree_path = worktree.to_string_lossy().into_owned();
+    if !announced(inner, &worktree_path) {
+        return;
+    }
+    inner.runtime.watcher.unwatch(worktree);
+    if !inner.unwatched.contains_key(&worktree_path) {
+        fall_back(inner, &worktree_path);
+    }
     if inner.unwatched.insert(worktree_path.clone(), reason.clone()).is_none() {
         inner.emit(Event::WorktreeUnwatched { worktree_path, reason });
     }
@@ -125,7 +145,8 @@ fn failed(inner: &mut Inner, worktree: &Path, reason: String) {
 
 /// One beat of the slow cadence for unwatched Worktrees: try each one's watcher again, and
 /// re-derive it the way a change on disk would (once more after a watch starts, to catch up
-/// on what happened while nothing was watching).
+/// on what happened while nothing was watching). Configuration is re-read only when its
+/// files' sizes or modification times moved.
 pub(crate) fn fallback_tick_locking(core: &Mutex<Inner>) {
     let mut inner = core.lock().expect("core lock");
     fallback_tick(&mut inner);
@@ -142,8 +163,37 @@ fn fallback_tick(inner: &mut Inner) {
                 inner.unwatched.insert(worktree_path.clone(), reason);
             }
         }
-        worktree_changed(inner, &worktree_path, Kinds { files: true, git: true, config: true });
+        let config = config_moved(inner, &worktree_path);
+        worktree_changed(inner, &worktree_path, Kinds { files: true, git: true, config });
     }
+}
+
+/// Whether the Worktree's configuration files moved since they were last re-read (always,
+/// when they never were).
+pub(crate) fn config_moved(inner: &Inner, worktree_path: &str) -> bool {
+    inner.config_stamps.get(worktree_path) != Some(&config_stamp(inner, worktree_path))
+}
+
+/// A cheap fingerprint of the configuration the Worktree at `worktree_path` is watched for:
+/// each file's path, size and modification time, no contents read.
+fn config_stamp(inner: &Inner, worktree_path: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let worktree = Path::new(worktree_path);
+    let mut files: Vec<PathBuf> = context::INSTRUCTIONS.iter().map(|name| worktree.join(name)).collect();
+    let memory = context::memory_dir(&inner.runtime.claude_home, worktree_path);
+    files.extend(std::fs::read_dir(&memory).into_iter().flatten().flatten().map(|entry| entry.path()));
+    if let Some((repo, _)) = inner.find_worktree(worktree_path) {
+        let primary = Path::new(&repo.path);
+        files.extend([primary.join(repo_policy::POLICY_FILE), primary.join(mcp::MCP_FILE), tasks::local_file(inner, &repo)]);
+    }
+    files.sort();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    for file in files {
+        if let Ok(meta) = std::fs::metadata(&file) {
+            (file, meta.len(), meta.modified().ok()).hash(&mut hash);
+        }
+    }
+    hash.finish()
 }
 
 /// Where the watcher's reports re-enter the core: on the watcher's thread, like agent output.
@@ -184,6 +234,8 @@ pub(crate) fn worktree_changed(inner: &mut Inner, worktree_path: &str, kinds: Ki
         git_changed(inner, worktree_path);
     }
     if kinds.config {
+        let stamp = config_stamp(inner, worktree_path);
+        inner.config_stamps.insert(worktree_path.to_string(), stamp);
         config_changed(inner, worktree_path);
     }
     worktrees::refresh_one(inner, worktree_path);

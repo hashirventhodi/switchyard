@@ -60,6 +60,35 @@ fn an_unwatched_worktree_still_gets_its_facts_on_the_slow_cadence() {
     assert!(!events.iter().any(|e| matches!(e, Event::WorktreeWatched { .. })), "{events:#?}");
 }
 
+/// The configuration events in `events`.
+fn config_events(events: &[Event]) -> Vec<&Event> {
+    events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::ContextRead { .. } | Event::PolicyChanged { .. } | Event::McpServersChanged { .. } | Event::TasksChanged { .. }
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_slow_cadence_re_reads_configuration_only_when_it_changed() {
+    let (_repo, worktree, mut core) = attached();
+    core.watcher_failed(&worktree, "inotify watch limit reached");
+
+    let quiet = core.fallback_tick();
+    assert!(config_events(&quiet).is_empty(), "{quiet:#?}");
+    assert!(config_events(&core.fallback_tick()).is_empty());
+
+    std::fs::write(worktree.join("CLAUDE.md"), "Use pnpm.\n").unwrap();
+    let events = core.fallback_tick();
+
+    assert!(events.iter().any(|e| matches!(e, Event::ContextRead { files, .. } if files.iter().any(|f| f.text == "Use pnpm.\n"))), "{events:#?}");
+    assert!(config_events(&core.fallback_tick()).is_empty());
+}
+
 #[test]
 fn a_watched_worktree_is_left_alone_by_the_slow_cadence() {
     let (_repo, _worktree, mut core) = attached();
@@ -109,6 +138,18 @@ fn attach_replays_the_worktrees_still_unwatched() {
     let unwatched = Event::WorktreeUnwatched { worktree_path: path_of(&worktree), reason: "inotify watch limit reached".into() };
     assert_eq!(events.iter().filter(|e| **e == unwatched).count(), 1, "{events:#?}");
     assert!(!events.iter().any(|e| matches!(e, Event::WorktreeUnwatched { worktree_path, .. } if Path::new(worktree_path) == repo.path)));
+}
+
+#[test]
+fn a_failure_reported_late_for_a_removed_worktree_is_ignored() {
+    let (_repo, worktree, mut core) = attached();
+    core.send(Command::RemoveWorktree { worktree_path: path_of(&worktree) });
+
+    let events = core.watcher_failed_late(&worktree, "inotify watch limit reached");
+
+    assert_eq!(events, vec![]);
+    assert_eq!(core.fallback_tick(), vec![]);
+    assert!(!core.send(Command::Attach).iter().any(|e| matches!(e, Event::WorktreeUnwatched { .. })));
 }
 
 #[test]

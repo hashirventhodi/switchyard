@@ -10,7 +10,7 @@ use switchyard_schema::{ContextFile, ContextKind, Event};
 use crate::Inner;
 
 /// Instruction files, relative to the worktree, in the order they are shown.
-const INSTRUCTIONS: &[&str] =
+pub(crate) const INSTRUCTIONS: &[&str] =
     &["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", "AGENTS.override.md", ".codex/AGENTS.md"];
 
 /// Whether `rel` (relative to a worktree) is one of its instruction files.
