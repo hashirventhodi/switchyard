@@ -604,21 +604,33 @@ fn an_archived_session_can_be_exported() {
 // ---- scale ----
 
 #[test]
-fn a_twenty_thousand_entry_session_reloads_in_under_a_second() {
-    let (mut core, _repo, worktree) = setup();
-    let id = started_session(&core.start_session(&worktree, "Go"));
-    for i in 0..20_000 {
-        core.agent_says(0, text(&format!("line {i} of a long, long session with plenty of words in it")));
-    }
-    let core = core.relaunch();
+fn a_twenty_thousand_entry_session_reloads_no_slower_than_ten_two_thousand_entry_ones() {
+    // The budget is measured in the same run, so it scales with how busy the machine is: 10×
+    // the entries may take at most 10× the time. A reload that grows faster than the transcript
+    // fails; a slow machine does not.
+    let reload = |entries: usize| {
+        let (mut core, _repo, worktree) = setup();
+        let id = started_session(&core.start_session(&worktree, "Go"));
+        for i in 0..entries {
+            core.agent_says(0, text(&format!("line {i} of a long, long session with plenty of words in it")));
+        }
+        let mut core = core.relaunch();
+        // The fastest of three reloads, so one scheduler hiccup cannot decide the outcome.
+        let mut fastest = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            core = core.relaunch();
+            let events = core.send(Command::Attach);
+            fastest = fastest.min(started.elapsed());
+            assert_eq!(transcript(&events, &id).len(), entries + 2); // prompt, the lines, the pause note
+        }
+        fastest
+    };
 
-    let started = std::time::Instant::now();
-    let mut core = core.relaunch();
-    let events = core.send(Command::Attach);
-    let took = started.elapsed();
+    let small = reload(2_000);
+    let large = reload(20_000);
 
-    assert_eq!(transcript(&events, &id).len(), 20_002); // prompt, 20k lines, the pause note
-    assert!(took < std::time::Duration::from_secs(1), "reload took {took:?}");
+    assert!(large < small * 10, "20k entries reloaded in {large:?}, 2k in {small:?}");
 }
 
 // ---- review decisions ----
