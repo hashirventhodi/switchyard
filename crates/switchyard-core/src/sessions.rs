@@ -268,6 +268,8 @@ fn begin(
         }
     }
     send_to_agent(inner, &id, AgentCommand::SendText { text: prompt.into() });
+    // Every Session start refreshes the cached Model list for its CLI, in the background.
+    send_to_agent(inner, &id, AgentCommand::ListModels);
 }
 
 pub(crate) fn stop(inner: &mut Inner, id: &str) {
@@ -395,6 +397,10 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
     };
     let process = processes::record(&*inner.runtime.processes, handle.pid());
     let sent = handle.send(AgentCommand::Resume { external_session_id: external_id });
+    // A relaunch starts the CLI again (perhaps upgraded since): refresh its Model list too.
+    if sent.is_ok() {
+        let _ = handle.send(AgentCommand::ListModels);
+    }
     let state = find(inner, id).expect("the session is still there");
     state.agent = Some(handle);
     state.process = process;
@@ -574,6 +580,17 @@ pub(crate) fn note_running(inner: &mut Inner, repository_id: &str, text: &str) {
     }
 }
 
+/// Ask one Session whose agent of `kind` is running CLI `cli_version` to list its Models (a
+/// background refresh of the Model-list cache; the answer arrives as agent output).
+pub(crate) fn ask_for_models(inner: &mut Inner, kind: AgentKind, cli_version: &str) {
+    let live = inner.sessions.list.iter().find(|s| {
+        s.session.agent == kind && s.agent.is_some() && s.facts.cli_version.as_deref() == Some(cli_version)
+    });
+    if let Some(id) = live.map(|s| s.session.id.clone()) {
+        send_to_agent(inner, &id, AgentCommand::ListModels);
+    }
+}
+
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
 pub(crate) fn replay(inner: &Inner) {
     let table = PriceTable::read(&inner.data_dir);
@@ -622,6 +639,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
         out.push(record_raw(state, event));
     }
     let mut failure = None;
+    let mut model_list = None;
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     match output {
         AgentOutput::Event(event) => match event {
@@ -729,7 +747,9 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 out.push(append(state, Entry::System { text: format!("Denied by the classifier: {tool} {detail}{why}") }));
                 out.push(facts(state));
             }
-            AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. } => {}
+            event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. }) => {
+                model_list = crate::models::from_agent(event, (inner.runtime.now_ms)());
+            }
         },
         AgentOutput::Unreadable { line } => {
             failure = Some((compat::classify_unreadable(&line), format!("unreadable adapter output: {line}")));
@@ -771,6 +791,9 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     }
     if let Some((class, detail)) = failure {
         compat::record(inner, agent, class, cli_version.as_deref(), &detail);
+    }
+    if let Some(list) = model_list {
+        crate::models::answered(inner, agent, cli_version.as_deref(), list);
     }
 }
 

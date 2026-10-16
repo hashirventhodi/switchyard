@@ -228,6 +228,15 @@ pub(crate) fn admit(inner: &mut Inner, agent: AgentKind) -> Result<(), String> {
     }
 }
 
+/// The version of `agent`'s CLI installed now (as last detected, detecting first if nothing
+/// has been yet); `None` when it is not installed or its version could not be read.
+pub(crate) fn installed_version(inner: &mut Inner, agent: AgentKind) -> Option<String> {
+    if inner.compat.checked.is_none() {
+        detect(inner);
+    }
+    checked(inner, agent)?.cli_version.clone()
+}
+
 /// Append one record to the compat log. `cli_version` is what the agent reported, when it
 /// did; otherwise the detected version is used.
 pub(crate) fn record(inner: &Inner, agent: AgentKind, class: FailureClass, cli_version: Option<&str>, detail: &str) {

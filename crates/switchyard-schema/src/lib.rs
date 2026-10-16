@@ -478,6 +478,10 @@ pub enum Command {
         name: String,
         value: String,
     },
+    /// New session is open on `agent`: the core answers at once with
+    /// [`Event::ModelsChanged`] from its cache (never waiting on the CLI) and asks a live
+    /// Session's CLI for a fresh list in the background.
+    ReadModels { agent: AgentKind },
 }
 
 /// Every [`Command`]'s wire name (its `type` tag), for refusals raised before or apart from
@@ -540,8 +544,9 @@ pub mod command_name {
     pub const ADD_SECRET: &str = "addSecret";
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
+    pub const READ_MODELS: &str = "readModels";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, READ_MODELS];
 }
 
 impl Command {
@@ -605,6 +610,7 @@ impl Command {
             Command::AddSecret { .. } => command_name::ADD_SECRET,
             Command::RemoveSecret { .. } => command_name::REMOVE_SECRET,
             Command::SetSecretValue { .. } => command_name::SET_SECRET_VALUE,
+            Command::ReadModels { .. } => command_name::READ_MODELS,
         }
     }
 }
@@ -1018,6 +1024,10 @@ pub enum Event {
         repository_id: String,
         secrets: Vec<Secret>,
     },
+    /// The Models the installed CLI of `agent` offers, as cached: sent after
+    /// [`Command::ReadModels`] (at once, from the cache) and again whenever a fresher list
+    /// for that CLI version arrives. Replaces the earlier list for `agent`.
+    ModelsChanged { agent: AgentKind, models: ModelList },
 }
 
 /// A secret a Repository's Sessions may be given, by name. Its value lives in the OS
@@ -1612,6 +1622,36 @@ impl ModelChoice {
             ModelChoice::Model { id } => Some(id),
         }
     }
+}
+
+/// The Models an agent's CLI offers, as cached for its installed version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModelList {
+    /// Nothing cached for this CLI version yet (first run, or a new version): the list
+    /// loads after the first Session with it.
+    Empty,
+    /// The Models the CLI listed, in its order, and when they were fetched.
+    Listed {
+        models: Vec<ListedModel>,
+        /// Milliseconds since the Unix epoch.
+        #[serde(rename = "fetchedAtMs")]
+        #[ts(rename = "fetchedAtMs", type = "number")]
+        fetched_at_ms: u64,
+    },
+    /// The CLI cannot list its Models; `reason` says why, when it said.
+    CannotList { reason: Option<String> },
+}
+
+/// One Model a CLI offers: `id` is what the CLI takes to run on it, `displayName` what the
+/// user reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ListedModel {
+    pub id: String,
+    pub display_name: String,
 }
 
 /// Exactly five statuses, shown everywhere with the same colour and label:

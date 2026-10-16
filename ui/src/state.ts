@@ -9,6 +9,7 @@ import type { ConflictFile } from "./schema/ConflictFile";
 import type { ContextFile } from "./schema/ContextFile";
 import type { DeclaredMcpServer } from "./schema/DeclaredMcpServer";
 import type { Entry } from "./schema/Entry";
+import type { ModelList } from "./schema/ModelList";
 import type { Policy } from "./schema/Policy";
 import type { Secret } from "./schema/Secret";
 import type { Event } from "./schema/Event";
@@ -121,6 +122,8 @@ export interface State {
   contextFiles: Record<string, ContextFile[]>;
   /** What happened, newest first (at most ACTIVITY_KEEP): the Dashboard's activity feed. */
   activity: Activity[];
+  /** The Models each agent's installed CLI offers, as the core last sent from its cache. */
+  modelLists: Partial<Record<AgentKind, ModelList>>;
 }
 
 /** One line of the activity feed. */
@@ -214,6 +217,7 @@ export const initialState: State = {
   activity: [],
   contextFiles: {},
   mcpDeclared: {},
+  modelLists: {},
 };
 
 const noFacts: SessionFacts = {
@@ -448,6 +452,8 @@ export function reduce(state: State, event: Event): State {
       return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
     case "secretsChanged":
       return { ...state, secrets: { ...state.secrets, [event.repositoryId]: event.secrets } };
+    case "modelsChanged":
+      return { ...state, modelLists: { ...state.modelLists, [event.agent]: event.models } };
     case "forgeChecked":
       return { ...state, forge: event.forge };
     case "pullRequestChanged": {
