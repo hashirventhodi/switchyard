@@ -482,6 +482,14 @@ pub enum Command {
     /// [`Event::ModelsChanged`] from its cache (never waiting on the CLI) and asks a live
     /// Session's CLI for a fresh list in the background.
     ReadModels { agent: AgentKind },
+    /// New session is on `agent` in a Repository: the core answers with
+    /// [`Event::ModelPrefill`], the last Model choice made for that agent there.
+    ReadModelPrefill {
+        agent: AgentKind,
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+    },
 }
 
 /// Every [`Command`]'s wire name (its `type` tag), for refusals raised before or apart from
@@ -545,8 +553,9 @@ pub mod command_name {
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
     pub const READ_MODELS: &str = "readModels";
+    pub const READ_MODEL_PREFILL: &str = "readModelPrefill";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, READ_MODELS];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, READ_MODELS, READ_MODEL_PREFILL];
 }
 
 impl Command {
@@ -611,6 +620,7 @@ impl Command {
             Command::RemoveSecret { .. } => command_name::REMOVE_SECRET,
             Command::SetSecretValue { .. } => command_name::SET_SECRET_VALUE,
             Command::ReadModels { .. } => command_name::READ_MODELS,
+            Command::ReadModelPrefill { .. } => command_name::READ_MODEL_PREFILL,
         }
     }
 }
@@ -1028,6 +1038,18 @@ pub enum Event {
     /// [`Command::ReadModels`] (at once, from the cache) and again whenever a fresher list
     /// for that CLI version arrives. Replaces the earlier list for `agent`.
     ModelsChanged { agent: AgentKind, models: ModelList },
+    /// What New session pre-fills for `agent` in a Repository, after
+    /// [`Command::ReadModelPrefill`]: the last choice made there (Default stays Default),
+    /// kept in Switchyard's store and never in the Repository. A remembered Model the cached
+    /// list no longer offers comes back as Default, naming it in `retired`.
+    ModelPrefill {
+        agent: AgentKind,
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        choice: ModelChoice,
+        retired: Option<String>,
+    },
 }
 
 /// A secret a Repository's Sessions may be given, by name. Its value lives in the OS

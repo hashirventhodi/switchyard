@@ -348,6 +348,7 @@ impl Core {
                 tasks::start_session(&mut inner, &self.inner, &task_id, target, agent, permission_mode, model, &prompt)
             }
             Command::ReadModels { agent } => models::read(&mut inner, agent),
+            Command::ReadModelPrefill { agent, repository_id } => models::read_prefill(&mut inner, agent, repository_id),
         }
         sessions::flush(&mut inner);
     }

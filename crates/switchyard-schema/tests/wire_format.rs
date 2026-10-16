@@ -410,6 +410,24 @@ fn session_facts_list_mcp_servers_with_their_state() {
     assert!(old.mcp_servers.is_empty());
 }
 
+#[test]
+fn model_prefill_is_read_per_agent_and_repository() {
+    use switchyard_schema::{AgentKind, ModelChoice};
+    let command: Command =
+        serde_json::from_value(json!({"type": "readModelPrefill", "agent": "claudeCode", "repositoryId": "repo-1"})).unwrap();
+    assert_eq!(command, Command::ReadModelPrefill { agent: AgentKind::ClaudeCode, repository_id: "repo-1".into() });
+    let event = Event::ModelPrefill {
+        agent: AgentKind::ClaudeCode,
+        repository_id: "repo-1".into(),
+        choice: ModelChoice::Default,
+        retired: Some("opus".into()),
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        json!({"type": "modelPrefill", "agent": "claudeCode", "repositoryId": "repo-1", "choice": {"type": "default"}, "retired": "opus"})
+    );
+}
+
 /// `command_name` lists exactly the serde tags of `Command`: serde's "unknown variant"
 /// error names every tag it expects, and each listed name is one of them.
 #[test]
