@@ -59,6 +59,7 @@ pub fn launch_for(spec: &LaunchSpec) -> Launch {
     Launch {
         cwd: spec.cwd.to_string_lossy().into_owned(),
         permission_mode: protocol_mode(spec.permission_mode, spec.sandboxed),
+        model: spec.model.clone(),
         config: spawn_config(spec),
         mcp_servers: spec.mcp_servers.iter().map(|s| s.name.clone()).collect(),
         mcp_rules,
