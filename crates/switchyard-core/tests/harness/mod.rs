@@ -586,6 +586,13 @@ impl FakeProbe {
         self.inner.lock().unwrap().manifest = Ok(manifest);
     }
 
+    /// The adapter's manifest now says whether it switches its CLI's Model live.
+    pub fn switches_model_live(&self, live: bool) {
+        if let Ok(manifest) = &mut self.inner.lock().unwrap().manifest {
+            manifest.switch_model_live = live;
+        }
+    }
+
     /// Asking the adapter for its manifest fails (its runtime cannot start).
     pub fn adapter_fails(&self, reason: &str) {
         self.inner.lock().unwrap().manifest = Err(reason.into());

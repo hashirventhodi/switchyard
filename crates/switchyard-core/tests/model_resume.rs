@@ -188,6 +188,56 @@ fn a_switch_queued_after_a_confirmed_one_goes_live_once_the_cli_resumes_on_the_c
     assert_eq!(set_models(&core, 0), vec!["claude-haiku-4-5".to_string()], "checked like any live switch");
 }
 
+/// Claude Code's adapter now says it cannot switch its CLI's Model live.
+fn cannot_switch_live(core: &mut Harness) {
+    core.probe.switches_model_live(false);
+    core.send(Command::CheckAgents);
+}
+
+fn stop(core: &mut Harness, id: &str) {
+    core.send(Command::StopSession { session_id: id.into() });
+}
+
+#[test]
+fn on_a_cli_that_cannot_switch_live_a_switch_leaves_the_running_process_alone_and_applies_on_resume() {
+    let (mut core, _repo, worktree) = setup();
+    let id = started_on(&mut core, &worktree, ModelChoice::Model { id: OPUS.into() });
+    cannot_switch_live(&mut core);
+
+    let asked = switch(&mut core, &id, SONNET);
+
+    assert_eq!(switch_state(&asked), Some((Some(SONNET.into()), None)));
+    assert!(set_models(&core, 0).is_empty(), "the running process is untouched");
+    stop(&mut core, &id);
+    resume(&mut core, &id);
+    assert_eq!(core.agents.launches().len(), 2, "relaunched although its process still ran");
+    assert_eq!(resumed_on(&core, 1).as_deref(), Some(SONNET));
+    assert!(set_models(&core, 1).is_empty());
+    let replaced = core.agent_exits(0, None, "");
+    assert!(replaced.is_empty(), "the replaced process has nothing more to say: {replaced:#?}");
+    core.agent_says(1, init(Some(SONNET)));
+    let first = core.agent_says(1, AgentEvent::TurnComplete);
+    assert_eq!(switch_state(&first), Some((None, Some(SONNET.into()))));
+}
+
+#[test]
+fn on_a_cli_that_cannot_switch_live_the_pending_switch_wins_over_an_earlier_confirmed_one() {
+    let (mut core, _repo, worktree) = setup();
+    let id = started_on(&mut core, &worktree, ModelChoice::Model { id: OPUS.into() });
+    cannot_switch_live(&mut core);
+    switch(&mut core, &id, SONNET);
+    stop(&mut core, &id);
+    resume(&mut core, &id);
+    core.agent_says(1, init(Some(SONNET)));
+    core.agent_says(1, AgentEvent::TurnComplete);
+
+    switch(&mut core, &id, "claude-haiku-4-5");
+    stop(&mut core, &id);
+    resume(&mut core, &id);
+
+    assert_eq!(resumed_on(&core, 2).as_deref(), Some("claude-haiku-4-5"), "it could not be applied any other way");
+}
+
 #[test]
 fn a_switch_sent_to_an_agent_that_then_exited_is_sent_again_to_the_relaunched_one() {
     let (mut core, _repo, worktree) = setup();
