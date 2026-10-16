@@ -1,0 +1,2 @@
+{"type": "session_init", "external_session_id": "cannot-list-models", "permission_mode": "ask_first", "cli_permission_mode": "default", "cli": {"name": "claude-code", "version": "2.1.300"}, "model": "claude-opus-5-5"}
+{"type": "cannot_list_models", "reason": "Control request timed out: supported_models"}

@@ -14,6 +14,7 @@ pub mod context;
 pub mod forge;
 mod git;
 pub mod mcp;
+mod models;
 pub mod processes;
 mod rebase;
 mod policy;
@@ -346,6 +347,7 @@ impl Core {
             Command::StartTaskSession { task_id, target, agent, permission_mode, model, prompt } => {
                 tasks::start_session(&mut inner, &self.inner, &task_id, target, agent, permission_mode, model, &prompt)
             }
+            Command::ReadModels { agent } => models::read(&mut inner, agent),
         }
         sessions::flush(&mut inner);
     }

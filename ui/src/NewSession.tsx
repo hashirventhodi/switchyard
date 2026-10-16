@@ -96,6 +96,11 @@ export function NewSession(props: {
   useEffect(() => {
     if (policyRepo) send({ type: "readPolicy", repositoryId: policyRepo });
   }, [policyRepo, send]);
+  // The cached Model list, at once; the core refreshes it in the background and pushes a
+  // fresher one if it arrives while the dialog is open.
+  useEffect(() => {
+    send({ type: "readModels", agent });
+  }, [agent, send]);
   useEffect(() => {
     if (!modeTouched && policy?.defaultMode) setMode(policy.defaultMode);
   }, [modeTouched, policy?.defaultMode]);
@@ -159,7 +164,7 @@ export function NewSession(props: {
               ))}
             </select>
           </label>
-          {choosesModel(agent) && <ModelField value={modelChosen} onChange={setModel} />}
+          {choosesModel(agent) && <ModelField value={modelChosen} onChange={setModel} list={state.modelLists[agent]} />}
           {task && (
             <div className="field" role="group" aria-label="Task">
               <span>Task</span>

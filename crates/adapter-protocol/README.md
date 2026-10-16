@@ -14,7 +14,7 @@ This crate is self-contained (no dependency on the rest of Switchyard) so it can
 
 ## Changes
 
-- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model.
+- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. New `list_models` command, answered by `models_listed` or `cannot_list_models`.
 - **0.1.0**: first version.
 
 ## Wire format
@@ -36,6 +36,8 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 | `error` | `message`, `fatal` |
 | `token_usage` | `model` (the Model these tokens were spent on; absent or `null` means the Session's Model, as in 0.1), `input_tokens` (excluding cache reads and writes), `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (cache creation; optional, 0 when absent), `cost_usd` (the CLI's cost for these tokens, only when it reports one): running totals for everything the session has spent on that Model, each report superseding the last for the same Model. A CLI that uses several Models (its own subagent or background calls, a switch) sends one per Model, never one summed total |
 | `classifier_denial` | `tool`, `detail`, `reason`: never a Permission request |
+| `models_listed` | `models`: the Models the CLI offers, in its order, each `{id, display_name}` (`id` is what the CLI takes to run on it). The answer to `list_models` |
+| `cannot_list_models` | `reason` (optional): the answer to `list_models` from a CLI that cannot list its Models, or could not this time |
 
 A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 
@@ -56,6 +58,7 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `interrupt` | (none) |
 | `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
 | `resume` | `external_session_id` |
+| `list_models` | (none): ask which Models the CLI offers. The host asks and the adapter translates the answer, so the adapter does no I/O |
 
 `resume` is only ever the first command a freshly started adapter receives: the host relaunched it for a Session whose process is gone (after a crash or quit) and the CLI must reload that conversation by its own session id (from `session_init`) so the agent keeps its context. A `send_text` follows it.
 

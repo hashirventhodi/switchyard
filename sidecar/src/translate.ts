@@ -14,6 +14,10 @@
 //   {"type":"switchyard","subtype":"mcp_status","servers":[McpServerStatus]}
 //                                                               query.mcpServerStatus() result
 //                                                               (asked while a server is pending)
+//   {"type":"switchyard","subtype":"supported_models","models":[ModelInfo]}
+//                                                               query.supportedModels() result
+//   {"type":"switchyard","subtype":"supported_models_failed","message":"…"}
+//                                                               query.supportedModels() threw
 //
 // Raw responses are "driver ops" the sidecar performs on the live query:
 //   {"op":"push_user_message","message":SDKUserMessage}  push into the streaming input
@@ -24,9 +28,12 @@
 //                                                        (options.resume); first op only
 //   {"op":"set_permission_mode","mode":"<CLI mode>","permission_mode":"<protocol mode>"}
 //                                                        await query.setPermissionMode(mode)
+//   {"op":"list_models"}                                 query.supportedModels(), written back
+//                                                        as a supported_models line
 
 import {
   PROTOCOL_RANGE,
+  type ListedModel,
   type McpServerState,
   type McpServerStatus,
   type PermissionMode,
@@ -69,7 +76,8 @@ export type DriverOp =
   | { op: "interrupt" }
   | { op: "resolve_permission"; request_id: string; result: PermissionResult }
   | { op: "resume"; session_id: string }
-  | { op: "set_permission_mode"; mode: string; permission_mode: PermissionMode };
+  | { op: "set_permission_mode"; mode: string; permission_mode: PermissionMode }
+  | { op: "list_models" };
 
 /** The Agent SDK's answer to canUseTool. Never carries `updatedPermissions`: grants are
  * Switchyard data and are never written into the CLI's settings (ADR-0004). */
@@ -146,6 +154,8 @@ export class ClaudeTranslator {
       case "resume":
         // The CLI reloads the conversation itself (`--resume <id>`), so the agent keeps its context.
         return [{ op: "resume", session_id: command.external_session_id }];
+      case "list_models":
+        return [{ op: "list_models" }];
     }
   }
 
@@ -239,6 +249,9 @@ export class ClaudeTranslator {
     if (msg.subtype === "can_use_tool") return [this.permissionRequest(msg)];
     if (msg.subtype === "can_use_tool_aborted" && this.pending.delete(msg.request_id)) this.abandoned.add(msg.request_id);
     if (msg.subtype === "mcp_status") return this.mcpChanges(msg.servers);
+    if (msg.subtype === "supported_models") return [{ type: "models_listed", models: listedModels(msg.models) }];
+    if (msg.subtype === "supported_models_failed")
+      return [{ type: "cannot_list_models", reason: typeof msg.message === "string" ? msg.message : null }];
     return [];
   }
 
@@ -357,6 +370,15 @@ function mcpStatuses(raw: unknown): McpServerStatus[] {
       state: MCP_STATE[s.status] ?? "failed",
       error: typeof s.error === "string" ? s.error : null,
     }));
+}
+
+/** The SDK's ModelInfo rows as listed Models, in its order. Its own "default" row is left
+ * out: that is Switchyard's Default, which passes no Model at all. */
+function listedModels(raw: unknown): ListedModel[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m: Json) => typeof m?.value === "string" && m.value !== "default")
+    .map((m: Json) => ({ id: m.value, display_name: typeof m.displayName === "string" ? m.displayName : m.value }));
 }
 
 const MCP_STATE: Record<string, McpServerState> = {

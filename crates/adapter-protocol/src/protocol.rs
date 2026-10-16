@@ -94,6 +94,24 @@ pub enum Event {
         detail: String,
         reason: Option<String>,
     },
+    /// The answer to [`Command::ListModels`]: the Models the CLI offers, in its order.
+    ModelsListed {
+        models: Vec<ListedModel>,
+    },
+    /// The answer to [`Command::ListModels`] from a CLI that cannot list its Models (or
+    /// could not this time); `reason` says why, when known.
+    CannotListModels {
+        #[serde(default)]
+        reason: Option<String>,
+    },
+}
+
+/// One Model a CLI offers: `id` is what the CLI takes to run on it, `display_name` what
+/// the user reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListedModel {
+    pub id: String,
+    pub display_name: String,
 }
 
 /// An MCP server's connection state, as the CLI reports it.
@@ -181,6 +199,9 @@ pub enum Command {
     Resume {
         external_session_id: String,
     },
+    /// Ask the CLI which Models it offers. Answered by [`Event::ModelsListed`] or
+    /// [`Event::CannotListModels`]; the host does the asking, so the adapter does no I/O.
+    ListModels,
 }
 
 /// The user's (or policy's) answer to a Permission request.

@@ -1,0 +1,2 @@
+{"type": "system", "subtype": "init", "session_id": "cannot-list-models", "uuid": "u-cannot-list-models", "cwd": "/wt/acme/feat", "permissionMode": "default", "claude_code_version": "2.1.300", "model": "claude-opus-5-5", "tools": ["Bash", "Read", "Edit"], "mcp_servers": [], "apiKeySource": "none"}
+{"type": "switchyard", "subtype": "supported_models_failed", "message": "Control request timed out: supported_models"}

@@ -792,6 +792,9 @@ impl Adapter for CodexAdapter {
                 }
                 vec![]
             }
+            // Not yet mapped onto the app-server's model listing: nothing is asked, so the
+            // host's cache stays as it was and New session offers free text.
+            Command::ListModels => vec![],
         })
     }
 

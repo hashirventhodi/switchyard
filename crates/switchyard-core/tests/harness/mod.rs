@@ -429,8 +429,16 @@ impl FakeAgents {
         self.inner.lock().unwrap().launched.iter().map(|(s, _, _)| s.clone()).collect()
     }
 
-    /// Protocol commands the core sent to the n-th agent.
+    /// Protocol commands the core sent to the n-th agent about its Session, leaving out the
+    /// background Model-list refreshes (`list_models`; see [`FakeAgents::all_commands`]).
     pub fn commands(&self, agent: usize) -> Vec<adapter_protocol::Command> {
+        let mut commands = self.all_commands(agent);
+        commands.retain(|c| *c != adapter_protocol::Command::ListModels);
+        commands
+    }
+
+    /// Every protocol command the core sent to the n-th agent.
+    pub fn all_commands(&self, agent: usize) -> Vec<adapter_protocol::Command> {
         self.inner.lock().unwrap().launched[agent].2.lock().unwrap().clone()
     }
 

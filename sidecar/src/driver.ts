@@ -169,7 +169,21 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
           else cliMode = op.mode;
           mode = op.permission_mode;
         }
-        else if (op.op === "resolve_permission") {
+        else if (op.op === "list_models") {
+          // Answered whenever the CLI is ready (after the first prompt, if it has not come
+          // yet), never holding up the commands behind it.
+          void (async () => {
+            const live = q ?? (await ready);
+            if (!live) return;
+            try {
+              const models = await live.supportedModels();
+              ingest(JSON.stringify({ type: "switchyard", subtype: "supported_models", models }));
+            } catch (e) {
+              const message = (e as Error)?.message ?? String(e);
+              ingest(JSON.stringify({ type: "switchyard", subtype: "supported_models_failed", message }));
+            }
+          })();
+        } else if (op.op === "resolve_permission") {
           waiting.get(op.request_id)?.(op.result);
           waiting.delete(op.request_id);
         }
