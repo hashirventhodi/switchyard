@@ -1651,6 +1651,8 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SessionFacts {
+    /// The Model the CLI runs on: as it reported, else the chosen one it was started on.
+    /// None while a Default the CLI did not report is unresolved ("Default (not reported)").
     pub model: Option<String>,
     pub cli_version: Option<String>,
     /// The CLI's own name for the mode it actually started in.

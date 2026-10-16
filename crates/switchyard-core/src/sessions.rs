@@ -642,8 +642,18 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                         agents::mode_label(permission_mode),
                     )
                 });
+                // A relaunched CLI (resume) initialises again; the start line is written once.
+                let first = state.external_id.is_none();
                 state.external_id = Some(external_session_id);
-                state.facts.model = model;
+                // What the CLI says it runs on, else the Model it was started on; a Default it
+                // does not report stays unknown, never guessed.
+                if let Some(model) = model.or_else(|| state.session.model.id().map(str::to_string)) {
+                    state.facts.model = Some(model);
+                }
+                if first {
+                    let text = start_line(&state.session.model, state.facts.model.as_deref());
+                    out.push(append(state, Entry::System { text }));
+                }
                 state.facts.cli_version = Some(cli.version);
                 state.facts.cli_permission_mode = Some(cli_permission_mode);
                 out.push(facts(state));
@@ -821,6 +831,16 @@ fn spend_event(state: &SessionState, upto: usize, table: &PriceTable) -> Event {
     let reports = &state.usage[..=upto];
     let spend = spend::spend(reports, state.facts.model.as_deref(), table);
     Event::SpendRecorded { session_id: state.session.id.clone(), at_ms: reports[upto].at_ms, spend }
+}
+
+/// The Agent log's line for the Model a Session started on: the chosen Model, or what
+/// Default resolved to ("Model: Default → claude-opus-5-5"), or that the CLI did not say.
+fn start_line(choice: &ModelChoice, running: Option<&str>) -> String {
+    match (choice, running) {
+        (ModelChoice::Default, Some(model)) => format!("Model: Default → {model}"),
+        (ModelChoice::Default, None) => "Model: Default (not reported)".into(),
+        (ModelChoice::Model { id }, running) => format!("Model: {}", running.unwrap_or(id)),
+    }
 }
 
 fn facts(state: &SessionState) -> Event {
