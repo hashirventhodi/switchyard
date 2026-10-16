@@ -75,13 +75,6 @@ fn commit(core: &mut Harness, wt: &Path) -> Vec<Event> {
     core.send(Command::CommitAccepted { worktree_path: path_str(wt), message: "msg".into() })
 }
 
-fn refusal(events: &[Event]) -> String {
-    match events {
-        [Event::CommandRefused { reason, .. }] => reason.clone(),
-        other => panic!("expected one refusal, got {other:#?}"),
-    }
-}
-
 #[test]
 fn an_accept_on_a_file_edited_afterwards_is_kept_and_flagged_stale() {
     let (_repo, wt, mut core) = setup();
@@ -136,19 +129,70 @@ fn commit_accepted_skips_a_file_whose_accept_is_stale_and_says_so() {
     assert_eq!(committed, Some((vec!["lib.txt".to_string()], vec!["notes.txt".to_string()])), "{events:#?}");
     assert_eq!(std::fs::read_to_string(wt.join("notes.txt")).unwrap(), "a\nBee\n");
     let notes = file(&mut core, &wt, "notes.txt");
-    assert_eq!((notes.decision, notes.stale), (None, false), "decisions are discarded on commit");
+    assert_eq!((notes.decision, notes.stale), (Some(Decision::Accept), true), "a skipped file keeps its Stale decision");
 }
 
 #[test]
-fn commit_with_only_stale_accepts_is_refused_naming_them() {
+fn commit_with_only_stale_accepts_commits_nothing_and_says_which_it_skipped() {
     let (_repo, wt, mut core) = setup();
     decide(&mut core, &wt, "notes.txt", Some(Decision::Accept));
     edit(&mut core, &wt, "notes.txt", "a\nBee\n");
 
-    assert_eq!(
-        refusal(&commit(&mut core, &wt)),
-        "notes.txt changed since you decided; re-confirm it before committing"
-    );
+    let events = commit(&mut core, &wt);
+
+    assert!(!events.iter().any(|e| matches!(e, Event::CommandRefused { .. })), "{events:#?}");
+    let committed = events.iter().find_map(|e| match e {
+        Event::Committed { commit, files, skipped_stale, .. } => Some((commit.clone(), files.clone(), skipped_stale.clone())),
+        _ => None,
+    });
+    assert_eq!(committed, Some((String::new(), vec![], vec!["notes.txt".to_string()])), "{events:#?}");
+    let notes = file(&mut core, &wt, "notes.txt");
+    assert_eq!((notes.decision, notes.stale), (Some(Decision::Accept), true));
+}
+
+/// Commit `path` in a shell, outside Switchyard; the watcher reports it.
+fn commit_in_shell(core: &mut Harness, wt: &Path, path: &str) {
+    git(wt, &["add", path]);
+    git(wt, &["commit", "-q", "-m", "by hand"]);
+    core.disk_changed(wt, &[&wt.join(path)]);
+}
+
+#[test]
+fn a_decision_on_a_file_committed_in_a_shell_is_discarded() {
+    let (_repo, wt, mut core) = setup();
+    decide(&mut core, &wt, "notes.txt", Some(Decision::Accept));
+    commit_in_shell(&mut core, &wt, "notes.txt");
+
+    edit(&mut core, &wt, "notes.txt", "a\nB\nc\n");
+
+    let notes = file(&mut core, &wt, "notes.txt");
+    assert_eq!((notes.decision, notes.stale), (None, false));
+}
+
+#[test]
+fn a_decision_on_a_file_reverted_in_a_shell_is_discarded() {
+    let (_repo, wt, mut core) = setup();
+    decide(&mut core, &wt, "notes.txt", Some(Decision::Accept));
+    git(&wt, &["checkout", "--", "notes.txt"]);
+    core.disk_changed(&wt, &[&wt.join("notes.txt")]);
+
+    edit(&mut core, &wt, "notes.txt", "a\nB\n");
+
+    let notes = file(&mut core, &wt, "notes.txt");
+    assert_eq!(notes.decision, None, "the file left the diff: its Decision went with it");
+}
+
+#[test]
+fn hunk_decisions_on_a_file_committed_in_a_shell_are_discarded() {
+    let (_repo, wt, mut core) = setup();
+    let hunks = file(&mut core, &wt, "lib.txt").hunks;
+    decide_hunk(&mut core, &wt, "lib.txt", &hunks[1], Some(Decision::Reject));
+    edit(&mut core, &wt, "lib.txt", &lib(&["line five", "line 30 (kept)"]));
+    commit_in_shell(&mut core, &wt, "lib.txt");
+
+    edit(&mut core, &wt, "lib.txt", &lib(&["line five", "line thirty"]));
+
+    assert!(file(&mut core, &wt, "lib.txt").stale_hunks.is_empty());
 }
 
 #[test]
@@ -195,7 +239,22 @@ fn a_stale_hunk_decision_survives_a_relaunch_and_is_discarded_on_commit() {
 
     let stale = file(&mut core, &wt, "lib.txt").stale_hunks;
     assert_eq!(stale.iter().map(|h| (h.id.clone(), h.decision, h.sent)).collect::<Vec<_>>(), vec![(hunks[1].id.clone(), Decision::Reject, false)]);
-    decide(&mut core, &wt, "notes.txt", Some(Decision::Accept));
+    decide(&mut core, &wt, "lib.txt", Some(Decision::Accept));
     commit(&mut core, &wt);
+    edit(&mut core, &wt, "lib.txt", &lib(&["line five", "line thirty"]));
     assert!(file(&mut core, &wt, "lib.txt").stale_hunks.is_empty());
+}
+
+#[test]
+fn commit_accepted_keeps_the_decisions_on_files_it_did_not_commit() {
+    let (_repo, wt, mut core) = setup();
+    let hunks = file(&mut core, &wt, "lib.txt").hunks;
+    decide_hunk(&mut core, &wt, "lib.txt", &hunks[1], Some(Decision::Reject));
+    edit(&mut core, &wt, "lib.txt", &lib(&["line five", "line 30 (kept)"]));
+    decide(&mut core, &wt, "notes.txt", Some(Decision::Accept));
+
+    commit(&mut core, &wt);
+
+    let stale = file(&mut core, &wt, "lib.txt").stale_hunks;
+    assert_eq!(stale.iter().map(|h| h.id.clone()).collect::<Vec<_>>(), vec![hunks[1].id.clone()]);
 }

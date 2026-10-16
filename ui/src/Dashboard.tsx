@@ -27,12 +27,13 @@ export function Dashboard(props: {
 }) {
   const { state, onOpenSession, onOpenInbox, setup, spend, onNewSession } = props;
   const [agent, setAgent] = useState<AgentKind | "all">("all");
-  // Changed files counts the facts the core pushes (at attach and on every change on disk).
+  // Changed files counts what Changes would list, from the facts the core pushes (at attach
+  // and on every change on disk).
   const sessions = Object.values(state.sessions);
   const worktrees = state.repositories.flatMap((r) => r.worktrees.map((w) => ({ repo: r, worktree: w })));
   const changedFiles = worktrees
     .filter(({ worktree }) => !worktree.primary)
-    .reduce((n, { worktree }) => n + (state.worktreeFacts[worktree.path]?.dirty ?? 0), 0);
+    .reduce((n, { worktree }) => n + (state.worktreeFacts[worktree.path]?.changedFiles ?? 0), 0);
   const count = (s: SessionStatus) => sessions.filter((x) => x.status === s).length;
   const sorted = [...sessions].sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status]);
   const attention = sorted.filter((s) => s.status === "waiting" || s.status === "failed");

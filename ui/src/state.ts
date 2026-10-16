@@ -411,6 +411,10 @@ export function reduce(state: State, event: Event): State {
     }
     case "committed": {
       const n = event.files.length;
+      if (n === 0) {
+        // Every accepted file changed since it was decided: nothing was committed.
+        return resultToast(state, `Nothing committed: ${event.skippedStale.join(", ")} changed since you decided; re-confirm to commit`);
+      }
       const skipped = event.skippedStale.length ? `; skipped ${event.skippedStale.join(", ")}: changed since you decided` : "";
       const text = `Committed ${n} file${n === 1 ? "" : "s"} to ${event.branch ?? "the worktree"} (${event.commit})${skipped}`;
       const noted = worktreeActivity(state, event.worktreePath, `committed ${n} file${n === 1 ? "" : "s"} (${event.commit})`);

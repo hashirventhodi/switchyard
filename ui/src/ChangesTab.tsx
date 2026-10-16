@@ -36,6 +36,10 @@ const conflicted = (f: Row) => f.status === "conflicted" || !!f.baseConflict;
 const inForce = (f: ChangedFile) => (f.stale ? null : f.decision);
 /** A file decision made on content that has since changed. */
 const staleDecision = (f: ChangedFile) => f.stale && !!f.decision;
+/** How a file's Accept or Reject button looks: pressed (`pressed`) when that decision is in
+ *  force, as `aria-pressed` says; flagged, not pressed, when it is a Stale decision. */
+const decisionLook = (f: ChangedFile, decision: Decision, pressed: string) =>
+  inForce(f) === decision ? pressed : f.decision === decision ? "stale" : "";
 /** A rejected hunk and no file decision: kept out of commits (the core decides the same). */
 const rejectedHunks = (f: ChangedFile) => (inForce(f) ? 0 : f.hunks.filter((h) => h.decision === "reject").length);
 /** Committed by Commit accepted…: accepted whole, or every hunk accepted. */
@@ -342,7 +346,7 @@ function FileDiff(props: {
         {!conflict && (
           <>
             <button
-              className={`btn sm ${file.decision === "accept" ? "ok" : ""}`}
+              className={`btn sm ${decisionLook(file, "accept", "ok")}`}
               aria-pressed={inForce(file) === "accept"}
               title={`Accept file (${keysLabel("review.accept")})`}
               onClick={() => onDecide("accept")}
@@ -350,7 +354,7 @@ function FileDiff(props: {
               Accept file
             </button>
             <button
-              className={`btn sm ${file.decision === "reject" ? "danger" : ""}`}
+              className={`btn sm ${decisionLook(file, "reject", "danger")}`}
               aria-pressed={inForce(file) === "reject"}
               title={`Reject file (${keysLabel("review.reject")})`}
               onClick={() => onDecide("reject")}

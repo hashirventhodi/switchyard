@@ -60,7 +60,7 @@ fn a_worktree_added_in_a_shell_is_announced_with_its_branch() {
     let (repo, repository, mut core) = attached();
 
     let worktree = add_in_shell(&repo, "feat/login");
-    let events = core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("HEAD")]);
+    let events = core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("gitdir")]);
 
     assert_eq!(
         added(&events),
@@ -96,7 +96,7 @@ fn a_change_that_adds_no_worktree_announces_none() {
 fn a_worktree_whose_branch_is_renamed_in_a_shell_is_announced_again_under_the_new_name() {
     let (repo, repository, mut core) = attached();
     let worktree = add_in_shell(&repo, "feat/login");
-    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("HEAD")]);
+    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("gitdir")]);
 
     git(&worktree, &["branch", "-m", "feat/sign-in"]);
     let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &worktree).join("HEAD")]);
@@ -115,7 +115,7 @@ fn a_worktree_whose_branch_is_renamed_in_a_shell_is_announced_again_under_the_ne
 fn a_worktree_removed_in_a_shell_is_announced_gone_and_no_longer_watched() {
     let (repo, repository, mut core) = attached();
     let worktree = add_in_shell(&repo, "feat/login");
-    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("HEAD")]);
+    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("gitdir")]);
 
     git(&repo.path, &["worktree", "remove", worktree.to_str().unwrap()]);
     let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &worktree)]);
@@ -128,7 +128,7 @@ fn a_worktree_removed_in_a_shell_is_announced_gone_and_no_longer_watched() {
 fn a_running_session_on_a_worktree_removed_in_a_shell_is_stopped_and_archived_with_its_transcript() {
     let (repo, _repository, mut core) = attached();
     let worktree = add_in_shell(&repo, "feat/login");
-    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("HEAD")]);
+    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("gitdir")]);
     let session = started_session(&core.start_session(&worktree, "Add a login form."));
 
     git(&repo.path, &["worktree", "remove", "--force", worktree.to_str().unwrap()]);
@@ -159,7 +159,7 @@ fn session_id(archived: &switchyard_schema::ArchivedSession) -> String {
 fn a_worktree_removed_in_a_shell_closes_its_shells() {
     let (repo, _repository, mut core) = attached();
     let worktree = add_in_shell(&repo, "feat/login");
-    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("HEAD")]);
+    core.disk_changed(&repo.path, &[&gitdir_of(&repo, &worktree).join("gitdir")]);
     core.use_shell("/bin/sh");
     core.dispatch(Command::OpenShell { worktree_path: path_string(&worktree), cols: 80, rows: 24 });
     core.wait_for(|seen| seen.iter().any(|e| matches!(e, Event::ShellOpened { .. })));

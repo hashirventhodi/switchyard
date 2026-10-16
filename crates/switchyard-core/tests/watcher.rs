@@ -6,7 +6,7 @@ mod harness;
 use std::path::{Path, PathBuf};
 
 use harness::{added_repository, git, Harness, TempRepo};
-use switchyard_core::watcher::FsWatcher;
+use switchyard_core::watcher::{FsWatcher, Watch, WatchReport, Watcher};
 use switchyard_schema::{ChangeKind, Command, Event, WorktreeFacts};
 
 /// The facts pushed for `path` in `events` (exactly one).
@@ -68,7 +68,7 @@ fn a_commit_in_a_shell_pushes_the_worktrees_facts() {
 fn base_moving_in_a_shell_pushes_behind_for_the_worktree() {
     let (repo, worktree, mut core) = attached();
 
-    // A pull or fetch into main from the primary checkout.
+    // A pull or fetch into main from the Primary worktree.
     std::fs::write(repo.path.join("CHANGELOG"), "base moved\n").unwrap();
     git(&repo.path, &["add", "CHANGELOG"]);
     git(&repo.path, &["commit", "-q", "-m", "base moved"]);
@@ -281,4 +281,89 @@ fn a_file_edit_and_a_commit_together_signal_both_kinds() {
     let events = core.disk_changed(&worktree, &[&worktree.join("README"), &repo.path.join(".git/refs/heads/feat/login")]);
 
     assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Files, ChangeKind::Git]);
+}
+
+/// Paths the real `watcher` reports for `root` until `done` holds for them (or 10 s pass).
+fn reported_until(rx: &std::sync::mpsc::Receiver<WatchReport>, done: impl Fn(&[PathBuf]) -> bool) -> Vec<PathBuf> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut seen = Vec::new();
+    while !done(&seen) {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(WatchReport::Changed(paths)) => seen.extend(paths),
+            Ok(WatchReport::Failed(reason)) => panic!("the watch failed: {reason}"),
+            Err(_) => panic!("timed out; reported so far: {seen:#?}"),
+        }
+    }
+    seen
+}
+
+fn ends_with(paths: &[PathBuf], tail: &str) -> bool {
+    paths.iter().any(|p| p.ends_with(tail))
+}
+
+#[test]
+fn the_real_watcher_skipping_ignored_folders_watches_the_rest_and_folders_made_later() {
+    let repo = TempRepo::new("acme");
+    std::fs::write(repo.path.join(".gitignore"), "target/\n").unwrap();
+    std::fs::create_dir_all(repo.path.join("target/debug")).unwrap();
+    std::fs::create_dir_all(repo.path.join("src")).unwrap();
+    let watcher = FsWatcher::skipping_ignored_over(std::time::Duration::from_millis(100));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let watch = Watch { worktree: repo.path.clone(), roots: vec![repo.path.clone()] };
+    watcher.watch(watch, std::sync::Arc::new(move |report| drop(tx.send(report)))).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    std::fs::write(repo.path.join("target/debug/app"), "binary").unwrap();
+    std::fs::write(repo.path.join("src/lib.rs"), "fn f() {}\n").unwrap();
+    let seen = reported_until(&rx, |seen| ends_with(seen, "src/lib.rs"));
+    assert!(!seen.iter().any(|p| p.components().any(|c| c.as_os_str() == "target")), "{seen:#?}");
+
+    std::fs::create_dir_all(repo.path.join("src/deep")).unwrap();
+    reported_until(&rx, |seen| ends_with(seen, "src/deep"));
+    std::fs::write(repo.path.join("src/deep/mod.rs"), "fn g() {}\n").unwrap();
+    reported_until(&rx, |seen| ends_with(seen, "src/deep/mod.rs"));
+}
+
+#[test]
+fn another_worktrees_index_and_head_changing_pushes_nothing() {
+    let (repo, worktree, mut core) = attached();
+    let other = repo.add_worktree("spike/cache");
+    core.disk_changed(&worktree, &[&gitdir_of(&repo, &other)]);
+
+    let theirs = gitdir_of(&repo, &other);
+    let events = core.disk_changed(
+        &worktree,
+        &[&theirs.join("index"), &theirs.join("HEAD"), &theirs.join("logs/HEAD"), &repo.path.join(".git/index"), &repo.path.join(".git/HEAD")],
+    );
+
+    assert_eq!(events, vec![]);
+}
+
+#[test]
+fn a_worktree_added_beside_it_is_seen_from_its_gitdir_file() {
+    let (repo, worktree, mut core) = attached();
+    let other = repo.add_worktree("spike/cache");
+
+    let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &other).join("gitdir")]);
+
+    assert!(events.iter().any(|e| matches!(e, Event::WorktreeAdded { worktree, .. } if Path::new(&worktree.path) == other)), "{events:#?}");
+}
+
+#[test]
+fn its_own_index_changing_signals_git() {
+    let (repo, worktree, mut core) = attached();
+
+    let events = core.disk_changed(&worktree, &[&gitdir_of(&repo, &worktree).join("index")]);
+
+    assert_eq!(changed_kinds(&events, &worktree), vec![ChangeKind::Git]);
+}
+
+#[test]
+fn the_primary_worktrees_own_index_changing_signals_git() {
+    let (repo, _worktree, mut core) = attached();
+
+    let events = core.disk_changed(&repo.path, &[&repo.path.join(".git/index")]);
+
+    assert_eq!(changed_kinds(&events, &repo.path), vec![ChangeKind::Git]);
 }

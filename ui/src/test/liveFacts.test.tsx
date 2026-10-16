@@ -46,10 +46,11 @@ function launch(...events: Event[]) {
 const sidebar = () => screen.getByRole("complementary", { name: "Repositories" });
 
 test("the Dashboard's Changed files moves with pushed facts and asks git for nothing", () => {
-  const { sent, emit } = launch(facts("/wt/fix", { dirty: 1 }));
+  const { sent, emit } = launch(facts("/wt/fix", { dirty: 1, changedFiles: 1 }));
   expect(screen.getByLabelText("Changed files: 1")).toBeTruthy();
 
-  act(() => emit(facts("/wt/fix", { dirty: 3 }), facts("/wt/feat", { dirty: 2 })));
+  // What Changes would list, not git's dirty count (a staged-only file is dirty, not listed).
+  act(() => emit(facts("/wt/fix", { dirty: 4, changedFiles: 3 }), facts("/wt/feat", { dirty: 2, changedFiles: 2 })));
 
   expect(screen.getByLabelText("Changed files: 5")).toBeTruthy();
   expect(sent).not.toContainEqual({ type: "refreshWorktrees" });

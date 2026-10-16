@@ -729,9 +729,12 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     for event in out {
         inner.emit(event);
     }
-    // A turn is when the agent commits and edits: re-read where its branch stands.
+    // A turn is when the agent commits, edits and writes its memory: re-read where its
+    // branch stands and what it remembers (watching a memory directory it just made).
     if turn_ended {
-        let kinds = crate::disk::Kinds { files: true, git: true, config: false };
+        crate::disk::watch_new_memory(inner, &worktree_path);
+        let config = crate::disk::config_moved(inner, &worktree_path);
+        let kinds = crate::disk::Kinds { files: true, git: true, config };
         crate::disk::worktree_changed(inner, &worktree_path, kinds);
     }
     if let Some((class, detail)) = failure {

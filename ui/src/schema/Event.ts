@@ -39,7 +39,7 @@ atMs: number, spend: Spend, } | { "type": "transcriptEntry", sessionId: string, 
  */
 reason: string, } | { "type": "worktreeWatched", worktreePath: string, } | { "type": "sessionArchived", archived: ArchivedSession, } | { "type": "archivedSessionPruned", repositoryId: string, sessionId: string, } | { "type": "archivedTranscript", sessionId: string, entries: Array<Entry>, } | { "type": "transcriptExported", sessionId: string, path: string, } | { "type": "settingsChanged", settings: Settings, } | { "type": "changesRead", worktreePath: string, files: Array<ChangedFile>, } | { "type": "fileDecided", worktreePath: string, path: string, decision: Decision | null, } | { "type": "committed", worktreePath: string, branch: string | null, 
 /**
- * Abbreviated commit id.
+ * Abbreviated commit id; empty when nothing was committed.
  */
 commit: string, 
 /**

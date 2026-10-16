@@ -20,6 +20,7 @@ flate2 = "1"
 keyring = { version = "3", features = ["apple-native"] }
 sha2 = "0.10"
 notify = "8.2"
+ignore = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

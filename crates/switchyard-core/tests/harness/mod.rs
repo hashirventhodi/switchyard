@@ -83,7 +83,7 @@ impl Harness {
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
             watcher: Arc::new(FakeWatcher::default()),
-            unwatched_every: None,
+            fallback_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -149,7 +149,7 @@ impl Harness {
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
             watcher: real_watcher.unwrap_or_else(|| Arc::new(watcher.clone())),
-            unwatched_every: None,
+            fallback_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -240,6 +240,14 @@ impl Harness {
         self.drain()
     }
 
+    /// A failure the watcher for `worktree` reported after the core stopped watching it (the
+    /// report was already on its way, as the real watcher's delivery thread can have it);
+    /// returns the events it caused.
+    pub fn watcher_failed_late(&mut self, worktree: &Path, reason: &str) -> Vec<Event> {
+        self.watcher.fail_late(worktree, reason);
+        self.drain()
+    }
+
     /// A watcher for `worktree` can start again; the core finds out on its next
     /// `fallback_tick`, which this runs. Returns the events it caused.
     pub fn watcher_recovered(&mut self, worktree: &Path) -> Vec<Event> {
@@ -325,6 +333,8 @@ fn fake_gh_in(data_dir: &TempDir) -> FakeGh {
 #[derive(Clone, Default)]
 pub struct FakeWatcher {
     watches: Arc<Mutex<Vec<(Watch, ChangeSink)>>>,
+    /// The sinks of watches that were stopped, by worktree: a late report still reaches them.
+    stopped: Arc<Mutex<Vec<(PathBuf, ChangeSink)>>>,
     /// Worktrees whose watch fails, with why.
     failing: Arc<Mutex<Vec<(PathBuf, String)>>>,
 }
@@ -359,6 +369,13 @@ impl FakeWatcher {
         }
     }
 
+    fn fail_late(&self, worktree: &Path, reason: &str) {
+        let sink = self.stopped.lock().unwrap().iter().rev().find(|(w, _)| w == worktree).map(|(_, s)| s.clone());
+        if let Some(sink) = sink {
+            sink(WatchReport::Failed(reason.to_string()));
+        }
+    }
+
     fn recover(&self, worktree: &Path) {
         self.failing.lock().unwrap().retain(|(w, _)| w != worktree);
     }
@@ -376,7 +393,10 @@ impl Watcher for FakeWatcher {
     }
 
     fn unwatch(&self, worktree: &Path) {
-        self.watches.lock().unwrap().retain(|(w, _)| w.worktree != worktree);
+        let mut watches = self.watches.lock().unwrap();
+        let mut stopped = self.stopped.lock().unwrap();
+        stopped.extend(watches.iter().filter(|(w, _)| w.worktree == worktree).map(|(w, s)| (w.worktree.clone(), s.clone())));
+        watches.retain(|(w, _)| w.worktree != worktree);
     }
 }
 
