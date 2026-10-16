@@ -8,5 +8,5 @@
 {"type":"tool_call_finished","call_id":"toolu_12","ok":false,"output":"The user declined this request."}
 {"type":"permission_request","request_id":"req-3","request":{"kind":"question","question":"Should dist/ stay in git?","options":["Keep it","Ignore it"]},"reason":null}
 {"type":"agent_text","text":"Tests pass. I left dist/ alone and will add it to .gitignore."}
-{"type":"token_usage","input_tokens":16,"output_tokens":120,"cache_read_tokens":47200,"cost_usd":0.0211}
+{"type":"token_usage","model":"claude-opus-5-5","input_tokens":16,"output_tokens":120,"cache_read_tokens":47200,"cost_usd":0.0211}
 {"type":"turn_complete"}

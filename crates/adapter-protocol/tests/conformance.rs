@@ -152,7 +152,7 @@ fn command_scheduled_past_the_end_of_the_input_fails_instead_of_being_skipped() 
 
 #[test]
 fn adapter_declaring_a_range_that_includes_the_protocol_is_accepted() {
-    for range in ["^0.1", ">=0.1.0, <0.2.0", "=0.1.0"] {
+    for range in ["^0.2", ">=0.2.0, <0.3.0", "=0.2.0"] {
         conformance::run(&mut Claiming(range), &basic_session())
             .unwrap_or_else(|f| panic!("{range} should be accepted: {f}"));
     }
@@ -160,7 +160,7 @@ fn adapter_declaring_a_range_that_includes_the_protocol_is_accepted() {
 
 #[test]
 fn adapter_declaring_a_range_that_excludes_the_protocol_is_rejected() {
-    for range in ["^0.2", "^1", "=0.0.9"] {
+    for range in ["^0.1", "^0.3", "^1", "=0.0.9"] {
         let failure = conformance::run(&mut Claiming(range), &basic_session())
             .expect_err("mismatched range must be rejected");
         assert!(
@@ -173,21 +173,21 @@ fn adapter_declaring_a_range_that_excludes_the_protocol_is_rejected() {
             message.contains(range.trim_start_matches(['^', '='])),
             "{message}"
         );
-        assert!(message.contains("0.1.0"), "{message}");
+        assert!(message.contains("0.2.0"), "{message}");
     }
 }
 
 #[test]
 fn fixture_recorded_against_an_incompatible_protocol_is_rejected() {
     let mut fixture = basic_session();
-    fixture.meta.protocol = Version::new(0, 2, 0);
+    fixture.meta.protocol = Version::new(0, 3, 0);
     let failure = conformance::run(&mut EchoAdapter::new(), &fixture)
         .expect_err("incompatible fixture must be rejected");
     assert!(
         matches!(failure, ConformanceFailure::FixtureProtocolMismatch { .. }),
         "{failure:?}"
     );
-    assert!(failure.to_string().contains("0.2.0"), "{failure}");
+    assert!(failure.to_string().contains("0.3.0"), "{failure}");
 }
 
 /// An adapter for a JSON-RPC-like CLI: it answers each `{"ping": n}` the CLI sends with
@@ -200,7 +200,7 @@ impl Adapter for Ponging {
     fn manifest(&self) -> AdapterManifest {
         AdapterManifest {
             name: "ponging".into(),
-            implements: VersionReq::parse("^0.1").unwrap(),
+            implements: VersionReq::parse("^0.2").unwrap(),
         }
     }
     fn ingest(&mut self, raw: &str) -> Result<Vec<Event>, AdapterError> {

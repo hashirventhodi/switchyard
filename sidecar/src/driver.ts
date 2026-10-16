@@ -242,7 +242,7 @@ class Recorder {
       const meta = {
         adapter: "claude-code",
         cli: event.cli,
-        protocol: "0.1.0",
+        protocol: "0.2.0",
         description: "Recorded with SWITCHYARD_RECORD_DIR. Review expected-events.jsonl before committing.",
       };
       writeFileSync(join(this.dir, "meta.json"), JSON.stringify(meta, null, 2) + "\n");

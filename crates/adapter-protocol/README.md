@@ -1,6 +1,6 @@
 # adapter-protocol
 
-The Switchyard adapter protocol, version **0.1.0**, and its conformance runner.
+The Switchyard adapter protocol, version **0.2.0**, and its conformance runner.
 
 Switchyard drives agent CLIs (Claude Code, Codex, ...) only through their structured modes, never by scraping a terminal (ADR-0002). An **adapter** maps one CLI's structured output into this protocol's **events**, and maps this protocol's **commands** into that CLI's input. A **recorded fixture** pins that mapping for a specific CLI version, and the **conformance runner** checks an adapter against it.
 
@@ -9,8 +9,13 @@ This crate is self-contained (no dependency on the rest of Switchyard) so it can
 ## Versioning
 
 - `PROTOCOL_VERSION` is the version this crate defines. It follows semver: while it is `0.x`, a minor bump is breaking.
-- Every adapter declares the range it implements in its `AdapterManifest` (`implements`, a semver requirement such as `^0.1`). Hosts and the runner refuse an adapter whose range does not include `PROTOCOL_VERSION`.
-- Every fixture records the protocol version its expected events are written in (`meta.json` `protocol`). The runner refuses a fixture whose version is not caret-compatible with its own (for example a `0.2.0` fixture under a `0.1.0` runner).
+- Every adapter declares the range it implements in its `AdapterManifest` (`implements`, a semver requirement such as `^0.2`). Hosts and the runner refuse an adapter whose range does not include `PROTOCOL_VERSION`.
+- Every fixture records the protocol version its expected events are written in (`meta.json` `protocol`). The runner refuses a fixture whose version is not caret-compatible with its own (for example a `0.3.0` fixture under a `0.2.0` runner).
+
+## Changes
+
+- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model.
+- **0.1.0**: first version.
 
 ## Wire format
 
@@ -29,7 +34,7 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 | `turn_complete` | (none): the agent awaits the next prompt |
 | `done` | `summary`: the agent declared its work complete |
 | `error` | `message`, `fatal` |
-| `token_usage` | `input_tokens` (excluding cache reads and writes), `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (cache creation; optional, 0 when absent), `cost_usd` (only when the CLI reports one): running totals for the whole session, each report superseding the last |
+| `token_usage` | `model` (the Model these tokens were spent on; absent or `null` means the Session's Model, as in 0.1), `input_tokens` (excluding cache reads and writes), `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (cache creation; optional, 0 when absent), `cost_usd` (the CLI's cost for these tokens, only when it reports one): running totals for everything the session has spent on that Model, each report superseding the last for the same Model. A CLI that uses several Models (its own subagent or background calls, a switch) sends one per Model, never one summed total |
 | `classifier_denial` | `tool`, `detail`, `reason`: never a Permission request |
 
 A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
@@ -95,7 +100,7 @@ fixtures/
 {
   "adapter": "echo",
   "cli": { "name": "echo-cli", "version": "1.0.0" },
-  "protocol": "0.1.0",
+  "protocol": "0.2.0",
   "description": "What this recording covers."
 }
 ```

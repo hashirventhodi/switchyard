@@ -4,6 +4,6 @@
     "name": "claude-code",
     "version": "2.1.300"
   },
-  "protocol": "0.1.0",
+  "protocol": "0.2.0",
   "description": "Ask first: a shell command approved (Run once), a second one skipped (deny), and an AskUserQuestion answered with one of its options. Permission prompts reach the sidecar through canUseTool, which writes them as switchyard/can_use_tool lines. AskUserQuestion is a question request, never a tool call. Synthesised from the Agent SDK 0.3.300 types, not captured from a live run."
 }

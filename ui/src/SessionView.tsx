@@ -11,7 +11,7 @@ import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
 import type { Verdict } from "./schema/Verdict";
 import type { PendingRequest, SessionView as Session } from "./state";
-import { sessionCost } from "./spend";
+import { SpendByModel, sessionCost } from "./spend";
 import { AGENT_COLOR, AGENT_LABEL, AGENT_SHORT, MODE_LABEL, ModeWarning, Status, withinCeiling } from "./status";
 import { VirtualList } from "./VirtualList";
 
@@ -248,6 +248,7 @@ function SummaryStrip({ session }: { session: Session }) {
           <Elapsed since={session.startedAtMs} />
         </div>
       </div>
+      <SpendByModel session={session} />
     </div>
   );
 }

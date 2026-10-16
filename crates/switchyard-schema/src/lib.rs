@@ -1662,9 +1662,11 @@ pub enum McpState {
     Disabled,
 }
 
-/// A Session's running spend. Cost is either reported by the CLI or, for a CLI that
-/// reports tokens only, estimated from the price table when read (shown with a tilde);
-/// the two are never mixed into one figure.
+/// A Session's running spend, totalled over every Model it used and broken down by Model
+/// in `byModel`. Each Model's cost is either reported by the CLI or, for a CLI that reports
+/// tokens only, estimated from the price table when read (shown with a tilde); the two are
+/// never mixed into one figure. A Model with neither is unpriced: its tokens count, its
+/// cost is unknown (never $0) and adds nothing to either total.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -1680,10 +1682,38 @@ pub struct Spend {
     #[serde(default)]
     #[ts(type = "number")]
     pub cache_write_tokens: u64,
-    /// Cost the CLI reported, in USD.
+    /// Cost the CLI reported, in USD, summed over the Models it reported one for.
+    pub reported_usd: Option<f64>,
+    /// Cost estimated from the price table, in USD, summed over the Models the CLI reported
+    /// no cost for and the table prices.
+    pub estimated_usd: Option<f64>,
+    /// The price table version `estimatedUsd` was computed with.
+    pub price_table_version: Option<String>,
+    /// The same, per Model, in the order each Model was first used.
+    #[serde(default)]
+    pub by_model: Vec<ModelSpend>,
+}
+
+/// What a Session has spent on one Model so far. Neither cost set: the Model is unpriced.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ModelSpend {
+    /// The Model; none when the agent named none and the Session's Model is not known.
+    pub model: Option<String>,
+    /// Input tokens, not counting cache reads or writes.
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    #[ts(type = "number")]
+    pub cache_read_tokens: u64,
+    #[ts(type = "number")]
+    pub cache_write_tokens: u64,
+    /// Cost the CLI reported for this Model, in USD.
     pub reported_usd: Option<f64>,
     /// Cost estimated from the price table, in USD: only when the CLI reported none and the
-    /// table prices the Session's model.
+    /// table prices this Model.
     pub estimated_usd: Option<f64>,
     /// The price table version `estimatedUsd` was computed with.
     pub price_table_version: Option<String>,

@@ -204,25 +204,23 @@ export class ClaudeTranslator {
   }
 
   private result(msg: Json): ProtocolEvent[] {
-    const usage = Object.values((msg.modelUsage ?? {}) as Record<string, Json>).reduce(
-      (sum, m) => ({
-        input: sum.input + (m.inputTokens ?? 0),
-        output: sum.output + (m.outputTokens ?? 0),
-        cacheRead: sum.cacheRead + (m.cacheReadInputTokens ?? 0),
-        cacheWrite: sum.cacheWrite + (m.cacheCreationInputTokens ?? 0),
-      }),
-      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    );
-    const events: ProtocolEvent[] = [
-      {
+    // One report per Model (the main agent's, and any the CLI used for subagents or in the
+    // background), each priced on its own; never one summed total.
+    const models = Object.entries((msg.modelUsage ?? {}) as Record<string, Json>);
+    const total = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null;
+    const events: ProtocolEvent[] = models.map(([model, m]) => {
+      const cacheWrite = m.cacheCreationInputTokens ?? 0;
+      return {
         type: "token_usage",
-        input_tokens: usage.input,
-        output_tokens: usage.output,
-        cache_read_tokens: usage.cacheRead,
-        ...(usage.cacheWrite > 0 ? { cache_write_tokens: usage.cacheWrite } : {}),
-        cost_usd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
-      },
-    ];
+        model,
+        input_tokens: m.inputTokens ?? 0,
+        output_tokens: m.outputTokens ?? 0,
+        cache_read_tokens: m.cacheReadInputTokens ?? 0,
+        ...(cacheWrite > 0 ? { cache_write_tokens: cacheWrite } : {}),
+        // A lone Model's cost is the whole result's when the CLI gives no per-Model one.
+        cost_usd: typeof m.costUSD === "number" ? m.costUSD : models.length === 1 ? total : null,
+      };
+    });
     const interrupted = typeof msg.terminal_reason === "string" && msg.terminal_reason.startsWith("aborted");
     if (msg.subtype === "success" && !msg.is_error) {
       this.lastResultText = msg.result ?? null;

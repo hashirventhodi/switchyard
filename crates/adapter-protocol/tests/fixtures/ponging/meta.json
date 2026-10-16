@@ -1,1 +1,1 @@
-{"adapter": "ponging", "cli": {"name": "ponging-cli", "version": "1.0.0"}, "protocol": "0.1.0", "description": "A CLI that pings; the adapter answers each ping by itself, with no host command."}
+{"adapter": "ponging", "cli": {"name": "ponging-cli", "version": "1.0.0"}, "protocol": "0.2.0", "description": "A CLI that pings; the adapter answers each ping by itself, with no host command."}

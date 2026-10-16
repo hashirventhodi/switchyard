@@ -6,7 +6,7 @@ mod harness;
 use std::path::PathBuf;
 
 use harness::{added_repository, recorded_events, started_session, Harness, TempRepo, NOW_MS};
-use switchyard_schema::{Command, Event, Spend};
+use switchyard_schema::{Command, Event, ModelSpend, Spend};
 
 fn setup() -> (Harness, TempRepo, PathBuf) {
     let repo = TempRepo::new("acme");
@@ -49,6 +49,16 @@ fn claude_code_reported_cost_is_recorded_as_reported_with_its_running_token_tota
                     reported_usd: Some(0.0412),
                     estimated_usd: None,
                     price_table_version: None,
+                    by_model: vec![ModelSpend {
+                        model: Some("claude-opus-5-5".into()),
+                        input_tokens: 16,
+                        output_tokens: 220,
+                        cache_read_tokens: 11800,
+                        cache_write_tokens: 2100,
+                        reported_usd: Some(0.0412),
+                        estimated_usd: None,
+                        price_table_version: None,
+                    }],
                 }
             ),
             (
@@ -62,6 +72,16 @@ fn claude_code_reported_cost_is_recorded_as_reported_with_its_running_token_tota
                     reported_usd: Some(0.0587),
                     estimated_usd: None,
                     price_table_version: None,
+                    by_model: vec![ModelSpend {
+                        model: Some("claude-opus-5-5".into()),
+                        input_tokens: 40,
+                        output_tokens: 310,
+                        cache_read_tokens: 24100,
+                        cache_write_tokens: 2100,
+                        reported_usd: Some(0.0587),
+                        estimated_usd: None,
+                        price_table_version: None,
+                    }],
                 }
             ),
         ]
@@ -149,6 +169,7 @@ fn cache_writes_are_recorded_priced_and_kept_across_a_relaunch() {
     core.agent_replays(0, &recorded_events("echo/token-only-session"));
 
     let usage = |cache_write_tokens| adapter_protocol::Event::TokenUsage {
+        model: None,
         input_tokens: 300_000,
         output_tokens: 50_000,
         cache_read_tokens: 1_000_000,
@@ -171,4 +192,124 @@ fn cache_writes_are_recorded_priced_and_kept_across_a_relaunch() {
     assert_eq!(last.cache_write_tokens, 400_000, "stored raw and replayed");
     //   160 + 400k * 2.5 = 260 cents
     assert_eq!(last.estimated_usd.map(cents), Some(260.0));
+}
+
+const TWO_MODELS: &str = r#"{
+  "version": "test-4",
+  "models": {
+    "echo-model-1": { "input": 2.0, "output": 10.0, "cacheRead": 0.5 },
+    "big-model": { "input": 10.0, "output": 40.0, "cacheRead": 1.0 }
+  }
+}"#;
+
+fn on(model: &str, input_tokens: u64, output_tokens: u64, cache_read_tokens: u64) -> adapter_protocol::Event {
+    adapter_protocol::Event::TokenUsage {
+        model: Some(model.into()),
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens: 0,
+        cost_usd: None,
+    }
+}
+
+/// (Model, reported, estimated in cents, input tokens) of each Model in `spend`, in order.
+fn by_model(spend: &Spend) -> Vec<(Option<String>, Option<f64>, Option<f64>, u64)> {
+    spend.by_model.iter().map(|m| (m.model.clone(), m.reported_usd, m.estimated_usd.map(cents), m.input_tokens)).collect()
+}
+
+#[test]
+fn a_session_on_two_priced_models_is_priced_per_model_with_a_breakdown() {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, TWO_MODELS);
+    let id = started_session(&core.start_session(&worktree, "Rename the helper."));
+
+    // A dated release priced by its family, then a second Model: 100k*2 + 20k*10 + 400k*0.5
+    // = 60 cents; 10k*10 + 5k*40 = 30 cents.
+    core.agent_says(0, on("echo-model-1-20261001", 100_000, 20_000, 400_000));
+    let events = core.agent_says(0, on("big-model", 10_000, 5_000, 0));
+    let spend = spends(&events).pop().unwrap().2;
+    assert_eq!(spend.estimated_usd.map(cents), Some(90.0));
+    assert_eq!((spend.input_tokens, spend.output_tokens, spend.cache_read_tokens), (110_000, 25_000, 400_000));
+    assert_eq!(spend.price_table_version.as_deref(), Some("test-4"));
+    assert_eq!(
+        by_model(&spend),
+        vec![
+            (Some("echo-model-1-20261001".into()), None, Some(60.0), 100_000),
+            (Some("big-model".into()), None, Some(30.0), 10_000),
+        ]
+    );
+
+    // Each report is a running total for its own Model: 300k*2 + 50k*10 + 1M*0.5 = 160 cents.
+    let events = core.agent_says(0, on("echo-model-1-20261001", 300_000, 50_000, 1_000_000));
+    let spend = spends(&events).pop().unwrap().2;
+    assert_eq!(spend.estimated_usd.map(cents), Some(190.0));
+    assert_eq!(
+        by_model(&spend),
+        vec![
+            (Some("echo-model-1-20261001".into()), None, Some(160.0), 300_000),
+            (Some("big-model".into()), None, Some(30.0), 10_000),
+        ]
+    );
+
+    // Kept per Model across a relaunch.
+    let mut core = core.relaunch();
+    let replay = spends(&core.send(Command::Attach));
+    let (session, _, last) = replay.last().unwrap();
+    assert_eq!(session, &id);
+    assert_eq!(by_model(last), by_model(&spend));
+    assert_eq!(last.estimated_usd.map(cents), Some(190.0));
+}
+
+#[test]
+fn tokens_on_a_model_with_no_price_are_unpriced_and_add_nothing_to_the_priced_total() {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, TWO_MODELS);
+    started_session(&core.start_session(&worktree, "Rename the helper."));
+
+    core.agent_says(0, on("big-model", 10_000, 5_000, 0));
+    let events = core.agent_says(0, on("mystery-model", 7_000, 300, 0));
+
+    let spend = spends(&events).pop().unwrap().2;
+    assert_eq!(spend.estimated_usd.map(cents), Some(30.0));
+    assert_eq!(spend.reported_usd, None);
+    assert_eq!(
+        by_model(&spend),
+        vec![(Some("big-model".into()), None, Some(30.0), 10_000), (Some("mystery-model".into()), None, None, 7_000)]
+    );
+    let mystery = &spend.by_model[1];
+    assert_eq!((mystery.output_tokens, mystery.price_table_version.clone()), (300, None));
+}
+
+#[test]
+fn claude_codes_subagent_model_is_reported_under_its_own_model_with_its_own_cost() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix the broken links in docs."));
+
+    let events = core.agent_replays(0, &recorded_events("claude-code/subagent-model"));
+
+    let spend = spends(&events).pop().unwrap().2;
+    assert_eq!(spend.reported_usd.map(cents), Some(5.18));
+    assert_eq!(spend.estimated_usd, None);
+    assert_eq!(
+        by_model(&spend),
+        vec![
+            (Some("claude-opus-5-5".into()), Some(0.0431), None, 12),
+            (Some("claude-haiku-4-5-20251001".into()), Some(0.0087), None, 2_400),
+        ]
+    );
+}
+
+#[test]
+fn usage_reported_without_a_model_is_the_sessions_model() {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, TABLE_V1);
+    started_session(&core.start_session(&worktree, "Rename the helper."));
+
+    // echo's token-only CLI reports usage as 0.1 did, with no Model: priced at the
+    // Session's `echo-model-1-20261001`, and named after it in the breakdown.
+    let events = core.agent_replays(0, &recorded_events("echo/token-only-session"));
+
+    let spend = spends(&events).pop().unwrap().2;
+    assert_eq!(by_model(&spend), vec![(Some("echo-model-1-20261001".into()), None, Some(160.0), 300_000)]);
 }

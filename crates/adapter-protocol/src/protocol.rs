@@ -9,7 +9,7 @@ use serde_json::Value;
 
 /// The protocol version this crate defines. Adapters declare a semver range
 /// they implement; the conformance runner rejects ranges this does not match.
-pub const PROTOCOL_VERSION: Version = Version::new(0, 1, 0);
+pub const PROTOCOL_VERSION: Version = Version::new(0, 2, 0);
 
 /// Something an adapter reports about the CLI it drives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,7 +67,15 @@ pub enum Event {
         /// True when the CLI process can no longer continue.
         fatal: bool,
     },
+    /// Usage on one Model: running totals for everything the Session has spent on
+    /// `model`, superseding the previous report for the same Model. A CLI that uses
+    /// several Models (its own subagent and background calls, a switch) sends one per
+    /// Model, so each is priced on its own.
     TokenUsage {
+        /// The Model these tokens were spent on. Absent (as in 0.1) means the Session's
+        /// Model, whatever that is.
+        #[serde(default)]
+        model: Option<String>,
         /// Excluding cache reads and cache writes.
         input_tokens: u64,
         output_tokens: u64,
@@ -76,7 +84,7 @@ pub enum Event {
         /// CLI reports none.
         #[serde(default, skip_serializing_if = "is_zero")]
         cache_write_tokens: u64,
-        /// Cost as reported by the CLI, when it reports one.
+        /// Cost of these tokens as reported by the CLI, when it reports one.
         cost_usd: Option<f64>,
     },
     /// In Full auto, an action the CLI's own safety classifier refused.

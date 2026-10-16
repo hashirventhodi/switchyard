@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.2.0",
+  "description": "A turn that delegates to a subagent on another Model (Task with subagent_type Explore, run on claude-haiku-4-5-20251001): the subagent's own messages (parent_tool_use_id set) are not the main agent's, and the result's modelUsage reports each Model separately, so the adapter sends one token_usage per Model with that Model's own cost, never one summed total. Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
+}

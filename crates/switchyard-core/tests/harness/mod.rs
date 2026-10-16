@@ -12,7 +12,7 @@
 //!
 //! Agent detection is fake too: `harness.probe` answers for the installed CLI's
 //! `--version` and the adapter's manifest (Claude Code 2.1.300 and Codex 0.144.1, protocol
-//! `^0.1` unless a test changes them). `compat_log()` reads the compat log the core wrote on disk.
+//! `^0.2` unless a test changes them). `compat_log()` reads the compat log the core wrote on disk.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -548,7 +548,7 @@ struct FakeProbeInner {
 
 impl Default for FakeProbe {
     fn default() -> Self {
-        let manifest = AdapterManifest { name: "claude-code".into(), implements: "^0.1".parse().unwrap() };
+        let manifest = AdapterManifest { name: "claude-code".into(), implements: "^0.2".parse().unwrap() };
         FakeProbe {
             inner: Arc::new(Mutex::new(FakeProbeInner {
                 cli: Ok(Some("2.1.300 (Claude Code)".into())),

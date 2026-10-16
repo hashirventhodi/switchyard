@@ -73,8 +73,18 @@ fn session_commands_and_transcript_entries_use_camel_case() {
 }
 
 #[test]
-fn spend_records_keep_reported_and_estimated_cost_apart() {
-    use switchyard_schema::Spend;
+fn spend_records_keep_reported_and_estimated_cost_apart_per_model() {
+    use switchyard_schema::{ModelSpend, Spend};
+    let model = |name: &str, input_tokens, reported_usd, estimated_usd: Option<f64>| ModelSpend {
+        model: Some(name.into()),
+        input_tokens,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reported_usd,
+        estimated_usd,
+        price_table_version: estimated_usd.map(|_| "2026-10-15".into()),
+    };
     let event = Event::SpendRecorded {
         session_id: "session-1".into(),
         at_ms: 1_760_000_000_000,
@@ -83,10 +93,27 @@ fn spend_records_keep_reported_and_estimated_cost_apart() {
             output_tokens: 50_000,
             cache_read_tokens: 1_000_000,
             cache_write_tokens: 200_000,
-            reported_usd: None,
+            reported_usd: Some(0.25),
             estimated_usd: Some(1.6),
             price_table_version: Some("2026-10-15".into()),
+            by_model: vec![
+                model("gpt-5.6-terra", 100_000, None, Some(1.6)),
+                model("claude-haiku-4-5", 150_000, Some(0.25), None),
+                model("mystery", 50_000, None, None),
+            ],
         },
+    };
+    let row = |name: &str, input: u64, reported: Option<f64>, estimated: Option<f64>| {
+        json!({
+            "model": name,
+            "inputTokens": input,
+            "outputTokens": 0,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "reportedUsd": reported,
+            "estimatedUsd": estimated,
+            "priceTableVersion": estimated.map(|_| "2026-10-15")
+        })
     };
     assert_eq!(
         serde_json::to_value(event).unwrap(),
@@ -99,9 +126,14 @@ fn spend_records_keep_reported_and_estimated_cost_apart() {
                 "outputTokens": 50_000,
                 "cacheReadTokens": 1_000_000,
                 "cacheWriteTokens": 200_000,
-                "reportedUsd": null,
+                "reportedUsd": 0.25,
                 "estimatedUsd": 1.6,
-                "priceTableVersion": "2026-10-15"
+                "priceTableVersion": "2026-10-15",
+                "byModel": [
+                    row("gpt-5.6-terra", 100_000, None, Some(1.6)),
+                    row("claude-haiku-4-5", 150_000, Some(0.25), None),
+                    row("mystery", 50_000, None, None)
+                ]
             }
         })
     );
