@@ -85,6 +85,16 @@ test("an instruction file edited on disk shows its new content in the open Conte
   expect(sent).toEqual([]);
 });
 
+test("the open Context tab re-reads on a config change signal, and only on that kind", () => {
+  const { sent, emit } = openContext();
+
+  act(() => emit({ type: "worktreeChanged", worktreePath: "/wt/fix", kinds: ["files", "git"] }));
+  expect(sent).toEqual([]);
+  act(() => emit({ type: "worktreeChanged", worktreePath: "/wt/fix", kinds: ["config"] }));
+
+  expect(sent).toEqual([{ type: "readContext", worktreePath: "/wt/fix" }]);
+});
+
 test("an allow added to the policy on disk shows as a Policy request in the open Context tab", () => {
   const { sent, emit } = openContext();
   expect(screen.queryByRole("region", { name: "Policy request" })).toBeNull();
