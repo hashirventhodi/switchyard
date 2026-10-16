@@ -29,8 +29,9 @@ pub(crate) fn output_within(cmd: &mut Command, limit: Duration) -> std::io::Resu
             break status;
         }
         if Instant::now() >= deadline {
-            // The whole group: `git push` runs `ssh`, which would keep the pipes open.
-            let _ = Command::new("kill").args(["-KILL", &format!("-{}", child.id())]).status();
+            // The whole group: `git push` runs `ssh`, which would keep the pipes open. The `--`
+            // matters: procps reads a bare `-<pid>` as "every process", not as a group.
+            let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).status();
             let _ = child.kill();
             let _ = child.wait();
             return Ok(None);
@@ -75,6 +76,21 @@ mod tests {
         let out = output_within(Command::new("sh").args(["-c", "sleep 30 & sleep 30"]), Duration::from_millis(200)).unwrap();
         assert!(out.is_none());
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn killing_a_hung_command_leaves_every_other_process_alone() {
+        // procps `kill -KILL -<pid>` without `--` signals every process the user may signal
+        // (on a CI runner, the runner itself), not the group.
+        let mut bystander = Command::new("sleep").arg("30").spawn().unwrap();
+
+        let out = output_within(Command::new("sh").args(["-c", "sleep 30"]), Duration::from_millis(200)).unwrap();
+
+        assert!(out.is_none());
+        let alive = bystander.try_wait().unwrap().is_none();
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+        assert!(alive, "an unrelated process was killed with the hung command's group");
     }
 
     #[test]
