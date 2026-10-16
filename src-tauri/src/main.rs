@@ -139,7 +139,7 @@ fn main() {
                 claude_home: switchyard_core::context::default_claude_home(),
                 sandbox_evidence: switchyard_core::detect_sandbox,
                 watcher: Arc::new(FsWatcher::new()),
-                unwatched_every: Some(FALLBACK_EVERY),
+                fallback_every: Some(FALLBACK_EVERY),
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Dispatcher::new(core));

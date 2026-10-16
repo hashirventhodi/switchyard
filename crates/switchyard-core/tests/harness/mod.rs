@@ -83,7 +83,7 @@ impl Harness {
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
             watcher: Arc::new(FakeWatcher::default()),
-            unwatched_every: None,
+            fallback_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -149,7 +149,7 @@ impl Harness {
             claude_home: data_dir.path().join("claude-home"),
             sandbox_evidence: || None,
             watcher: real_watcher.unwrap_or_else(|| Arc::new(watcher.clone())),
-            unwatched_every: None,
+            fallback_every: None,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);

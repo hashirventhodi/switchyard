@@ -27,8 +27,19 @@ pub(crate) struct Kinds {
 }
 
 impl Kinds {
+    /// Each kind as the schema names it, with whether it changed: the one mapping between
+    /// the two.
+    fn each(self) -> [(ChangeKind, bool); 3] {
+        [(ChangeKind::Files, self.files), (ChangeKind::Git, self.git), (ChangeKind::Config, self.config)]
+    }
+
     pub(crate) fn any(self) -> bool {
-        self.files || self.git || self.config
+        self.each().iter().any(|(_, on)| *on)
+    }
+
+    /// The kinds that changed, in the order they are signalled.
+    fn changed(self) -> Vec<ChangeKind> {
+        self.each().into_iter().filter(|(_, on)| *on).map(|(kind, _)| kind).collect()
     }
 }
 
@@ -64,7 +75,7 @@ fn fall_back(inner: &mut Inner, worktree_path: &str) {
 
 /// Whether the Worktree at `worktree_path` is one the core announced (and so watches).
 fn announced(inner: &Inner, worktree_path: &str) -> bool {
-    inner.listed.values().any(|list| list.iter().any(|w| w.path == worktree_path))
+    inner.announced_worktrees.values().any(|list| list.iter().any(|w| w.path == worktree_path))
 }
 
 fn start(inner: &mut Inner, worktree: &Path) -> Result<(), String> {
@@ -122,7 +133,7 @@ pub(crate) fn unwatch(inner: &mut Inner, worktree: &Path) {
     inner.unwatched.remove(&*worktree.to_string_lossy());
     inner.watched_memory.remove(&*worktree.to_string_lossy());
     inner.config_stamps.remove(&*worktree.to_string_lossy());
-    for list in inner.listed.values_mut() {
+    for list in inner.announced_worktrees.values_mut() {
         list.retain(|w| Path::new(&w.path) != worktree);
     }
 }
@@ -180,7 +191,7 @@ fn config_stamp(inner: &Inner, worktree_path: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let worktree = Path::new(worktree_path);
     let mut files: Vec<PathBuf> = context::INSTRUCTIONS.iter().map(|name| worktree.join(name)).collect();
-    let memory = context::memory_dir(&inner.runtime.claude_home, worktree_path);
+    let memory = memory_dir(inner, worktree);
     files.extend(std::fs::read_dir(&memory).into_iter().flatten().flatten().map(|entry| entry.path()));
     if let Some((repo, _)) = inner.find_worktree(worktree_path) {
         let primary = Path::new(&repo.path);
@@ -215,8 +226,9 @@ fn sink(inner: &Inner, worktree: &Path) -> ChangeSink {
 /// The watcher reports `paths` changed under the Worktree at `worktree` (coalesced). Paths
 /// may be absolute or relative to the Worktree.
 pub(crate) fn disk_changed(inner: &mut Inner, worktree: &Path, paths: &[PathBuf]) {
-    let mut kinds = classify(worktree, paths);
-    kinds.config |= touches_config(inner, worktree, paths);
+    let paths: Vec<PathBuf> = paths.iter().map(|path| worktree.join(path)).collect();
+    let mut kinds = classify(worktree, &paths);
+    kinds.config |= touches_config(inner, worktree, &paths);
     worktree_changed(inner, &worktree.to_string_lossy(), kinds);
 }
 
@@ -245,15 +257,13 @@ pub(crate) fn worktree_changed(inner: &mut Inner, worktree_path: &str, kinds: Ki
 /// Tell whichever view shows heavy data for the Worktree (Changes, History, Context) to
 /// re-read it. Diffs are computed only when a view asks.
 fn signal(inner: &Inner, worktree_path: &str, kinds: Kinds) {
-    let list = [(kinds.files, ChangeKind::Files), (kinds.git, ChangeKind::Git), (kinds.config, ChangeKind::Config)];
-    let kinds = list.into_iter().filter(|(on, _)| *on).map(|(_, kind)| kind).collect();
-    inner.emit(Event::WorktreeChanged { worktree_path: worktree_path.into(), kinds });
+    inner.emit(Event::WorktreeChanged { worktree_path: worktree_path.into(), kinds: kinds.changed() });
 }
 
 /// Git's records changed (a commit, a fetch, a branch switch, a worktree added, removed or
 /// renamed in a shell): re-list the Repository's worktrees from git.
 fn git_changed(inner: &mut Inner, worktree_path: &str) {
-    let owner = inner.listed.iter().find(|(_, list)| list.iter().any(|w| w.path == worktree_path));
+    let owner = inner.announced_worktrees.iter().find(|(_, list)| list.iter().any(|w| w.path == worktree_path));
     let Some(repository_id) = owner.map(|(id, _)| id.clone()) else { return };
     let Some(repo) = worktrees::repository(inner, &repository_id) else { return };
     relist(inner, &repo);
@@ -261,14 +271,14 @@ fn git_changed(inner: &mut Inner, worktree_path: &str) {
 
 /// Remember an announced Repository's worktrees as git lists them now.
 pub(crate) fn remember_repository(inner: &mut Inner, repo: &StoredRepository) {
-    if let Some(list) = listed(repo) {
-        inner.listed.insert(repo.id.clone(), list);
+    if let Some(list) = git_worktrees(repo) {
+        inner.announced_worktrees.insert(repo.id.clone(), list);
     }
 }
 
 /// Remember one worktree Switchyard added, so a re-list does not announce it again.
 pub(crate) fn remember_added(inner: &mut Inner, repository_id: &str, worktree: &Worktree) {
-    let list = inner.listed.entry(repository_id.to_string()).or_default();
+    let list = inner.announced_worktrees.entry(repository_id.to_string()).or_default();
     list.retain(|w| w.path != worktree.path);
     list.push(worktree.clone());
 }
@@ -278,8 +288,8 @@ pub(crate) fn remember_added(inner: &mut Inner, repository_id: &str, worktree: &
 /// stopped and archived.
 fn relist(inner: &mut Inner, repo: &StoredRepository) {
     // A Repository git cannot read is left as it was.
-    let Some(now) = listed(repo) else { return };
-    let before = inner.listed.insert(repo.id.clone(), now.clone()).unwrap_or_default();
+    let Some(now) = git_worktrees(repo) else { return };
+    let before = inner.announced_worktrees.insert(repo.id.clone(), now.clone()).unwrap_or_default();
     for gone in before.iter().filter(|w| !now.iter().any(|n| n.path == w.path)) {
         sessions::archive_gone(inner, &gone.path);
         worktrees::forget(inner, &repo.id, &gone.path);
@@ -298,7 +308,7 @@ fn relist(inner: &mut Inner, repo: &StoredRepository) {
 }
 
 /// The Repository's worktrees as git lists them, primary first; `None` when git cannot.
-fn listed(repo: &StoredRepository) -> Option<Vec<Worktree>> {
+fn git_worktrees(repo: &StoredRepository) -> Option<Vec<Worktree>> {
     let list = git::worktrees(Path::new(&repo.path)).ok().filter(|l| !l.is_empty())?;
     Some(
         list.into_iter()
@@ -317,18 +327,17 @@ fn config_changed(inner: &mut Inner, worktree_path: &str) {
     context::read_context(inner, worktree_path);
 }
 
-/// Whether any of `paths` is configuration the Worktree at `worktree` is watched for: its
+/// Whether any of `paths` (absolute) is configuration the Worktree at `worktree` is watched for: its
 /// instruction files, Claude's memory for it, and the Repository's policy, MCP servers and
 /// local tasks.
 fn touches_config(inner: &Inner, worktree: &Path, paths: &[PathBuf]) -> bool {
-    let memory = context::memory_dir(&inner.runtime.claude_home, &worktree.to_string_lossy());
+    let memory = memory_dir(inner, worktree);
     let tasks = inner.find_worktree(&worktree.to_string_lossy()).map(|(repo, _)| tasks::local_file(inner, &repo));
     paths.iter().any(|path| {
-        let path = if path.is_relative() { worktree.join(path) } else { path.clone() };
-        let in_worktree = relative_to(&path, worktree);
+        let in_worktree = relative_to(path, worktree);
         in_worktree.is_some_and(|rel| context::is_instructions(rel) || is_repository_config(rel))
-            || relative_to(&path, &memory).is_some()
-            || tasks.as_deref().is_some_and(|file| relative_to(&path, file).is_some())
+            || relative_to(path, &memory).is_some()
+            || tasks.as_deref().is_some_and(|file| relative_to(path, file).is_some())
     })
 }
 
@@ -351,9 +360,14 @@ fn is_repository_config(rel: &Path) -> bool {
 /// directory, or the project directory it will appear in, whichever exists (Claude makes
 /// them; Switchyard only reads them).
 fn memory_root(inner: &Inner, worktree: &Path) -> Option<PathBuf> {
-    let memory = context::memory_dir(&inner.runtime.claude_home, &worktree.to_string_lossy());
+    let memory = memory_dir(inner, worktree);
     let project = memory.parent().map(Path::to_path_buf);
     std::iter::once(memory).chain(project).find(|dir| dir.is_dir())
+}
+
+/// Claude's memory directory for the Worktree at `worktree`.
+fn memory_dir(inner: &Inner, worktree: &Path) -> PathBuf {
+    context::memory_dir(&inner.runtime.claude_home, &worktree.to_string_lossy())
 }
 
 /// `path` relative to `base`, taking `base` as given or with its links resolved (the OS
@@ -362,7 +376,7 @@ fn relative_to<'a>(path: &'a Path, base: &Path) -> Option<&'a Path> {
     path.strip_prefix(base).ok().or_else(|| base.canonicalize().ok().and_then(|b| path.strip_prefix(b).ok()))
 }
 
-/// Sort reported paths into kinds of change. Under the Repository's `.git` only HEAD, the
+/// Sort reported paths (absolute) into kinds of change. Under the Repository's `.git` only HEAD, the
 /// index, refs, packed refs, the HEAD log and `worktrees/` count; in the working tree only
 /// paths git does not ignore count.
 fn classify(worktree: &Path, paths: &[PathBuf]) -> Kinds {
@@ -376,15 +390,13 @@ fn classify(worktree: &Path, paths: &[PathBuf]) -> Kinds {
     // Where this Worktree's own HEAD and index live in `common`: at its root for the
     // primary, under `worktrees/<name>` for a linked one.
     let own = git::git_dir(worktree).zip(common.as_deref()).and_then(|(g, c)| g.strip_prefix(c).ok().map(Path::to_path_buf));
-    let canonical = worktree.canonicalize().ok();
     let mut files = Vec::new();
     for path in paths {
-        let path = if path.is_relative() { worktree.join(path) } else { path.clone() };
         if let Some(rel) = common.as_deref().and_then(|c| path.strip_prefix(c).ok()) {
             kinds.git |= own.as_deref().is_some_and(|own| is_git_record(rel, own));
             continue;
         }
-        let rel = path.strip_prefix(worktree).ok().or_else(|| canonical.as_deref().and_then(|c| path.strip_prefix(c).ok()));
+        let rel = relative_to(path, worktree);
         // The Worktree's own folder, and a linked worktree's `.git` file, are not its files.
         match rel {
             Some(rel) if !rel.as_os_str().is_empty() && !rel.starts_with(".git") => files.push(rel.to_path_buf()),

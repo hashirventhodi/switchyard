@@ -80,7 +80,7 @@ pub struct Runtime {
     /// How often the core re-derives Worktrees whose watcher cannot run, and tries to watch
     /// them again (about [`watcher::FALLBACK_EVERY`]); `None`: only when
     /// [`Core::fallback_tick`] is called (tests tick it by hand).
-    pub unwatched_every: Option<std::time::Duration>,
+    pub fallback_every: Option<std::time::Duration>,
 }
 
 impl Default for Runtime {
@@ -98,7 +98,7 @@ impl Default for Runtime {
             claude_home: context::default_claude_home(),
             sandbox_evidence: policy::detect_sandbox,
             watcher: Arc::new(watcher::NoWatcher),
-            unwatched_every: None,
+            fallback_every: None,
         }
     }
 }
@@ -142,7 +142,7 @@ pub(crate) struct Inner {
     me: Weak<Mutex<Inner>>,
     /// Each Repository's worktrees as last announced, by repository id: what a re-list
     /// from git is compared with.
-    listed: std::collections::HashMap<String, Vec<Worktree>>,
+    announced_worktrees: std::collections::HashMap<String, Vec<Worktree>>,
     /// Worktrees whose watcher cannot run, by path, with why: re-derived on a slow cadence.
     unwatched: std::collections::BTreeMap<String, String>,
     /// The directory each watched Worktree's Claude memory is watched through, by path
@@ -180,7 +180,7 @@ impl Core {
             review: Default::default(),
             forge: Default::default(),
             me: Weak::new(),
-            listed: Default::default(),
+            announced_worktrees: Default::default(),
             unwatched: Default::default(),
             watched_memory: Default::default(),
             config_stamps: Default::default(),
@@ -190,7 +190,7 @@ impl Core {
         shells::kill_orphans(&inner);
         review::load(&mut inner);
         let every = inner.runtime.forge_poll_every;
-        let unwatched_every = inner.runtime.unwatched_every;
+        let fallback_every = inner.runtime.fallback_every;
         let inner = Arc::new(Mutex::new(inner));
         inner.lock().expect("core lock").me = Arc::downgrade(&inner);
         if let Some(every) = every {
@@ -201,7 +201,7 @@ impl Core {
                 forge::poll(&core);
             });
         }
-        if let Some(every) = unwatched_every {
+        if let Some(every) = fallback_every {
             let weak = Arc::downgrade(&inner);
             std::thread::spawn(move || loop {
                 std::thread::sleep(every);
@@ -213,7 +213,7 @@ impl Core {
     }
 
     /// One beat of the slow cadence for Worktrees whose watcher cannot run: re-derive each
-    /// and try its watcher again. The core ticks itself every [`Runtime::unwatched_every`]
+    /// and try its watcher again. The core ticks itself every [`Runtime::fallback_every`]
     /// when that is set.
     pub fn fallback_tick(&self) {
         disk::fallback_tick_locking(&self.inner);
