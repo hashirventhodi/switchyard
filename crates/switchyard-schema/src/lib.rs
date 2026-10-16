@@ -32,6 +32,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// Stop (interrupt) a Session: it becomes Idle ("Paused"); the worktree is untouched.
@@ -111,6 +114,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// Remove a clean, unoccupied, non-primary worktree (`git worktree remove`). The
@@ -289,6 +295,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// Read an archived Session's transcript. Answered with [`Event::ArchivedTranscript`].
@@ -417,6 +426,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// List a Repository's secrets by name, with grant flags and where each value would
@@ -1580,6 +1592,28 @@ pub enum PermissionMode {
     FullAuto,
 }
 
+/// The Model chosen for a Session: a named Model id, or Default, which passes nothing to the
+/// CLI so that the CLI (or the user's own CLI settings) decides. What Default resolved to is
+/// a fact of the running Session ([`SessionFacts::model`]), never stored as the choice.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModelChoice {
+    #[default]
+    Default,
+    Model { id: String },
+}
+
+impl ModelChoice {
+    /// The Model id to pass to the CLI; none for Default.
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            ModelChoice::Default => None,
+            ModelChoice::Model { id } => Some(id),
+        }
+    }
+}
+
 /// Exactly five statuses, shown everywhere with the same colour and label:
 /// Running, Waiting ("Needs you"), Idle ("Paused"), Done ("Finished"), Failed ("Error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1604,6 +1638,9 @@ pub struct Session {
     pub agent: AgentKind,
     /// The mode the user asked for (the CLI's actual mode is in [`SessionFacts`]).
     pub permission_mode: PermissionMode,
+    /// The Model chosen at start (a Model id, or Default).
+    #[serde(default)]
+    pub model: ModelChoice,
     pub status: SessionStatus,
     /// Milliseconds since the Unix epoch.
     #[ts(type = "number")]
@@ -1614,6 +1651,8 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SessionFacts {
+    /// The Model the CLI runs on: as it reported, else the chosen one it was started on.
+    /// None while a Default the CLI did not report is unresolved ("Default (not reported)").
     pub model: Option<String>,
     pub cli_version: Option<String>,
     /// The CLI's own name for the mode it actually started in.

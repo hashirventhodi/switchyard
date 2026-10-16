@@ -18,6 +18,9 @@ pub struct LaunchSpec {
     /// The mode the user asked for; the launcher maps it onto the CLI's own
     /// ([`protocol_mode`]).
     pub permission_mode: PermissionMode,
+    /// The Model to run on; `None` (Default) passes none, so the CLI or the user's own CLI
+    /// settings decide.
+    pub model: Option<String>,
     /// The repository's policy declares a sandbox: Full auto runs as the CLI's
     /// bypass-everything mode, and only then.
     pub sandboxed: bool,

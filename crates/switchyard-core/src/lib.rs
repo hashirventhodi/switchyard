@@ -250,8 +250,8 @@ impl Core {
         match command {
             Command::Attach => inner.attach(),
             Command::AddRepository { path } => inner.add_repository(&path),
-            Command::StartSession { worktree_path, agent, permission_mode, prompt } => {
-                sessions::start(&mut inner, &self.inner, &worktree_path, agent, permission_mode, &prompt)
+            Command::StartSession { worktree_path, agent, permission_mode, model, prompt } => {
+                sessions::start(&mut inner, &self.inner, &worktree_path, agent, permission_mode, model, &prompt)
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
             Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &self.inner, &session_id, &text),
@@ -268,8 +268,17 @@ impl Core {
             Command::CreateWorktree { repository_id, branch } => {
                 worktrees::create(&mut inner, command_name::CREATE_WORKTREE, &repository_id, &branch);
             }
-            Command::StartSessionOnNewWorktree { repository_id, branch, agent, permission_mode, prompt } => {
-                worktrees::start_session_on_new(&mut inner, &self.inner, &repository_id, &branch, agent, permission_mode, &prompt)
+            Command::StartSessionOnNewWorktree { repository_id, branch, agent, permission_mode, model, prompt } => {
+                worktrees::start_session_on_new(
+                    &mut inner,
+                    &self.inner,
+                    &repository_id,
+                    &branch,
+                    agent,
+                    permission_mode,
+                    model,
+                    &prompt,
+                )
             }
             Command::RemoveWorktree { worktree_path } => worktrees::remove(&mut inner, &worktree_path),
             Command::RefreshWorktrees => worktrees::refresh(&inner),
@@ -278,8 +287,8 @@ impl Core {
             }
             Command::CheckAgents => compat::check(&mut inner),
             Command::ResumeSession { session_id } => sessions::resume(&mut inner, &self.inner, &session_id),
-            Command::ReplaceSession { session_id, agent, permission_mode, prompt } => {
-                sessions::replace(&mut inner, &self.inner, &session_id, agent, permission_mode, &prompt)
+            Command::ReplaceSession { session_id, agent, permission_mode, model, prompt } => {
+                sessions::replace(&mut inner, &self.inner, &session_id, agent, permission_mode, model, &prompt)
             }
             Command::ReadArchivedSession { session_id } => sessions::read_archived(&inner, &session_id),
             Command::ExportTranscript { session_id } => sessions::export(&inner, &session_id),
@@ -334,8 +343,8 @@ impl Core {
             Command::LinkTask { session_id, task_id, relink } => {
                 tasks::link(&inner, &session_id, task_id.as_deref(), relink)
             }
-            Command::StartTaskSession { task_id, target, agent, permission_mode, prompt } => {
-                tasks::start_session(&mut inner, &self.inner, &task_id, target, agent, permission_mode, &prompt)
+            Command::StartTaskSession { task_id, target, agent, permission_mode, model, prompt } => {
+                tasks::start_session(&mut inner, &self.inner, &task_id, target, agent, permission_mode, model, &prompt)
             }
         }
         sessions::flush(&mut inner);

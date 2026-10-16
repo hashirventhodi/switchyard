@@ -11,7 +11,7 @@ use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, PermissionM
 use serde_json::Value;
 use switchyard_schema::command_name;
 use switchyard_schema::{
-    AgentKind, ArchivedSession, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
+    AgentKind, ArchivedSession, Entry, Event, ModelChoice, PermissionMode, Session, SessionFacts, SessionStatus, Settings, ToolState,
     Verdict,
 };
 
@@ -144,9 +144,10 @@ pub(crate) fn start(
     worktree_path: &str,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
 ) {
-    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, prompt, None);
+    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, model, prompt, None);
 }
 
 /// Start a session on a worktree; when `replacing` names its (Paused, Finished or Error)
@@ -159,6 +160,7 @@ fn begin(
     worktree_path: &str,
     agent: AgentKind,
     permission_mode: PermissionMode,
+    model: ModelChoice,
     prompt: &str,
     replacing: Option<&str>,
 ) {
@@ -209,6 +211,7 @@ fn begin(
         agent,
         cwd: worktree.path.clone(),
         permission_mode,
+        model: model.id().map(str::to_string),
         sandboxed,
         allowed_tools,
         disallowed_tools,
@@ -235,6 +238,7 @@ fn begin(
         branch: worktree.branch,
         agent,
         permission_mode,
+        model,
         status: SessionStatus::Running,
         started_at_ms: (inner.runtime.now_ms)(),
     };
@@ -352,6 +356,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         ));
     };
     let (cwd, permission_mode) = (state.session.worktree_path.clone(), state.session.permission_mode);
+    let state_model = state.session.model.id().map(str::to_string);
     let repository_id = state.session.repository_id.clone();
     // Grants as they are now: some may have been made or revoked since the session began.
     let repository = policy::repository(inner, &repository_id);
@@ -372,6 +377,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         agent,
         cwd: cwd.into(),
         permission_mode,
+        // The Model chosen at start (#38 resumes on the Session's current Model).
+        model: state_model,
         sandboxed,
         allowed_tools,
         disallowed_tools,
@@ -635,8 +642,23 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                         agents::mode_label(permission_mode),
                     )
                 });
+                // A relaunched CLI (resume) initialises again; the start line is written once.
+                let first = state.external_id.is_none();
                 state.external_id = Some(external_session_id);
-                state.facts.model = model;
+                // What the CLI says it runs on, else the Model it was started on; a Default it
+                // does not report stays unknown, never guessed.
+                let model = model.or_else(|| state.session.model.id().map(str::to_string));
+                if first {
+                    state.facts.model = model;
+                    let text = start_line(&state.session.model, state.facts.model.as_deref());
+                    out.push(append(state, Entry::System { text }));
+                } else if let Some(model) = model {
+                    if unresolved_default(state) {
+                        out.extend(resolve_default(state, model, &PriceTable::read(&inner.data_dir)));
+                    } else {
+                        state.facts.model = Some(model);
+                    }
+                }
                 state.facts.cli_version = Some(cli.version);
                 state.facts.cli_permission_mode = Some(cli_permission_mode);
                 out.push(facts(state));
@@ -688,9 +710,17 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     cache_write_tokens,
                     reported_usd: cost_usd,
                 };
+                let named = usage.model.clone();
                 state.usage.push(usage);
                 let table = PriceTable::read(&inner.data_dir);
-                out.push(spend_event(state, state.usage.len() - 1, &table));
+                match named {
+                    // The first concrete Model name resolves an unresolved Default.
+                    Some(model) if unresolved_default(state) => {
+                        out.extend(resolve_default(state, model, &table));
+                        out.push(facts(state));
+                    }
+                    _ => out.push(spend_event(state, state.usage.len() - 1, &table)),
+                }
             }
             AgentEvent::ClassifierDenial { tool, detail, reason } => {
                 // Counted and noted; never a Permission request, so the status never moves.
@@ -814,6 +844,35 @@ fn spend_event(state: &SessionState, upto: usize, table: &PriceTable) -> Event {
     let reports = &state.usage[..=upto];
     let spend = spend::spend(reports, state.facts.model.as_deref(), table);
     Event::SpendRecorded { session_id: state.session.id.clone(), at_ms: reports[upto].at_ms, spend }
+}
+
+/// The Agent log's line for the Model a Session started on: the chosen Model, or what
+/// Default resolved to ("Model: Default → claude-opus-5-5"), or that the CLI did not say.
+fn start_line(choice: &ModelChoice, running: Option<&str>) -> String {
+    match (choice, running) {
+        (ModelChoice::Default, Some(model)) => format!("Model: Default → {model}"),
+        (ModelChoice::Default, None) => "Model: Default (not reported)".into(),
+        (ModelChoice::Model { id }, running) => format!("Model: {}", running.unwrap_or(id)),
+    }
+}
+
+/// Started on Default, and the CLI has not yet named the Model Default runs on: usage
+/// meanwhile is unpriced.
+fn unresolved_default(state: &SessionState) -> bool {
+    state.session.model == ModelChoice::Default && state.facts.model.is_none()
+}
+
+/// Default resolves to `model`, the first concrete Model name the CLI gave: noted in the
+/// Agent log, and the usage held unpriced until now priced on it, once, here. The caller
+/// reports the facts.
+fn resolve_default(state: &mut SessionState, model: String, table: &PriceTable) -> Vec<Event> {
+    let text = format!("Model: Default resolved to {model}; earlier usage is priced on it");
+    state.facts.model = Some(model);
+    let mut out = vec![append(state, Entry::System { text })];
+    if let Some(last) = state.usage.len().checked_sub(1) {
+        out.push(spend_event(state, last, table));
+    }
+    out
 }
 
 fn facts(state: &SessionState) -> Event {

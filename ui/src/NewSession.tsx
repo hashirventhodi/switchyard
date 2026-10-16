@@ -1,15 +1,18 @@
-// The New session modal: agent, where to run (a new worktree from base, or an existing
-// free one), permission mode, initial prompt.
+// The New session modal: agent and its Model, where to run (a new worktree from base, or an
+// existing free one), permission mode, initial prompt.
 import { useEffect, useState } from "react";
 import { slugBranch, type BranchKind } from "./branch";
 import type { AgentKind } from "./schema/AgentKind";
 import type { Command } from "./schema/Command";
+import type { ModelChoice } from "./schema/ModelChoice";
 import type { PermissionMode } from "./schema/PermissionMode";
 import type { Task } from "./schema/Task";
 import { taskBranch, taskPrompt } from "./tasks";
 import { sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { AGENT_LABEL, AGENTS, MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
+import { choosesModel, DEFAULT_MODEL } from "./model";
+import { ModelField } from "./ModelField";
 
 // Explore is the only mode allowed on a primary worktree (ADR-0005).
 const MODES: PermissionMode[] = ["askFirst", "autoEdit", "fullAuto", "explore"];
@@ -48,6 +51,9 @@ export function NewSession(props: {
   // refuses too); say why here, before the first session, not mid-session.
   const [agent, setAgent] = useState<AgentKind>("claudeCode");
   const blocked = agentProblem(state.agents, agent);
+  const [modelChosen, setModel] = useState<ModelChoice>(DEFAULT_MODEL);
+  // An agent whose Model cannot be chosen yet starts on Default.
+  const model = choosesModel(agent) ? modelChosen : DEFAULT_MODEL;
   const [mode, setMode] = useState<PermissionMode>(preset.mode ?? "askFirst");
   // Until the user (or the preset) picks one, the mode follows the repository's default.
   const [modeTouched, setModeTouched] = useState(preset.mode !== undefined);
@@ -111,15 +117,15 @@ export function NewSession(props: {
           : replacing
             ? ({ type: "replace", sessionId: replacing.id } as const)
             : ({ type: "worktree", worktreePath: worktree } as const);
-      onStart({ type: "startTaskSession", taskId: task.id, target, agent, permissionMode: shownMode, prompt });
+      onStart({ type: "startTaskSession", taskId: task.id, target, agent, permissionMode: shownMode, model, prompt });
       return onClose();
     }
     onStart(
       where === "new"
-        ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, prompt }
+        ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, model, prompt }
         : replacing
-          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: shownMode, prompt }
-          : { type: "startSession", worktreePath: worktree, agent, permissionMode: shownMode, prompt },
+          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: shownMode, model, prompt }
+          : { type: "startSession", worktreePath: worktree, agent, permissionMode: shownMode, model, prompt },
     );
     onClose();
   };
@@ -153,6 +159,7 @@ export function NewSession(props: {
               ))}
             </select>
           </label>
+          {choosesModel(agent) && <ModelField value={modelChosen} onChange={setModel} />}
           {task && (
             <div className="field" role="group" aria-label="Task">
               <span>Task</span>

@@ -30,6 +30,7 @@ function session(id: string, worktreePath: string, branch: string): Event {
     branch,
     agent: "claudeCode",
     permissionMode: "askFirst",
+    model: { type: "default" },
     status: "running",
     startedAtMs: at(9),
   };

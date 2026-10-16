@@ -36,6 +36,7 @@ fn starting_a_session_launches_claude_code_in_the_worktree_and_sends_the_prompt(
                     branch: Some("fix/readme".into()),
                     agent: AgentKind::ClaudeCode,
                     permission_mode: PermissionMode::AskFirst,
+                    model: Default::default(),
                     status: SessionStatus::Running,
                     started_at_ms: NOW_MS,
                 },
@@ -49,7 +50,7 @@ fn starting_a_session_launches_claude_code_in_the_worktree_and_sends_the_prompt(
     );
     assert_eq!(
         core.agents.launches(),
-        vec![LaunchSpec { agent: AgentKind::ClaudeCode, cwd: worktree, permission_mode: PermissionMode::AskFirst, sandboxed: false, allowed_tools: vec![], disallowed_tools: vec![], mcp_servers: vec![], env: Default::default() }]
+        vec![LaunchSpec { agent: AgentKind::ClaudeCode, cwd: worktree, permission_mode: PermissionMode::AskFirst, model: None, sandboxed: false, allowed_tools: vec![], disallowed_tools: vec![], mcp_servers: vec![], env: Default::default() }]
     );
     assert_eq!(
         core.agents.commands(0),
@@ -99,12 +100,13 @@ fn a_recorded_session_streams_into_the_transcript_and_walks_needs_you_then_finis
     assert_eq!(
         entries(&first_turn),
         vec![
-            (1, Entry::Agent { text: "I'll look at the README and the test script.".into() }),
-            (2, tool("toolu_01", "Bash", "ls", ToolState::Running, None)),
-            (2, tool("toolu_01", "Bash", "ls", ToolState::Ok, Some("README.md\npackage.json\nsrc"))),
-            (3, tool("toolu_02", "Read", "/wt/acme/fix-readme/docs/missing.md", ToolState::Running, None)),
+            (1, Entry::System { text: "Model: Default → claude-opus-5-5".into() }),
+            (2, Entry::Agent { text: "I'll look at the README and the test script.".into() }),
+            (3, tool("toolu_01", "Bash", "ls", ToolState::Running, None)),
+            (3, tool("toolu_01", "Bash", "ls", ToolState::Ok, Some("README.md\npackage.json\nsrc"))),
+            (4, tool("toolu_02", "Read", "/wt/acme/fix-readme/docs/missing.md", ToolState::Running, None)),
             (
-                3,
+                4,
                 tool(
                     "toolu_02",
                     "Read",
@@ -113,7 +115,7 @@ fn a_recorded_session_streams_into_the_transcript_and_walks_needs_you_then_finis
                     Some("<tool_use_error>File does not exist.</tool_use_error>")
                 )
             ),
-            (4, Entry::Agent { text: "The README links a missing docs page; I fixed the link.".into() }),
+            (5, Entry::Agent { text: "The README links a missing docs page; I fixed the link.".into() }),
         ]
     );
     assert_eq!(statuses(&first_turn), vec![SessionStatus::Waiting], "a finished turn is Needs you, never Paused");
@@ -138,7 +140,7 @@ fn a_recorded_session_streams_into_the_transcript_and_walks_needs_you_then_finis
 
     let follow_up = core.send(Command::SendPrompt { session_id: id.clone(), text: "Also check the CHANGELOG.".into() });
     assert_eq!(statuses(&follow_up), vec![SessionStatus::Running]);
-    assert_eq!(entries(&follow_up), vec![(5, Entry::User { text: "Also check the CHANGELOG.".into() })]);
+    assert_eq!(entries(&follow_up), vec![(6, Entry::User { text: "Also check the CHANGELOG.".into() })]);
     assert_eq!(
         core.agents.commands(0).last(),
         Some(&AgentCommand::SendText { text: "Also check the CHANGELOG.".into() })
@@ -162,7 +164,7 @@ fn stop_interrupts_the_turn_marks_the_session_paused_and_leaves_the_worktree_unt
     let stopped = core.send(Command::StopSession { session_id: id.clone() });
 
     assert_eq!(statuses(&stopped), vec![SessionStatus::Idle]);
-    assert_eq!(entries(&stopped), vec![(3, Entry::System { text: "Stopped by you.".into() })]);
+    assert_eq!(entries(&stopped), vec![(4, Entry::System { text: "Stopped by you.".into() })]);
     assert_eq!(core.agents.commands(0).last(), Some(&AgentCommand::Interrupt));
 
     // The CLI winds the turn down after the interrupt; the session stays Paused.
@@ -321,8 +323,8 @@ fn attaching_replays_every_session_with_its_status_facts_and_transcript() {
     }
     assert!(matches!(session_events[1], Event::SessionFactsChanged { facts, .. } if facts.turns == 1));
     let transcript = entries(&events);
-    assert_eq!(transcript.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
-    assert_eq!(transcript[2].1, tool("toolu_01", "Bash", "ls", ToolState::Ok, Some("README.md\npackage.json\nsrc")));
+    assert_eq!(transcript.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(transcript[3].1, tool("toolu_01", "Bash", "ls", ToolState::Ok, Some("README.md\npackage.json\nsrc")));
 }
 
 #[test]

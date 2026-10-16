@@ -762,6 +762,7 @@ fn gate_a_session_ships_through_a_pull_request_and_is_cleaned_up_when_merged() {
         branch: "feat/signup".into(),
         agent: switchyard_schema::AgentKind::ClaudeCode,
         permission_mode: switchyard_schema::PermissionMode::AutoEdit,
+        model: Default::default(),
         prompt: "Add a signup page.".into(),
     });
     let session = harness::started_session(&events);

@@ -35,6 +35,7 @@ fn start(worktree: &Path, prompt: &str) -> Command {
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent: AgentKind::Codex,
         permission_mode: PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: prompt.into(),
     }
 }

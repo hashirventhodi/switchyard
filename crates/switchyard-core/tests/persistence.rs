@@ -332,6 +332,7 @@ fn replace(core: &mut Harness, id: &str, prompt: &str) -> Vec<Event> {
         session_id: id.into(),
         agent: AgentKind::ClaudeCode,
         permission_mode: PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: prompt.into(),
     })
 }

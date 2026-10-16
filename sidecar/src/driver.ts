@@ -23,6 +23,8 @@ export interface SidecarConfig {
   allow_bypass?: boolean;
   /** The repository's MCP servers as the SDK's `mcpServers` map: the only ones the CLI loads. */
   mcp_servers?: Record<string, unknown>;
+  /** The chosen Model id; absent for Default (the CLI, or the user's own settings, decide). */
+  model?: string;
 }
 
 /** Modes in which dangerous commands always reach the host (everything below Full auto). */
@@ -117,6 +119,8 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
         permissionMode: cliMode as Options["permissionMode"],
         // Bypass-everything is only ever made available where the policy declares a sandbox.
         ...(config.allow_bypass ? { allowDangerouslySkipPermissions: true } : {}),
+        // Only a chosen Model; for Default the CLI (or the user's own settings) decides.
+        ...(config.model ? { model: config.model } : {}),
         pathToClaudeCodeExecutable: config.claude_path ?? undefined,
         // Grants are Switchyard's data, passed per spawn as flags; never written into the
         // CLI's settings files (ADR-0004).

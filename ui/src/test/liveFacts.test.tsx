@@ -27,6 +27,7 @@ const done: Session = {
   branch: "fix/readme",
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "done",
   startedAtMs: 0,
 };

@@ -25,6 +25,7 @@ const finished: Session = {
   branch: "feat/login",
   agent: "claudeCode",
   permissionMode: "autoEdit",
+  model: { type: "default" },
   status: "done",
   startedAtMs: 0,
 };

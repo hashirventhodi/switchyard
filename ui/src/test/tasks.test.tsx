@@ -44,6 +44,7 @@ const running: Session = {
   branch: "feat/login",
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs: 0,
 };
@@ -171,6 +172,7 @@ test("Assign to agent prefills New session from the task and names the branch af
     target: { type: "newWorktree", branch: "feat/l1-cursor-pagination-orders" },
     agent: "claudeCode",
     permissionMode: "askFirst",
+    model: { type: "default" },
     prompt,
   });
 });

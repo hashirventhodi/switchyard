@@ -33,6 +33,7 @@ const session = (id: string, branch: string, path: string, agent: Session["agent
   branch,
   agent,
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs,
 });

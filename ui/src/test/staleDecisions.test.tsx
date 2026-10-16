@@ -23,6 +23,7 @@ const session: Session = {
   branch: "fix/readme",
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "waiting",
   startedAtMs: 0,
 };

@@ -35,6 +35,7 @@ const session = (id: string, agent: AgentKind, branch: string, path: string): Se
   branch,
   agent,
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs: Date.now(),
 });
