@@ -8,7 +8,7 @@ mod harness;
 use std::path::PathBuf;
 
 use adapter_protocol::{
-    CliInfo, Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode, RequestDetail,
+    CliInfo, Command as AgentCommand, Event as AgentEvent, ListedModel, PermissionMode as ProtocolMode, RequestDetail,
 };
 use harness::{added_repository, started_session, Harness, TempRepo};
 use switchyard_schema::{AgentKind, Command, Entry, Event, PermissionMode, Session, SessionFacts, SessionStatus, Verdict};
@@ -135,7 +135,8 @@ fn a_switch_whose_next_request_is_still_on_the_old_model_fails_saying_so() {
 
     let events = core.agent_says(0, AgentEvent::ModelChangeFailed { model: SONNET.into(), reason: None });
 
-    assert_eq!(failed_switch(&events), Some((SONNET.into(), None)));
+    let why = format!("the agent's next request was still on {OPUS}");
+    assert_eq!(failed_switch(&events), Some((SONNET.into(), Some(why))), "the core words why");
     assert_eq!(switch_state(&events), Some((None, None)));
     assert_eq!(
         system_lines(&events),
@@ -214,6 +215,74 @@ fn switching_to_the_model_already_running_does_nothing() {
 
     assert_eq!(switch_state(&events), None);
     assert!(set_models(&core).is_empty());
+}
+
+/// The CLI lists its Models by alias, as Claude Code does, each with the full id it stands for.
+fn lists_aliases(core: &mut Harness) {
+    let alias = |id: &str, resolved: &str| ListedModel {
+        id: id.into(),
+        display_name: id.to_uppercase(),
+        resolved_model: Some(resolved.into()),
+    };
+    core.agent_says(0, AgentEvent::ModelsListed { models: vec![alias("opus", OPUS), alias("sonnet", SONNET)] });
+}
+
+#[test]
+fn switching_to_an_alias_of_the_model_already_running_does_nothing() {
+    let (mut core, _repo, worktree) = setup();
+    let id = running_on_opus(&mut core, &worktree, PermissionMode::AskFirst);
+    lists_aliases(&mut core);
+
+    let events = switch(&mut core, &id, "opus");
+
+    assert_eq!(switch_state(&events), None, "opus is the Model running: nothing to switch");
+    assert!(set_models(&core).is_empty());
+}
+
+#[test]
+fn a_switch_named_by_an_alias_is_confirmed_by_the_full_id_it_stands_for() {
+    let (mut core, _repo, worktree) = setup();
+    let id = running_on_opus(&mut core, &worktree, PermissionMode::AskFirst);
+    lists_aliases(&mut core);
+    switch(&mut core, &id, "sonnet");
+
+    let confirmed = core.agent_says(0, AgentEvent::ModelChanged { model: SONNET.into() });
+
+    assert_eq!(switch_state(&confirmed), Some((None, Some(SONNET.into()))));
+    assert_eq!(system_lines(&confirmed), vec![format!("Model → {SONNET}")]);
+}
+
+#[test]
+fn the_agent_moving_to_another_model_on_its_own_never_changes_the_sessions_model() {
+    let (mut core, _repo, worktree) = setup();
+    let id = running_on_opus(&mut core, &worktree, PermissionMode::AskFirst);
+
+    let events = core.agent_says(0, AgentEvent::ModelChanged { model: SONNET.into() });
+
+    assert_eq!(switch_state(&events), None, "not a switch the user made");
+    assert_eq!(
+        system_lines(&events),
+        vec![format!("The agent moved itself to {SONNET}: not your switch, so the Session's Model stays {OPUS}")]
+    );
+    let attach = core.send(Command::Attach);
+    assert_eq!(last_facts(&attach).and_then(|f| f.model).as_deref(), Some(OPUS));
+    assert_eq!(replayed_session(&attach, &id).switched_model, None);
+}
+
+#[test]
+fn a_model_change_to_another_model_than_the_pending_switch_fails_that_switch() {
+    let (mut core, _repo, worktree) = setup();
+    let id = running_on_opus(&mut core, &worktree, PermissionMode::AskFirst);
+    switch(&mut core, &id, SONNET);
+
+    let events = core.agent_says(0, AgentEvent::ModelChanged { model: "claude-haiku-4-5".into() });
+
+    let why = "the agent's next request ran on claude-haiku-4-5".to_string();
+    assert_eq!(failed_switch(&events), Some((SONNET.into(), Some(why.clone()))));
+    assert_eq!(switch_state(&events), Some((None, None)), "the control is back on the Session's Model");
+    assert_eq!(system_lines(&events), vec![format!("Model switch to {SONNET} did not take: {why}")]);
+    let attach = core.send(Command::Attach);
+    assert_eq!(last_facts(&attach).and_then(|f| f.model).as_deref(), Some(OPUS));
 }
 
 fn replayed_session(events: &[Event], id: &str) -> Session {

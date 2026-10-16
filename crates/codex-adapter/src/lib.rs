@@ -436,7 +436,12 @@ impl CodexAdapter {
         self.listed.extend(page.iter().filter_map(|m| {
             let id = str_at(m, "/model").or_else(|| str_at(m, "/id"))?;
             let display_name = str_at(m, "/displayName").unwrap_or_else(|| id.clone());
-            Some(ListedModel { id, display_name })
+            // A slug is the full id: there is no alias to resolve.
+            Some(ListedModel {
+                id,
+                display_name,
+                resolved_model: None,
+            })
         }));
         if let Some(cursor) = str_at(result, "/nextCursor") {
             let next = self.model_list(Some(cursor));

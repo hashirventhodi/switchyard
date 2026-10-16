@@ -92,18 +92,19 @@ test("a failed switch shows the CLI's reason and goes back to the Model running"
   );
 
   expect(within(control()).getByRole("alert").textContent).toBe(
-    "Could not switch to claude-nope: Model 'claude-nope' not found. Still on claude-opus-5-5.",
+    "Could not switch to claude-nope: Model 'claude-nope' not found.",
   );
   expect(field().value).toBe("claude-opus-5-5");
 });
 
-test("a switch that did not take without a reason says so", () => {
+test("a switch that did not take says why, as the core words it", () => {
   const { emit } = launch({ type: "sessionStarted", session }, runningOn("claude-opus-5-5"), switchState("claude-sonnet-5-5"));
+  const reason = "the agent's next request ran on claude-haiku-4-5";
 
-  act(() => emit(switchState(null), { type: "modelSwitchFailed", sessionId: "session-1", model: "claude-sonnet-5-5", reason: null }));
+  act(() => emit(switchState(null), { type: "modelSwitchFailed", sessionId: "session-1", model: "claude-sonnet-5-5", reason }));
 
   expect(within(control()).getByRole("alert").textContent).toBe(
-    "Could not switch to claude-sonnet-5-5: the agent's next request was still on claude-opus-5-5.",
+    "Could not switch to claude-sonnet-5-5: the agent's next request ran on claude-haiku-4-5.",
   );
 });
 

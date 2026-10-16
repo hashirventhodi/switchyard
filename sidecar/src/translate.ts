@@ -461,13 +461,19 @@ function mcpStatuses(raw: unknown): McpServerStatus[] {
     }));
 }
 
-/** The SDK's ModelInfo rows as listed Models, in its order. Its own "default" row is left
- * out: that is Switchyard's Default, which passes no Model at all. */
+/** The SDK's ModelInfo rows as listed Models, in its order, each with the full id it resolves
+ * to. Its own "default" row is left out: that is Switchyard's Default, which passes no Model
+ * at all. */
 function listedModels(raw: unknown): ListedModel[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((m: Json) => typeof m?.value === "string" && m.value !== "default")
-    .map((m: Json) => ({ id: m.value, display_name: typeof m.displayName === "string" ? m.displayName : m.value }));
+    .map((m: Json) => ({
+      id: m.value,
+      display_name: typeof m.displayName === "string" ? m.displayName : m.value,
+      // An alias ("opus") with the full id it stands for, which init and requests report.
+      resolved_model: typeof m.resolvedModel === "string" ? m.resolvedModel : null,
+    }));
 }
 
 const MCP_STATE: Record<string, McpServerState> = {

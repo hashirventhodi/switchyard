@@ -52,15 +52,16 @@ export function ModelSwitch(props: { session: SessionView; send: (command: Comma
       )}
       {failed && !pending && (
         <span role="alert" className="model-switch-note failed">
-          {failureText(failed, running)}
+          {failureText(failed)}
         </span>
       )}
     </form>
   );
 }
 
-function failureText(failed: { model: string; reason: string | null }, running: string): string {
-  const still = running ? `Still on ${running}.` : "";
-  if (failed.reason) return `Could not switch to ${failed.model}: ${failed.reason.replace(/\.$/, "")}.${still ? ` ${still}` : ""}`;
-  return `Could not switch to ${failed.model}: the agent's next request was still on ${running || "the old Model"}.`;
+/** The core's reason for a failed switch, as it words it (the CLI's message, or why the
+ * agent's next request shows the switch did not take). */
+function failureText(failed: { model: string; reason: string | null }): string {
+  const why = failed.reason?.replace(/\.$/, "") || "it did not take";
+  return `Could not switch to ${failed.model}: ${why}.`;
 }

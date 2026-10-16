@@ -1064,9 +1064,11 @@ pub enum Event {
         #[ts(rename = "switchedModel")]
         switched_model: Option<String>,
     },
-    /// A switch to `model` did not take: the CLI refused it (`reason`, when it gave one) or
-    /// the agent's next request was still on the old Model. The Session carries on on the
-    /// Model it runs on, in the same status; nothing is retried.
+    /// A switch to `model` did not take: the CLI refused it, the agent's next request was
+    /// still on the old Model (or ran on another one), or the CLI could not resume on it.
+    /// `reason` says which, worded by the core for the user (the CLI's own message when it
+    /// gave one); null only from an older core. The Session carries on on the Model it runs
+    /// on, in the same status; nothing is retried.
     ModelSwitchFailed {
         #[serde(rename = "sessionId")]
         #[ts(rename = "sessionId")]
@@ -1708,13 +1710,25 @@ pub enum ModelList {
 }
 
 /// One Model a CLI offers: `id` is what the CLI takes to run on it, `displayName` what the
-/// user reads.
+/// user reads, and `resolvedModel` the full Model id an alias `id` stands for (`opus` for
+/// `claude-opus-5-5`), the name the CLI reports it by once running; absent when the CLI does
+/// not say.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ListedModel {
     pub id: String,
     pub display_name: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub resolved_model: Option<String>,
+}
+
+impl ListedModel {
+    /// Whether `model` names this Model: its id, or the full id it resolves to.
+    pub fn is(&self, model: &str) -> bool {
+        self.id == model || self.resolved_model.as_deref() == Some(model)
+    }
 }
 
 /// Exactly five statuses, shown everywhere with the same colour and label:

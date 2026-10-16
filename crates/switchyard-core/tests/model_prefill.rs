@@ -78,7 +78,7 @@ fn init(model: &str) -> AgentEvent {
 
 fn offered(ids: &[&str]) -> AgentEvent {
     AgentEvent::ModelsListed {
-        models: ids.iter().map(|id| Offered { id: id.to_string(), display_name: id.to_uppercase() }).collect(),
+        models: ids.iter().map(|id| Offered { id: id.to_string(), display_name: id.to_uppercase(), resolved_model: None }).collect(),
     }
 }
 
@@ -144,6 +144,26 @@ fn a_remembered_model_the_cached_list_offers_is_pre_filled() {
     core.agent_says(0, offered(&["opus", "sonnet"]));
 
     assert_eq!(prefill(&mut core, AgentKind::ClaudeCode, &id), (opus(), None));
+}
+
+#[test]
+fn a_remembered_full_id_the_cached_list_offers_under_an_alias_is_pre_filled() {
+    let (mut core, _repo, id, worktree) = setup();
+    let full = ModelChoice::Model { id: "claude-opus-5-5".into() };
+    start(&mut core, &worktree, AgentKind::ClaudeCode, full.clone());
+    core.agent_says(0, init("claude-opus-5-5"));
+
+    let opus = |alias: &str, resolved: &str| Offered {
+        id: alias.into(),
+        display_name: alias.to_uppercase(),
+        resolved_model: Some(resolved.into()),
+    };
+    core.agent_says(
+        0,
+        AgentEvent::ModelsListed { models: vec![opus("opus", "claude-opus-5-5"), opus("sonnet", "claude-sonnet-5-5")] },
+    );
+
+    assert_eq!(prefill(&mut core, AgentKind::ClaudeCode, &id), (full, None), "still offered, as opus");
 }
 
 #[test]

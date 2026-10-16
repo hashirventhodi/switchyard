@@ -15,6 +15,7 @@ use switchyard_schema::{Entry, Event};
 
 use super::{append, change_status, facts, find, relaunch, requests, send_text, send_to_agent, Cause, SessionState};
 use crate::compat;
+use crate::models::{self, Names};
 use crate::Inner;
 
 /// A relaunched agent, until its first request has run.
@@ -46,28 +47,29 @@ pub(super) struct AppliedSwitch {
 /// until the agent's own requests run on the new Model (`model_changed`) or it fails.
 pub(crate) fn set_model(inner: &mut Inner, id: &str, model: &str) {
     const COMMAND: &str = command_name::SET_MODEL;
-    let Some(state) = find(inner, id) else {
+    let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
         return inner.refuse(COMMAND, crate::no_session(&id));
     };
     let model = model.trim();
     if model.is_empty() {
         return inner.refuse(COMMAND, "Choose a Model to switch to".into());
     }
-    if state.session.pending_model.as_deref() == Some(model)
-        || (state.session.pending_model.is_none() && state.facts.model.as_deref() == Some(model))
-    {
+    let names = models::names(inner.store.db(), state.session.agent, state.facts.cli_version.as_deref());
+    // An alias of the Model running (`opus` for claude-opus-5-5) is that Model.
+    let running = state.facts.model.clone().filter(|running| names.same(running, model));
+    if state.session.pending_model.as_deref() == Some(model) || (state.session.pending_model.is_none() && running.is_some()) {
         return;
     }
     // Back to the Model it runs on: the pending switch is withdrawn, and a CLI already told
     // to switch is told to stay. There is nothing to confirm.
-    if state.facts.model.as_deref() == Some(model) {
+    if let Some(running) = running {
         state.session.pending_model = None;
         let sent = !std::mem::take(&mut state.switch_queued);
         let agent = state.session.agent;
         let event = switch_event(state);
         inner.emit(event);
         if sent && compat::switches_model_live(inner, agent) {
-            send_to_agent(inner, id, AgentCommand::SetModel { model: model.into() });
+            send_to_agent(inner, id, AgentCommand::SetModel { model: running });
         }
         return;
     }
@@ -134,7 +136,7 @@ pub(super) fn resume_on(state: &SessionState, live: bool) -> Resumed {
 /// The resumed agent's first request has run. A switch the resume applied took when the
 /// CLI reported a Model other than the one the Session ran on before; one still on that
 /// Model did not. A CLI that reported no Model leaves the switch pending.
-pub(super) fn first_request(state: &mut SessionState) -> Vec<Event> {
+pub(super) fn first_request(state: &mut SessionState, names: &Names) -> Vec<Event> {
     let Some(resumed) = state.resumed.take() else { return Vec::new() };
     let (Some(applied), Some(reported), Some(model)) = (resumed.applies, resumed.reported, resumed.model) else {
         return Vec::new();
@@ -144,32 +146,59 @@ pub(super) fn first_request(state: &mut SessionState) -> Vec<Event> {
         return Vec::new();
     }
     state.session.pending_model = None;
-    if applied.from.as_deref() == Some(reported.as_str()) {
-        let text = did_not_take(&model, &reported);
-        let line = append(state, Entry::System { text });
+    if applied.from.as_deref().is_some_and(|from| names.same(from, &reported)) {
+        let reason = still_on(&reported);
+        let line = append(state, Entry::System { text: not_taken(&model, &reason) });
         let id = state.session.id.clone();
-        return vec![line, switch_event(state), Event::ModelSwitchFailed { session_id: id, model, reason: None }];
+        return vec![line, switch_event(state), Event::ModelSwitchFailed { session_id: id, model, reason: Some(reason) }];
     }
     state.session.switched_model = Some(reported.clone());
     vec![switch_event(state), append(state, Entry::System { text: format!("Model → {reported}") })]
 }
 
-/// Why a switch to `model` did not take: the agent's next request was still on `running`.
-fn did_not_take(model: &str, running: &str) -> String {
-    format!("Model switch to {model} did not take: the agent's next request was still on {running}")
+/// Why a switch did not take when the agent's next request was still on `running`.
+fn still_on(running: &str) -> String {
+    format!("the agent's next request was still on {running}")
 }
 
-/// `model_changed`: the main agent's own requests run on `model` now: the user's switch took
-/// (one still waiting to be sent cannot have).
-pub(super) fn changed(state: &mut SessionState, model: String) -> Vec<Event> {
+/// The Agent log's line for a switch to `model` that did not take, for `reason`.
+fn not_taken(model: &str, reason: &str) -> String {
+    format!("Model switch to {model} did not take: {reason}")
+}
+
+/// `model_changed`: the main agent's own requests run on `model` now. Only the user's
+/// switches change the Session's Model: `model` confirms the pending switch when it names
+/// that Model (by its id, or the full id an alias stands for), sent or still queued.
+/// Anything else is the agent moving itself: noted, never recorded as a switch, and the
+/// Session's Model stays as it was (a resume goes back to it). A switch that was sent and
+/// whose next request ran on yet another Model did not take.
+pub(super) fn changed(state: &mut SessionState, model: String, names: &Names) -> Vec<Event> {
     let mut out = Vec::new();
-    if !state.switch_queued && state.session.pending_model.take().is_some() {
+    if state.session.pending_model.as_deref().is_some_and(|pending| names.same(pending, &model)) {
+        state.session.pending_model = None;
+        state.switch_queued = false;
         state.session.switched_model = Some(model.clone());
         out.push(switch_event(state));
+        out.push(append(state, Entry::System { text: format!("Model → {model}") }));
+        state.facts.model = Some(model);
+        out.push(facts(state));
+        return out;
     }
-    out.push(append(state, Entry::System { text: format!("Model → {model}") }));
-    state.facts.model = Some(model);
-    out.push(facts(state));
+    if let (false, Some(pending)) = (state.switch_queued, state.session.pending_model.take()) {
+        let reason = format!("the agent's next request ran on {model}");
+        out.push(append(state, Entry::System { text: not_taken(&pending, &reason) }));
+        out.push(switch_event(state));
+        out.push(Event::ModelSwitchFailed { session_id: state.session.id.clone(), model: pending, reason: Some(reason) });
+        return out;
+    }
+    let text = match state.facts.model.as_deref() {
+        Some(running) if names.same(running, &model) => format!("The agent is back on {running}"),
+        running => {
+            let running = running.unwrap_or("the Model it was on");
+            format!("The agent moved itself to {model}: not your switch, so the Session's Model stays {running}")
+        }
+    };
+    out.push(append(state, Entry::System { text }));
     out
 }
 
@@ -202,10 +231,14 @@ pub(super) fn change_failed(state: &mut SessionState, model: String, reason: Opt
         return (out, Some(FallBack { text: resumed.text }));
     }
     let running = state.facts.model.as_deref().unwrap_or("the Model it was on");
-    let text = match &reason {
-        Some(reason) => format!("Model switch to {model} failed: {reason}"),
-        None => did_not_take(&model, running),
+    let (text, reason) = match reason {
+        Some(reason) => (format!("Model switch to {model} failed: {reason}"), reason),
+        None => {
+            let reason = still_on(running);
+            (not_taken(&model, &reason), reason)
+        }
     };
+    let reason = Some(reason);
     out.push(append(state, Entry::System { text }));
     // A failure for a switch since superseded by another leaves that one pending.
     if !state.switch_queued && state.session.pending_model.as_deref() == Some(model.as_str()) {

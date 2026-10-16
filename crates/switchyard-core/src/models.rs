@@ -50,11 +50,34 @@ fn cached(db: &Connection, agent: AgentKind, cli_version: &str) -> ModelList {
     json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(ModelList::Empty)
 }
 
+/// The Models a CLI listed, to tell when two names are one Model: an alias the CLI takes
+/// (`opus`) and the full id it reports that Model by (`claude-opus-5-5`).
+pub(crate) struct Names(Vec<ListedModel>);
+
+impl Names {
+    /// Whether `a` and `b` name the same Model: equal, or one listed Model's id and the full
+    /// id it resolves to. Without a list, only equal names are known to be one Model.
+    pub fn same(&self, a: &str, b: &str) -> bool {
+        a == b || self.0.iter().any(|m| m.is(a) && m.is(b))
+    }
+}
+
+/// The names `agent`'s CLI at `cli_version` listed its Models by (none when nothing is cached).
+pub(crate) fn names(db: &Connection, agent: AgentKind, cli_version: Option<&str>) -> Names {
+    match cli_version.map(|version| cached(db, agent, version)) {
+        Some(ModelList::Listed { models, .. }) => Names(models),
+        _ => Names(Vec::new()),
+    }
+}
+
 /// What a CLI answered to `list_models`, as the cache keeps it.
 pub(crate) fn from_agent(event: adapter_protocol::Event, fetched_at_ms: u64) -> Option<ModelList> {
     match event {
         adapter_protocol::Event::ModelsListed { models } => Some(ModelList::Listed {
-            models: models.into_iter().map(|m| ListedModel { id: m.id, display_name: m.display_name }).collect(),
+            models: models
+                .into_iter()
+                .map(|m| ListedModel { id: m.id, display_name: m.display_name, resolved_model: m.resolved_model })
+                .collect(),
             fetched_at_ms,
         }),
         adapter_protocol::Event::CannotListModels { reason } => Some(ModelList::CannotList { reason }),
@@ -130,11 +153,12 @@ pub(crate) fn read_prefill(inner: &mut Inner, agent: AgentKind, repository_id: S
     inner.emit(Event::ModelPrefill { agent, repository_id, choice, retired });
 }
 
-/// Whether the installed CLI's cached list offers `id`; true when no list is cached.
+/// Whether the installed CLI's cached list offers `id` (by its id, or as the full id one of its
+/// aliases resolves to); true when no list is cached.
 fn offered(inner: &mut Inner, agent: AgentKind, id: &str) -> bool {
     let Some(version) = crate::compat::installed_version(inner, agent) else { return true };
     match cached(inner.store.db(), agent, &version) {
-        ModelList::Listed { models, .. } => models.iter().any(|m| m.id == id),
+        ModelList::Listed { models, .. } => models.iter().any(|m| m.is(id)),
         ModelList::Empty | ModelList::CannotList { .. } => true,
     }
 }

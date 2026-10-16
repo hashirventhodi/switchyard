@@ -81,13 +81,13 @@ fn init(version: &str) -> AgentEvent {
 
 fn offered(ids: &[&str]) -> AgentEvent {
     AgentEvent::ModelsListed {
-        models: ids.iter().map(|id| Offered { id: id.to_string(), display_name: id.to_uppercase() }).collect(),
+        models: ids.iter().map(|id| Offered { id: id.to_string(), display_name: id.to_uppercase(), resolved_model: None }).collect(),
     }
 }
 
 fn listed(ids: &[&str]) -> ModelList {
     ModelList::Listed {
-        models: ids.iter().map(|id| ListedModel { id: id.to_string(), display_name: id.to_uppercase() }).collect(),
+        models: ids.iter().map(|id| ListedModel { id: id.to_string(), display_name: id.to_uppercase(), resolved_model: None }).collect(),
         fetched_at_ms: NOW_MS,
     }
 }

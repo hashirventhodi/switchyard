@@ -105,17 +105,23 @@ pub enum Event {
         reason: Option<String>,
     },
     /// The main agent's own requests now run on `model`, a different Model from its last
-    /// request: a [`Command::SetModel`] took, or the CLI moved on its own. Never sent for a
-    /// subagent's, a compaction's or any other background call's Model (their usage still
-    /// comes as [`Event::TokenUsage`] on that Model). An adapter that cannot tell the main
-    /// agent's requests from the others never sends it, and says so in its manifest
-    /// (`switch_model_live: false`).
+    /// request. Never sent for a subagent's, a compaction's or any other background call's
+    /// Model (their usage still comes as [`Event::TokenUsage`] on that Model). An adapter that
+    /// cannot tell the main agent's requests from the others never sends it, and says so in
+    /// its manifest (`switch_model_live: false`).
+    ///
+    /// Only the user's switches change a Session's Model. The host takes this as the
+    /// [`Command::SetModel`] it sent having taken only when `model` names that Model (its id,
+    /// or the [`ListedModel::resolved_model`] an alias stands for); any other is the CLI
+    /// moving on its own, which the host notes and never records as the Session's Model.
     ModelChanged {
         model: String,
     },
-    /// A [`Command::SetModel`] to `model` did not take: the CLI refused it (`reason`, when it
-    /// gives one), or the main agent's next request was still on the old Model. The CLI
-    /// carries on as it was.
+    /// The CLI will not run on `model`; `reason` is the CLI's, when it gives one. Either a
+    /// [`Command::SetModel`] to `model` did not take (the CLI refused it, or the main agent's
+    /// next request was still on the old Model), and the CLI carries on as it was; or, before
+    /// the first request of a CLI resumed on `model` ([`Command::Resume`]) has run, the CLI
+    /// cannot run on it (retired, or no access), and the host resumes it once more on Default.
     ModelChangeFailed {
         model: String,
         reason: Option<String>,
@@ -135,11 +141,16 @@ impl Event {
 }
 
 /// One Model a CLI offers: `id` is what the CLI takes to run on it, `display_name` what
-/// the user reads.
+/// the user reads, and `resolved_model` the full Model id `id` stands for when `id` is an
+/// alias (Claude Code's `opus` for `claude-opus-5-5`), which is the name `session_init`,
+/// `model_changed` and `token_usage` report it by. Absent when `id` is itself the full id or
+/// the CLI does not say.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListedModel {
     pub id: String,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_model: Option<String>,
 }
 
 /// An MCP server's connection state, as the CLI reports it.

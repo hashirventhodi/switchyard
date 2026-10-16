@@ -58,7 +58,8 @@ export type ProtocolEvent =
   | { type: "model_change_failed"; model: string; reason: string | null };
 
 /** One Model a CLI offers: `id` is what the CLI takes to run on it. */
-export type ListedModel = { id: string; display_name: string };
+/** `resolved_model`: the full Model id an alias `id` stands for (what the CLI reports it by). */
+export type ListedModel = { id: string; display_name: string; resolved_model: string | null };
 
 export type Verdict =
   | { decision: "allow_once" }

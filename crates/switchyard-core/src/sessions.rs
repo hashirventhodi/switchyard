@@ -701,8 +701,9 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
     let mut fall_back = None;
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     // A resumed agent's first request has run once it says or does something, or its turn ends.
+    let names = crate::models::names(inner.store.db(), state.session.agent, state.facts.cli_version.as_deref());
     if matches!(&output, AgentOutput::Event(event) if event.shows_a_request_ran()) {
-        out.extend(first_request(state));
+        out.extend(first_request(state, &names));
     }
     match output {
         AgentOutput::Event(event) => match event {
@@ -820,7 +821,7 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
             event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. }) => {
                 model_list = crate::models::from_agent(event, (inner.runtime.now_ms)());
             }
-            AgentEvent::ModelChanged { model } => out.extend(model_switch::changed(state, model)),
+            AgentEvent::ModelChanged { model } => out.extend(model_switch::changed(state, model, &names)),
             AgentEvent::ModelChangeFailed { model, reason } => {
                 let (events, fall) = model_switch::change_failed(state, model, reason);
                 out.extend(events);
