@@ -71,6 +71,6 @@ export type ProtocolCommand =
   | { type: "answer_request"; request_id: string; verdict: Verdict }
   | { type: "interrupt" }
   | { type: "set_permission_mode"; permission_mode: PermissionMode }
-  | { type: "resume"; external_session_id: string }
+  | { type: "resume"; external_session_id: string; model?: string | null }
   | { type: "list_models" }
   | { type: "set_model"; model: string };

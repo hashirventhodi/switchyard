@@ -389,7 +389,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         cwd: cwd.into(),
         permission_mode,
         // The Model chosen at start (#38 resumes on the Session's current Model).
-        model: state_model,
+        model: state_model.clone(),
         sandboxed,
         allowed_tools,
         disallowed_tools,
@@ -405,7 +405,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         }
     };
     let process = processes::record(&*inner.runtime.processes, handle.pid());
-    let sent = handle.send(AgentCommand::Resume { external_session_id: external_id });
+    let sent = handle.send(AgentCommand::Resume { external_session_id: external_id, model: state_model });
     // A relaunch starts the CLI again (perhaps upgraded since): refresh its Model list too.
     if sent.is_ok() {
         let _ = handle.send(AgentCommand::ListModels);

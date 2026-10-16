@@ -15,7 +15,7 @@ This crate is self-contained (no dependency on the rest of Switchyard) so it can
 
 ## Changes
 
-- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. New `list_models` command, answered by `models_listed` or `cannot_list_models`. Live Model switching: the `set_model` command, the `model_changed` and `model_change_failed` events, and the manifest's `switch_model_live` (false when left out, as from a 0.1 adapter).
+- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. New `list_models` command, answered by `models_listed` or `cannot_list_models`. Live Model switching: the `set_model` command, the `model_changed` and `model_change_failed` events, and the manifest's `switch_model_live` (false when left out, as from a 0.1 adapter). `resume` carries an optional `model` to resume on; a 0.1 `resume` without it means Default.
 - **0.1.0**: first version.
 
 ## Wire format
@@ -60,7 +60,7 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `answer_request` | `request_id`, `verdict` (below) |
 | `interrupt` | (none) |
 | `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
-| `resume` | `external_session_id` |
+| `resume` | `external_session_id`, `model` (optional): the Model to resume on. Absent or null means Default: the adapter passes no Model, so the CLI or the user's own settings decide |
 | `list_models` | (none): ask which Models the CLI offers. The host asks and the adapter translates the answer, so the adapter does no I/O |
 | `set_model` | `model` (a Model id): switch the live CLI to this Model from the main agent's next request on, leaving the request in flight alone. Answered by `model_changed` or `model_change_failed`. Only sent to an adapter whose manifest has `switch_model_live` |
 

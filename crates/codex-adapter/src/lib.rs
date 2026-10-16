@@ -749,8 +749,10 @@ impl Adapter for CodexAdapter {
 
     fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError> {
         Ok(match command {
+            // The Model to resume on is not passed to codex yet (#39).
             Command::Resume {
                 external_session_id,
+                ..
             } => {
                 if self.phase != Phase::New {
                     return Err(AdapterError("resume must be the first command".into()));

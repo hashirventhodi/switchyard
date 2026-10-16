@@ -261,7 +261,7 @@ fn resume_after_relaunch_relaunches_the_agent_by_its_external_session_id() {
     assert_eq!(launches[0].cwd, worktree);
     assert_eq!(launches[0].permission_mode, PermissionMode::AskFirst);
     let commands = core.agents.commands(0);
-    assert_eq!(commands[0], AgentCommand::Resume { external_session_id: "ext-42".into() });
+    assert_eq!(commands[0], AgentCommand::Resume { external_session_id: "ext-42".into(), model: None });
     assert!(matches!(&commands[1], AgentCommand::SendText { .. }), "{commands:?}");
     // The relaunched agent is recorded like any other: the next crash kills it too.
     let core = core.relaunch();
@@ -319,7 +319,7 @@ fn a_prompt_to_a_finished_session_after_relaunch_resumes_the_agent_first() {
     assert_eq!(
         core.agents.commands(0),
         vec![
-            AgentCommand::Resume { external_session_id: "ext-7".into() },
+            AgentCommand::Resume { external_session_id: "ext-7".into(), model: None },
             AgentCommand::SendText { text: "One more thing".into() },
         ]
     );
