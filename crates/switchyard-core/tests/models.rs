@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use adapter_protocol::{CliInfo, Event as AgentEvent, PermissionMode as ProtocolMode};
 use harness::{added_repository, recorded_events, started_session, Harness, TempRepo};
-use switchyard_schema::{AgentKind, Command, Entry, Event, ModelChoice, PermissionMode, SessionFacts};
+use switchyard_schema::{AgentKind, Command, Entry, Event, ModelChoice, PermissionMode, SessionFacts, Spend};
 
 fn setup() -> (Harness, TempRepo, PathBuf) {
     let repo = TempRepo::new("acme");
@@ -141,6 +141,103 @@ fn the_model_line_is_written_once_and_a_resumed_cli_does_not_repeat_it() {
     let events = core.agent_says(1, init(Some("claude-opus-5-5")));
 
     assert_eq!(system_lines(&events), Vec::<String>::new());
+}
+
+const TABLE: &str = r#"{
+  "version": "test-1",
+  "models": { "echo-model-1": { "input": 2.0, "output": 10.0, "cacheRead": 0.5 } }
+}"#;
+
+fn usage(model: Option<&str>, input: u64, output: u64, cache_read: u64) -> AgentEvent {
+    AgentEvent::TokenUsage {
+        model: model.map(str::to_string),
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: 0,
+        cost_usd: None,
+    }
+}
+
+/// Every SpendRecorded's spend in `events`.
+fn spends(events: &[Event]) -> Vec<Spend> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::SpendRecorded { spend, .. } => Some(spend.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// USD to cents, rounded to a hundredth of a cent (float noise aside).
+fn cents(usd: Option<f64>) -> Option<f64> {
+    usd.map(|usd| (usd * 10_000.0).round() / 100.0)
+}
+
+#[test]
+fn usage_on_an_unresolved_default_is_unpriced_until_a_model_name_resolves_it() {
+    let (mut core, _repo, worktree) = setup();
+    std::fs::write(core.data_dir().join("price-table.json"), TABLE).unwrap();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init(None));
+
+    let held = core.agent_says(0, usage(None, 100_000, 20_000, 400_000));
+    let held = spends(&held).pop().unwrap();
+    assert_eq!((held.reported_usd, held.estimated_usd), (None, None), "unpriced, never $0");
+    assert_eq!(held.by_model[0].model, None);
+
+    // The first concrete Model name resolves Default: the usage so far is on it.
+    let resolved = core.agent_says(0, usage(Some("echo-model-1-20261001"), 300_000, 50_000, 1_000_000));
+
+    assert_eq!(
+        system_lines(&resolved),
+        vec!["Model: Default resolved to echo-model-1-20261001; earlier usage is priced on it".to_string()]
+    );
+    assert_eq!(last_facts(&resolved).model.as_deref(), Some("echo-model-1-20261001"));
+    // 300k in * 2 + 50k out * 10 + 1M cache * 0.5 = 0.6 + 0.5 + 0.5: the running total on
+    // that Model, superseding what was reported before it had a name (never added to it).
+    let spend = spends(&resolved).pop().unwrap();
+    assert_eq!(cents(spend.estimated_usd), Some(160.0));
+    assert_eq!(spend.by_model.len(), 1);
+    assert_eq!(spend.by_model[0].model.as_deref(), Some("echo-model-1-20261001"));
+
+    let later = core.agent_says(0, usage(Some("echo-model-1-20261001"), 400_000, 50_000, 1_000_000));
+    assert_eq!(system_lines(&later), Vec::<String>::new(), "resolved once");
+}
+
+#[test]
+fn a_default_resolved_by_a_relaunched_cli_reprices_the_usage_held_until_then() {
+    let (mut core, _repo, worktree) = setup();
+    std::fs::write(core.data_dir().join("price-table.json"), TABLE).unwrap();
+    let id = started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init(None));
+    core.agent_says(0, usage(None, 100_000, 20_000, 400_000));
+    core.agent_says(0, AgentEvent::TurnComplete);
+    core.agent_exits(0, Some(0), "");
+    core.send(Command::SendPrompt { session_id: id, text: "Go on.".into() });
+
+    let events = core.agent_says(1, init(Some("echo-model-1-20261001")));
+
+    assert_eq!(
+        system_lines(&events),
+        vec!["Model: Default resolved to echo-model-1-20261001; earlier usage is priced on it".to_string()]
+    );
+    // 100k in * 2 + 20k out * 10 + 400k cache * 0.5 = 0.2 + 0.2 + 0.2
+    let spend = spends(&events).pop().expect("the held usage is repriced");
+    assert_eq!(cents(spend.estimated_usd), Some(60.0));
+}
+
+#[test]
+fn a_reported_model_never_counts_as_resolving_a_chosen_one() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session_on(&worktree, PermissionMode::AskFirst, model("claude-sonnet-5-5"), "Fix it."));
+    core.agent_says(0, init(None));
+
+    let events = core.agent_says(0, usage(Some("claude-haiku-4-5"), 10, 10, 0));
+
+    assert_eq!(system_lines(&events), Vec::<String>::new());
+    assert_eq!(last_facts(&core.send(Command::Attach)).model.as_deref(), Some("claude-sonnet-5-5"));
 }
 
 #[test]

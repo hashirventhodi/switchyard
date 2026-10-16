@@ -94,17 +94,19 @@ impl Usage {
 }
 
 /// What `reports` (oldest first) add up to: the latest report on each Model, each priced on
-/// its own Model (a report naming none on `session_model`), summed.
+/// its own Model, summed. A report naming no Model is on `session_model`, so it and a later
+/// report naming that Model are one running total (as when an unresolved Default resolves).
 pub(crate) fn spend(reports: &[Usage], session_model: Option<&str>, table: &PriceTable) -> Spend {
-    let mut latest: Vec<&Usage> = Vec::new();
+    let on = |r: &Usage| r.model.as_deref().or(session_model).map(str::to_string);
+    let mut latest: Vec<(Option<String>, &Usage)> = Vec::new();
     for report in reports {
-        match latest.iter_mut().find(|r| r.model == report.model) {
-            Some(slot) => *slot = report,
-            None => latest.push(report),
+        let model = on(report);
+        match latest.iter_mut().find(|(m, _)| *m == model) {
+            Some(slot) => slot.1 = report,
+            None => latest.push((model, report)),
         }
     }
-    let by_model: Vec<ModelSpend> =
-        latest.iter().map(|r| r.spend(r.model.as_deref().or(session_model), table)).collect();
+    let by_model: Vec<ModelSpend> = latest.iter().map(|(model, r)| r.spend(model.as_deref(), table)).collect();
     let sum = |cost: fn(&ModelSpend) -> Option<f64>| by_model.iter().filter_map(cost).reduce(|a, b| a + b);
     Spend {
         input_tokens: by_model.iter().map(|m| m.input_tokens).sum(),
