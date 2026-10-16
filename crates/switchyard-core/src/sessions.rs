@@ -15,7 +15,7 @@ use switchyard_schema::{
     Verdict,
 };
 
-use crate::spend::{PriceTable, Usage};
+use crate::spend::{self, PriceTable, Usage};
 use crate::agents::{self, AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::compat::{self, FailureClass};
 use crate::processes::{self, Recorded};
@@ -574,8 +574,8 @@ pub(crate) fn replay(inner: &Inner) {
         let id = &state.session.id;
         inner.emit(Event::SessionStarted { session: state.session.clone() });
         inner.emit(Event::SessionFactsChanged { session_id: id.clone(), facts: state.facts.clone() });
-        for usage in &state.usage {
-            inner.emit(spend_event(state, usage, &table));
+        for upto in 0..state.usage.len() {
+            inner.emit(spend_event(state, upto, &table));
         }
         for (index, entry) in state.transcript.iter().enumerate() {
             inner.emit(Event::TranscriptEntry { session_id: id.clone(), index: index as u32, entry: entry.clone() });
@@ -678,9 +678,10 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                     cause = Some(Cause::AgentFailed);
                 }
             }
-            AgentEvent::TokenUsage { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, .. } => {
+            AgentEvent::TokenUsage { model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd } => {
                 let usage = Usage {
                     at_ms: (inner.runtime.now_ms)(),
+                    model,
                     input_tokens,
                     output_tokens,
                     cache_read_tokens,
@@ -689,7 +690,7 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 };
                 state.usage.push(usage);
                 let table = PriceTable::read(&inner.data_dir);
-                out.push(spend_event(state, &usage, &table));
+                out.push(spend_event(state, state.usage.len() - 1, &table));
             }
             AgentEvent::ClassifierDenial { tool, detail, reason } => {
                 // Counted and noted; never a Permission request, so the status never moves.
@@ -808,9 +809,11 @@ fn replaced(state: &mut SessionState, index: usize) {
     }
 }
 
-fn spend_event(state: &SessionState, usage: &Usage, table: &PriceTable) -> Event {
-    let spend = usage.spend(state.facts.model.as_deref(), table);
-    Event::SpendRecorded { session_id: state.session.id.clone(), at_ms: usage.at_ms, spend }
+/// The Session's spend as of its usage report number `upto`, priced now.
+fn spend_event(state: &SessionState, upto: usize, table: &PriceTable) -> Event {
+    let reports = &state.usage[..=upto];
+    let spend = spend::spend(reports, state.facts.model.as_deref(), table);
+    Event::SpendRecorded { session_id: state.session.id.clone(), at_ms: reports[upto].at_ms, spend }
 }
 
 fn facts(state: &SessionState) -> Event {

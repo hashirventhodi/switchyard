@@ -37,8 +37,11 @@ function session(id: string, worktreePath: string, branch: string): Event {
 }
 
 const tokens = { inputTokens: 40, outputTokens: 310, cacheReadTokens: 24100, cacheWriteTokens: 2100 };
-const reported = (usd: number): Spend => ({ ...tokens, reportedUsd: usd, estimatedUsd: null, priceTableVersion: null });
-const estimated = (usd: number): Spend => ({ ...tokens, reportedUsd: null, estimatedUsd: usd, priceTableVersion: "test-1" });
+type Cost = Pick<Spend, "reportedUsd" | "estimatedUsd" | "priceTableVersion">;
+/** A Session's spend, all of it on one Model. */
+const onOneModel = (cost: Cost, model = "claude-opus-5-5"): Spend => ({ ...tokens, ...cost, byModel: [{ model, ...tokens, ...cost }] });
+const reported = (usd: number) => onOneModel({ reportedUsd: usd, estimatedUsd: null, priceTableVersion: null });
+const estimated = (usd: number) => onOneModel({ reportedUsd: null, estimatedUsd: usd, priceTableVersion: "test-1" }, "gpt-5.6-terra");
 const spent = (sessionId: string, atMs: number, spend: Spend): Event => ({ type: "spendRecorded", sessionId, atMs, spend });
 
 function launch(...events: Event[]) {
@@ -75,7 +78,7 @@ test("a token-only CLI's cost is an estimate, marked with a tilde and its price 
 
 test("with tokens but no price, the cost is unknown rather than zero", () => {
   vi.useFakeTimers({ now: at(12) });
-  const unpriced: Spend = { ...tokens, reportedUsd: null, estimatedUsd: null, priceTableVersion: null };
+  const unpriced = onOneModel({ reportedUsd: null, estimatedUsd: null, priceTableVersion: null }, "mystery-model");
   launch(session("session-1", "/wt/a", "fix/readme"), spent("session-1", at(11), unpriced));
 
   const cost = summaryCost();

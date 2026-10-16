@@ -11,15 +11,17 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
-use switchyard_schema::Spend;
+use switchyard_schema::{ModelSpend, Spend};
 
 const BUILT_IN: &str = include_str!("../price-table.json");
 const FILE_NAME: &str = "price-table.json";
 
-/// One token_usage report: running totals for the session, as of `at_ms`.
-#[derive(Debug, Clone, Copy)]
+/// One token_usage report: running totals for what the session has spent on `model`, as of
+/// `at_ms`. No `model` means the Session's Model (an agent that does not report per Model).
+#[derive(Debug, Clone)]
 pub(crate) struct Usage {
     pub at_ms: u64,
+    pub model: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
@@ -66,14 +68,15 @@ impl PriceTable {
 }
 
 impl Usage {
-    /// The spend this report stands for. A reported cost is never estimated over.
-    pub fn spend(&self, model: Option<&str>, table: &PriceTable) -> Spend {
+    /// The spend this report stands for, on `model`. A reported cost is never estimated over.
+    fn spend(&self, model: Option<&str>, table: &PriceTable) -> ModelSpend {
         let prices = match self.reported_usd {
             Some(_) => None,
             None => model.and_then(|m| table.prices(m)),
         };
         let per_million = |tokens: u64, usd: f64| tokens as f64 * usd / 1_000_000.0;
-        Spend {
+        ModelSpend {
+            model: model.map(str::to_string),
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cache_read_tokens: self.cache_read_tokens,
@@ -87,5 +90,30 @@ impl Usage {
             }),
             price_table_version: prices.map(|_| table.version.clone()),
         }
+    }
+}
+
+/// What `reports` (oldest first) add up to: the latest report on each Model, each priced on
+/// its own Model (a report naming none on `session_model`), summed.
+pub(crate) fn spend(reports: &[Usage], session_model: Option<&str>, table: &PriceTable) -> Spend {
+    let mut latest: Vec<&Usage> = Vec::new();
+    for report in reports {
+        match latest.iter_mut().find(|r| r.model == report.model) {
+            Some(slot) => *slot = report,
+            None => latest.push(report),
+        }
+    }
+    let by_model: Vec<ModelSpend> =
+        latest.iter().map(|r| r.spend(r.model.as_deref().or(session_model), table)).collect();
+    let sum = |cost: fn(&ModelSpend) -> Option<f64>| by_model.iter().filter_map(cost).reduce(|a, b| a + b);
+    Spend {
+        input_tokens: by_model.iter().map(|m| m.input_tokens).sum(),
+        output_tokens: by_model.iter().map(|m| m.output_tokens).sum(),
+        cache_read_tokens: by_model.iter().map(|m| m.cache_read_tokens).sum(),
+        cache_write_tokens: by_model.iter().map(|m| m.cache_write_tokens).sum(),
+        reported_usd: sum(|m| m.reported_usd),
+        estimated_usd: sum(|m| m.estimated_usd),
+        price_table_version: by_model.iter().find_map(|m| m.price_table_version.clone()),
+        by_model,
     }
 }
