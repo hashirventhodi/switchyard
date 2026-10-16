@@ -211,6 +211,18 @@ fn watch_new_folders(watches: &Mutex<HashMap<PathBuf, Watched>>, worktree: &Path
     found
 }
 
+/// Whether an OS event can mean something changed. inotify also reports a file being opened,
+/// read or closed unwritten (FSEvents does not); those are reads, and the core's own `git
+/// status` reading the index would otherwise count as a change and feed itself.
+fn changes_content(kind: &notify::EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    match kind {
+        notify::EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        notify::EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 impl Watcher for FsWatcher {
     fn watch(&self, watch: Watch, sink: ChangeSink) -> Result<(), String> {
         use notify::Watcher as _;
@@ -221,7 +233,7 @@ impl Watcher for FsWatcher {
             // An error (a lost watch, an overflowed queue) fails the watch: the core falls back
             // to re-deriving the Worktree on a slow cadence. Reported once.
             let paths = match result {
-                Ok(event) if event.paths.is_empty() => return,
+                Ok(event) if event.paths.is_empty() || !changes_content(&event.kind) => return,
                 Ok(event) => Ok(event.paths),
                 Err(_) if failed.swap(true, Ordering::SeqCst) => return,
                 Err(e) => Err(format!("the watcher for {} failed: {e}", worktree.display())),
