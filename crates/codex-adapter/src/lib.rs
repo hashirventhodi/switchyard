@@ -80,6 +80,65 @@ pub struct Launch {
     /// config for the servers in `mcp_servers` ([`McpRule`]).
     #[serde(default)]
     pub mcp_rules: Vec<McpRule>,
+    /// What the Session has spent on each Model so far, as the host last had it: a resumed
+    /// thread's `tokenUsage.total` may count every earlier turn on whatever Model, so this
+    /// launch's usage is reported as the Model's earlier total plus this launch's share of
+    /// the thread total ([`Tokens`]). Empty at start.
+    #[serde(default)]
+    pub spent: Vec<Spent>,
+}
+
+/// Running token totals on one Model, in protocol terms (input excludes cache reads).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Spent {
+    pub model: String,
+    #[serde(flatten)]
+    pub tokens: Tokens,
+}
+
+/// Token counts in protocol terms: `input_tokens` excludes cache reads (Codex's own input
+/// count includes them); Codex charges no cache writes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tokens {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+}
+
+impl Tokens {
+    /// A `tokenUsage` breakdown (`total` or `last`).
+    fn from_codex(breakdown: Option<&Value>) -> Tokens {
+        let count = |name: &str| {
+            breakdown
+                .and_then(|b| b.get(name))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        let cached = count("cachedInputTokens");
+        Tokens {
+            input_tokens: count("inputTokens").saturating_sub(cached),
+            output_tokens: count("outputTokens"),
+            cache_read_tokens: cached,
+        }
+    }
+
+    fn plus(self, other: Tokens) -> Tokens {
+        Tokens {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_read_tokens: self.cache_read_tokens + other.cache_read_tokens,
+        }
+    }
+
+    fn minus(self, other: Tokens) -> Tokens {
+        Tokens {
+            input_tokens: self.input_tokens.saturating_sub(other.input_tokens),
+            output_tokens: self.output_tokens.saturating_sub(other.output_tokens),
+            cache_read_tokens: self
+                .cache_read_tokens
+                .saturating_sub(other.cache_read_tokens),
+        }
+    }
 }
 
 /// A Grant (`allow`) or denial for one MCP tool, `tool` `*` meaning every tool of `server`.
@@ -155,6 +214,11 @@ pub struct CodexAdapter {
     resumed_on: Option<String>,
     /// The host asked for the Model list before the thread existed: asked once it does.
     list_wanted: bool,
+    /// A turn was started by this launch: its requests' usage is this launch's.
+    requested: bool,
+    /// The thread's token total before this launch's first request: what `tokenUsage.total`
+    /// already counted from earlier launches (on any Model). Set at the first report.
+    baseline: Option<Tokens>,
     /// The Model list's pages so far.
     listed: Vec<ListedModel>,
     /// From `initialize`'s user agent: the running CLI's version.
@@ -188,6 +252,8 @@ impl CodexAdapter {
             cli_version: None,
             resumed_on: None,
             list_wanted: false,
+            requested: false,
+            baseline: None,
             listed: Vec::new(),
             mode_override: None,
             pending: HashMap::new(),
@@ -298,6 +364,7 @@ impl CodexAdapter {
             params.insert("approvalPolicy".into(), approval);
             params.insert("sandboxPolicy".into(), sandbox);
         }
+        self.requested = true;
         self.request(Call::TurnStart, "turn/start", Value::Object(params))
     }
 
@@ -475,6 +542,39 @@ impl CodexAdapter {
             })
     }
 
+    /// `thread/tokenUsage/updated`: the running total on the thread's Model. Codex's `total`
+    /// is the thread's, across launches and Models: this launch's share is the total less
+    /// the baseline (what it was before this launch's first request, `total - last` at the
+    /// first report after one; all of it, for a report before any), added to what the host
+    /// had on this Model ([`Launch::spent`]). Right whether or not a resumed thread's total
+    /// counts its earlier launches.
+    fn token_usage(&mut self, params: &Value) -> Vec<Event> {
+        let total = Tokens::from_codex(params.pointer("/tokenUsage/total"));
+        let last = Tokens::from_codex(params.pointer("/tokenUsage/last"));
+        let requested = self.requested;
+        let baseline =
+            *self
+                .baseline
+                .get_or_insert_with(|| if requested { total.minus(last) } else { total });
+        let before = self
+            .launch
+            .spent
+            .iter()
+            .find(|s| Some(&s.model) == self.model.as_ref())
+            .map(|s| s.tokens)
+            .unwrap_or_default();
+        let tokens = before.plus(total.minus(baseline));
+        vec![Event::TokenUsage {
+            model: self.model.clone(),
+            input_tokens: tokens.input_tokens,
+            output_tokens: tokens.output_tokens,
+            cache_read_tokens: tokens.cache_read_tokens,
+            // OpenAI caches prompts without a write charge or count.
+            cache_write_tokens: 0,
+            cost_usd: None,
+        }]
+    }
+
     fn fail(&mut self, message: String) -> Vec<Event> {
         self.phase = Phase::Failed;
         self.queued.clear();
@@ -518,21 +618,7 @@ impl CodexAdapter {
             "mcpServer/startupStatus/updated" => self.mcp_startup(params),
             "item/started" => self.item_started(params.get("item").unwrap_or(&Value::Null)),
             "item/completed" => self.item_completed(params.get("item").unwrap_or(&Value::Null)),
-            "thread/tokenUsage/updated" => {
-                let total = params.pointer("/tokenUsage/total").unwrap_or(&Value::Null);
-                let count = |name: &str| total.get(name).and_then(Value::as_u64).unwrap_or(0);
-                let cached = count("cachedInputTokens");
-                vec![Event::TokenUsage {
-                    model: self.model.clone(),
-                    // The protocol's input excludes cache reads; Codex's includes them.
-                    input_tokens: count("inputTokens").saturating_sub(cached),
-                    output_tokens: count("outputTokens"),
-                    cache_read_tokens: cached,
-                    // OpenAI caches prompts without a write charge or count.
-                    cache_write_tokens: 0,
-                    cost_usd: None,
-                }]
-            }
+            "thread/tokenUsage/updated" => self.token_usage(params),
             "serverRequest/resolved" => {
                 if let Some(id) = params.get("requestId") {
                     self.pending.remove(&request_key(id));

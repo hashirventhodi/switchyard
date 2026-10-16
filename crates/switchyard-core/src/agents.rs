@@ -39,6 +39,21 @@ pub struct LaunchSpec {
     ///
     /// [`SpawnEnv::apply`]: crate::secrets::SpawnEnv::apply
     pub env: crate::secrets::SpawnEnv,
+    /// What the Session spent on each named Model before this launch (empty at start). A
+    /// CLI that reports usage as one total across launches and Models (Codex's thread
+    /// total) needs it to report each Model's own running total.
+    pub spent: Vec<SpentOn>,
+}
+
+/// A Session's running token totals on one Model, as its usage last reported them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpentOn {
+    pub model: String,
+    /// Excluding cache reads and cache writes.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
 }
 
 /// The protocol mode a launcher asks its CLI for: Full auto bypasses every check only in

@@ -228,6 +228,7 @@ fn begin(
         disallowed_tools,
         mcp_servers: mcp_servers.clone(),
         env: secrets::spawn_env(inner, &repo),
+        spent: Vec::new(),
     };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone(), 0)) {
         Ok(handle) => handle,
@@ -404,6 +405,7 @@ fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resu
         ));
     };
     let (cwd, permission_mode) = (state.session.worktree_path.clone(), state.session.permission_mode);
+    let spent = spent_so_far(state);
     let (state_model, state_launch) = (resumed.model.clone(), state.launch);
     let repository_id = state.session.repository_id.clone();
     // Grants as they are now: some may have been made or revoked since the session began.
@@ -432,6 +434,7 @@ fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resu
         mcp_servers: mcp_servers.clone(),
         // Secrets as granted now: a revoke since the session began takes effect here.
         env: repository.as_ref().map(|repo| secrets::spawn_env(inner, repo)).unwrap_or_default(),
+        spent,
     };
     let launch = state_launch + 1;
     let mut handle = match inner.runtime.agents.launch(spec, sink(core, id.to_string(), launch)) {
@@ -940,6 +943,22 @@ fn replaced(state: &mut SessionState, index: usize) {
     if index < state.saved.entries {
         state.saved.chunks.insert(index / CHUNK);
     }
+}
+
+/// What the Session has spent on each named Model so far, for a relaunched agent.
+fn spent_so_far(state: &SessionState) -> Vec<agents::SpentOn> {
+    spend::latest(&state.usage, state.facts.model.as_deref())
+        .into_iter()
+        .filter_map(|(model, usage)| {
+            Some(agents::SpentOn {
+                model: model?,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_tokens: usage.cache_read_tokens,
+                cache_write_tokens: usage.cache_write_tokens,
+            })
+        })
+        .collect()
 }
 
 /// The Session's spend as of its usage report number `upto`, priced now.
