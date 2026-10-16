@@ -207,6 +207,24 @@ fn usage_on_an_unresolved_default_is_unpriced_until_a_model_name_resolves_it() {
 }
 
 #[test]
+fn a_claude_code_default_its_init_does_not_name_is_resolved_by_its_usage() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix the README."));
+
+    let events = core.agent_replays(0, &recorded_events("claude-code/default-not-reported"));
+
+    assert_eq!(
+        system_lines(&events),
+        vec![
+            "Model: Default (not reported)".to_string(),
+            "Model: Default resolved to claude-opus-5-5; earlier usage is priced on it".to_string(),
+        ]
+    );
+    assert_eq!(last_facts(&events).model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(spends(&events).pop().unwrap().reported_usd, Some(0.0412));
+}
+
+#[test]
 fn a_default_resolved_by_a_relaunched_cli_reprices_the_usage_held_until_then() {
     let (mut core, _repo, worktree) = setup();
     std::fs::write(core.data_dir().join("price-table.json"), TABLE).unwrap();
