@@ -238,6 +238,66 @@ fn on_a_cli_that_cannot_switch_live_the_pending_switch_wins_over_an_earlier_conf
     assert_eq!(resumed_on(&core, 2).as_deref(), Some("claude-haiku-4-5"), "it could not be applied any other way");
 }
 
+const RETIRED: &str = "claude-opus-4-1";
+const NOT_FOUND: &str = "There's an issue with the selected model (claude-opus-4-1).";
+
+fn statuses(events: &[Event]) -> Vec<switchyard_schema::SessionStatus> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::SessionStatusChanged { status, .. } => Some(*status),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_resume_the_cli_cannot_run_on_its_model_falls_back_to_default_once_with_a_note() {
+    let (mut core, _repo, worktree) = setup();
+    let id = started_on(&mut core, &worktree, ModelChoice::Model { id: RETIRED.into() });
+    let mut core = reopened(core);
+    resume(&mut core, &id);
+    assert_eq!(resumed_on(&core, 0).as_deref(), Some(RETIRED));
+    core.agent_says(0, init(Some(RETIRED)));
+
+    let failed = core.agent_says(0, AgentEvent::ModelChangeFailed { model: RETIRED.into(), reason: Some(NOT_FOUND.into()) });
+
+    assert_eq!(core.agents.launches().len(), 2, "resumed once more");
+    assert_eq!(resumed_on(&core, 1), None, "on Default");
+    assert_eq!(
+        core.agents.commands(1)[1],
+        AgentCommand::SendText { text: "Continue where you left off.".into() },
+        "told to continue again"
+    );
+    assert!(
+        failed.iter().any(|e| matches!(e, Event::ModelSwitchFailed { model, reason: Some(r), .. } if model == RETIRED && r == NOT_FOUND)),
+        "{failed:#?}"
+    );
+    assert_eq!(system_lines(&failed), vec![format!("Could not resume on {RETIRED}: {NOT_FOUND} Resumed on Default.")]);
+    assert!(statuses(&failed).is_empty(), "the Session runs on: {failed:#?}");
+
+    // The Default it resumed on fails too: nothing more is tried.
+    core.agent_says(1, AgentEvent::ModelChangeFailed { model: RETIRED.into(), reason: Some(NOT_FOUND.into()) });
+    assert_eq!(core.agents.launches().len(), 2);
+}
+
+#[test]
+fn a_switch_applied_on_resume_that_the_cli_cannot_run_falls_back_to_default() {
+    let (mut core, _repo, worktree) = setup();
+    let id = started_on(&mut core, &worktree, ModelChoice::Model { id: OPUS.into() });
+    core.agent_exits(0, Some(1), "");
+    switch(&mut core, &id, RETIRED);
+    core.send(Command::SendPrompt { session_id: id.clone(), text: "Go on.".into() });
+    assert_eq!(resumed_on(&core, 1).as_deref(), Some(RETIRED));
+    core.agent_says(1, init(Some(RETIRED)));
+
+    let failed = core.agent_says(1, AgentEvent::ModelChangeFailed { model: RETIRED.into(), reason: Some(NOT_FOUND.into()) });
+
+    assert_eq!(switch_state(&failed), Some((None, None)), "the control goes back");
+    assert_eq!(resumed_on(&core, 2), None);
+    assert_eq!(core.agents.commands(2)[1], AgentCommand::SendText { text: "Go on.".into() }, "the prompt goes again");
+}
+
 #[test]
 fn a_switch_sent_to_an_agent_that_then_exited_is_sent_again_to_the_relaunched_one() {
     let (mut core, _repo, worktree) = setup();
