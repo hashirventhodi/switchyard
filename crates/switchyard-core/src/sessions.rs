@@ -638,14 +638,15 @@ pub(crate) fn note_running(inner: &mut Inner, repository_id: &str, text: &str) {
 }
 
 /// Ask one Session whose agent of `kind` is running CLI `cli_version` to list its Models (a
-/// background refresh of the Model-list cache; the answer arrives as agent output).
-pub(crate) fn ask_for_models(inner: &mut Inner, kind: AgentKind, cli_version: &str) {
+/// background refresh of the Model-list cache; the answer arrives as agent output). False
+/// when there is no such Session.
+pub(crate) fn ask_for_models(inner: &mut Inner, kind: AgentKind, cli_version: &str) -> bool {
     let live = inner.sessions.list.iter().find(|s| {
         s.session.agent == kind && s.agent.is_some() && s.facts.cli_version.as_deref() == Some(cli_version)
     });
-    if let Some(id) = live.map(|s| s.session.id.clone()) {
-        send_to_agent(inner, &id, AgentCommand::ListModels);
-    }
+    let Some(id) = live.map(|s| s.session.id.clone()) else { return false };
+    send_to_agent(inner, &id, AgentCommand::ListModels);
+    true
 }
 
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).

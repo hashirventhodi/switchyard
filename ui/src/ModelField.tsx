@@ -43,5 +43,5 @@ function listNote(list: ModelList | undefined): string {
     const why = list.reason ? ` (${list.reason})` : "";
     return `This CLI did not list its Models${why}: type a Model id, or leave it blank for Default`;
   }
-  return "Model list loads after the first session with this CLI";
+  return "The Model list is loading from this CLI: type a Model id, or leave it blank for Default";
 }

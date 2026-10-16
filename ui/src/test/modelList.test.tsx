@@ -87,7 +87,7 @@ test("with no list yet, the Model is free text with a note that the list comes l
 
   expect(dialog.getByLabelText("Model").tagName).toBe("INPUT");
   expect(dialog.getByRole("note", { name: "Model list" }).textContent).toBe(
-    "Model list loads after the first session with this CLI",
+    "The Model list is loading from this CLI: type a Model id, or leave it blank for Default",
   );
 });
 

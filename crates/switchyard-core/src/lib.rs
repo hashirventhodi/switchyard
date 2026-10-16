@@ -153,6 +153,8 @@ pub(crate) struct Inner {
     /// the slow cadence and the end of a turn compare with, so unchanged configuration is
     /// not pushed again.
     config_stamps: std::collections::HashMap<String, u64>,
+    /// Agents started only to list their CLI's Models (New session with no Session running).
+    listers: models::Listers,
 }
 
 #[derive(Debug)]
@@ -185,6 +187,7 @@ impl Core {
             unwatched: Default::default(),
             watched_memory: Default::default(),
             config_stamps: Default::default(),
+            listers: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;

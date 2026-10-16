@@ -214,6 +214,9 @@ pub struct CodexAdapter {
     resumed_on: Option<String>,
     /// The host asked for the Model list before the thread existed: asked once it does.
     list_wanted: bool,
+    /// The host's first command was `list_models`: it started the adapter only to list (no
+    /// Session runs), so Codex is initialised and asked, and no thread is ever started.
+    listing_only: bool,
     /// A turn was started by this launch: its requests' usage is this launch's.
     requested: bool,
     /// The thread's token total before this launch's first request: what `tokenUsage.total`
@@ -252,6 +255,7 @@ impl CodexAdapter {
             cli_version: None,
             resumed_on: None,
             list_wanted: false,
+            listing_only: false,
             requested: false,
             baseline: None,
             listed: Vec::new(),
@@ -385,6 +389,11 @@ impl CodexAdapter {
                     .and_then(version_from_user_agent);
                 self.replies
                     .push(json!({ "method": "initialized" }).to_string());
+                if self.listing_only {
+                    let list = self.model_list(None);
+                    self.replies.push(list);
+                    return vec![];
+                }
                 let read = self.request(
                     Call::ConfigRead,
                     "config/read",
@@ -984,11 +993,16 @@ impl Adapter for CodexAdapter {
                 }
                 vec![]
             }
-            // model/list needs the thread's process initialised: until the thread exists the
-            // ask is held, and goes out after its first turn/start.
+            // model/list needs Codex initialised: during a Session's handshake the ask is held,
+            // and goes out after its first turn/start.
             Command::ListModels => match self.phase {
                 Phase::Ready => vec![self.model_list(None)],
-                Phase::New | Phase::Starting => {
+                // The first command: started only to list, so no thread is needed.
+                Phase::New => {
+                    self.listing_only = true;
+                    vec![self.initialize()]
+                }
+                Phase::Starting => {
                     self.list_wanted = true;
                     vec![]
                 }

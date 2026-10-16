@@ -479,8 +479,9 @@ pub enum Command {
         value: String,
     },
     /// New session is open on `agent`: the core answers at once with
-    /// [`Event::ModelsChanged`] from its cache (never waiting on the CLI) and asks a live
-    /// Session's CLI for a fresh list in the background.
+    /// [`Event::ModelsChanged`] from its cache (never waiting on the CLI) and asks for a fresh
+    /// list in the background: of a live Session's CLI, or, with none running, of the CLI
+    /// started only to list (and stopped once it answered).
     ReadModels { agent: AgentKind },
     /// Switch a running Session to another Model (the composer's Model control). It applies
     /// from the agent's next request and is pending until the agent's own requests run on

@@ -207,12 +207,23 @@ pub(crate) fn spawn_env(inner: &Inner, repo: &StoredRepository) -> SpawnEnv {
             env.set.insert(secret.name, value);
         }
     }
+    env.remove = known(inner).into_iter().filter(|name| !env.set.contains_key(name)).collect();
+    env
+}
+
+/// The environment for a spawn outside any Repository: every secret name Switchyard knows
+/// stripped, none set.
+pub(crate) fn no_secrets_env(inner: &Inner) -> SpawnEnv {
+    SpawnEnv { set: Default::default(), remove: known(inner) }
+}
+
+/// Every secret name Switchyard knows: stored for any repository, or declared by one.
+fn known(inner: &Inner) -> BTreeSet<String> {
     let mut known: BTreeSet<String> = rows(inner.store.db(), None).unwrap_or_default().into_iter().map(|r| r.name).collect();
     for other in inner.store.repositories().unwrap_or_default() {
         known.extend(declared(&other).into_keys());
     }
-    env.remove = known.into_iter().filter(|name| !env.set.contains_key(name)).collect();
-    env
+    known
 }
 
 /// The `addSecret` command: a local name, not granted.

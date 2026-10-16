@@ -32,7 +32,8 @@
 //   {"op":"set_permission_mode","mode":"<CLI mode>","permission_mode":"<protocol mode>"}
 //                                                        await query.setPermissionMode(mode)
 //   {"op":"list_models"}                                 query.supportedModels(), written back
-//                                                        as a supported_models line
+//                                                        as a supported_models line (starting
+//                                                        the query, with no prompt, if none is)
 //   {"op":"set_model","model"}                           await query.setModel(model)
 //
 // Model switches: only the main agent's own requests (assistant messages with no

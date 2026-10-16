@@ -245,7 +245,9 @@ pub enum Command {
         model: Option<String>,
     },
     /// Ask the CLI which Models it offers. Answered by [`Event::ModelsListed`] or
-    /// [`Event::CannotListModels`]; the host does the asking, so the adapter does no I/O.
+    /// [`Event::CannotListModels`]; the host does the asking, so the adapter does no I/O. As
+    /// the first command it means the adapter was started only to list: it starts its CLI
+    /// without a prompt or a conversation, and the host stops it once it answered.
     ListModels,
     /// Switch the running CLI to another Model, from the main agent's next request on (the
     /// request in flight is left alone). Answered by [`Event::ModelChanged`] once the main
