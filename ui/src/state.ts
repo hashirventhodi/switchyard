@@ -9,6 +9,7 @@ import type { ConflictFile } from "./schema/ConflictFile";
 import type { ContextFile } from "./schema/ContextFile";
 import type { DeclaredMcpServer } from "./schema/DeclaredMcpServer";
 import type { Entry } from "./schema/Entry";
+import type { ModelChoice } from "./schema/ModelChoice";
 import type { ModelList } from "./schema/ModelList";
 import type { Policy } from "./schema/Policy";
 import type { Secret } from "./schema/Secret";
@@ -124,7 +125,17 @@ export interface State {
   activity: Activity[];
   /** The Models each agent's installed CLI offers, as the core last sent from its cache. */
   modelLists: Partial<Record<AgentKind, ModelList>>;
+  /** What New session pre-fills, by `prefillKey(agent, repositoryId)`: the last Model
+   * choice there, and the remembered Model it replaced with Default when no longer offered. */
+  modelPrefills: Record<string, ModelPrefill>;
 }
+
+export interface ModelPrefill {
+  choice: ModelChoice;
+  retired: string | null;
+}
+
+export const prefillKey = (agent: AgentKind, repositoryId: string) => `${agent} ${repositoryId}`;
 
 /** One line of the activity feed. */
 export interface Activity {
@@ -218,6 +229,7 @@ export const initialState: State = {
   contextFiles: {},
   mcpDeclared: {},
   modelLists: {},
+  modelPrefills: {},
 };
 
 const noFacts: SessionFacts = {
@@ -454,6 +466,10 @@ export function reduce(state: State, event: Event): State {
       return { ...state, secrets: { ...state.secrets, [event.repositoryId]: event.secrets } };
     case "modelsChanged":
       return { ...state, modelLists: { ...state.modelLists, [event.agent]: event.models } };
+    case "modelPrefill": {
+      const prefill = { choice: event.choice, retired: event.retired };
+      return { ...state, modelPrefills: { ...state.modelPrefills, [prefillKey(event.agent, event.repositoryId)]: prefill } };
+    }
     case "forgeChecked":
       return { ...state, forge: event.forge };
     case "pullRequestChanged": {
