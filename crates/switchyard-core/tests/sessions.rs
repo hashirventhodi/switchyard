@@ -37,6 +37,8 @@ fn starting_a_session_launches_claude_code_in_the_worktree_and_sends_the_prompt(
                     agent: AgentKind::ClaudeCode,
                     permission_mode: PermissionMode::AskFirst,
                     model: Default::default(),
+                    switched_model: None,
+                    pending_model: None,
                     status: SessionStatus::Running,
                     started_at_ms: NOW_MS,
                 },

@@ -478,6 +478,16 @@ pub enum Command {
         name: String,
         value: String,
     },
+    /// Switch a running Session to another Model (the composer's Model control). It applies
+    /// from the agent's next request and is pending until the agent's own requests run on
+    /// it ([`Event::SessionModelChanged`]), or fails ([`Event::ModelSwitchFailed`]).
+    SetModel {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        /// A Model id.
+        model: String,
+    },
 }
 
 /// Every [`Command`]'s wire name (its `type` tag), for refusals raised before or apart from
@@ -540,8 +550,9 @@ pub mod command_name {
     pub const ADD_SECRET: &str = "addSecret";
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
+    pub const SET_MODEL: &str = "setModel";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, SET_MODEL];
 }
 
 impl Command {
@@ -605,6 +616,7 @@ impl Command {
             Command::AddSecret { .. } => command_name::ADD_SECRET,
             Command::RemoveSecret { .. } => command_name::REMOVE_SECRET,
             Command::SetSecretValue { .. } => command_name::SET_SECRET_VALUE,
+            Command::SetModel { .. } => command_name::SET_MODEL,
         }
     }
 }
@@ -1017,6 +1029,30 @@ pub enum Event {
         #[ts(rename = "repositoryId")]
         repository_id: String,
         secrets: Vec<Secret>,
+    },
+    /// A Session's Model switch moved on, replacing its `pendingModel` and `switchedModel`
+    /// (see [`Session`]): a switch asked for, confirmed or failed. The Model the agent runs
+    /// on is in its facts.
+    SessionModelChanged {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "pendingModel")]
+        #[ts(rename = "pendingModel")]
+        pending_model: Option<String>,
+        #[serde(rename = "switchedModel")]
+        #[ts(rename = "switchedModel")]
+        switched_model: Option<String>,
+    },
+    /// A switch to `model` did not take: the CLI refused it (`reason`, when it gave one) or
+    /// the agent's next request was still on the old Model. The Session carries on on the
+    /// Model it runs on, in the same status; nothing is retried.
+    ModelSwitchFailed {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        model: String,
+        reason: Option<String>,
     },
 }
 
@@ -1641,6 +1677,16 @@ pub struct Session {
     /// The Model chosen at start (a Model id, or Default).
     #[serde(default)]
     pub model: ModelChoice,
+    /// The Model the user last switched to, once the agent's own requests were confirmed
+    /// on it; none before the first confirmed switch.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub switched_model: Option<String>,
+    /// A switch the user asked for that is neither confirmed nor failed yet (also one
+    /// waiting for a Permission request's answer, or for the agent to be running again).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub pending_model: Option<String>,
     pub status: SessionStatus,
     /// Milliseconds since the Unix epoch.
     #[ts(type = "number")]

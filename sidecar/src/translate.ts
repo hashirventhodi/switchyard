@@ -167,7 +167,9 @@ export class ClaudeTranslator {
         // The CLI reloads the conversation itself (`--resume <id>`), so the agent keeps its context.
         return [{ op: "resume", session_id: command.external_session_id }];
       case "set_model":
-        this.switching = { model: command.model, skip: this.inFlight };
+        // Back to the Model the main agent runs on: nothing to check.
+        this.switching =
+          command.model === (this.mainModel ?? this.initModel) ? null : { model: command.model, skip: this.inFlight };
         return [{ op: "set_model", model: command.model }];
     }
   }

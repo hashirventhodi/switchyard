@@ -349,6 +349,14 @@ export function reduce(state: State, event: Event): State {
       return updateSession(state, event.sessionId, (s) => ({ ...s, permissionMode: event.permissionMode }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
+    case "sessionModelChanged":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        pendingModel: event.pendingModel,
+        switchedModel: event.switchedModel,
+      }));
+    case "modelSwitchFailed":
+      return state;
     case "spendRecorded":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
