@@ -107,6 +107,19 @@ fn the_models_a_cli_lists_are_cached_with_when_they_were_fetched() {
 }
 
 #[test]
+fn attaching_pushes_each_agents_cached_list_so_the_composer_has_it_too() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+    core.agent_says(0, offered(&["opus", "sonnet"]));
+
+    let attach = core.send(Command::Attach);
+
+    assert_eq!(models_changed(&attach, AgentKind::ClaudeCode), vec![listed(&["opus", "sonnet"])]);
+    assert_eq!(list_requests(&core, 0), 1, "from the cache: no CLI is asked");
+}
+
+#[test]
 fn a_cli_that_cannot_list_models_is_remembered_as_such() {
     let (mut core, _repo, worktree) = setup();
     started_session(&core.start_session(&worktree, "Fix it."));

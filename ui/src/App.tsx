@@ -543,6 +543,7 @@ export function App({
                 pending={state.requests[shownSession.id] ?? NONE}
                 policy={state.policies[shownSession.repositoryId]}
                 switchModelLive={switchesModelLive(state.agents, shownSession.agent)}
+                modelList={state.modelLists[shownSession.agent]}
                 revealRequest={reveal}
                 branchState={
                   <>

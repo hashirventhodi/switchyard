@@ -2,6 +2,7 @@
 // transcript and the composer.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { PermissionMode } from "./schema/PermissionMode";
+import type { ModelList } from "./schema/ModelList";
 import type { Policy } from "./schema/Policy";
 import { useAction } from "./actions";
 import { at } from "./chunked";
@@ -42,6 +43,8 @@ export interface SessionViewProps {
   /** The agent switches its Model live; otherwise the composer's Model control reads
    * "applies on resume". */
   switchModelLive?: boolean;
+  /** The agent's cached Model list, for the composer's Model control. */
+  modelList?: ModelList;
   /** Show the review pane on its Changes tab (the Finished and Paused boxes). */
   onReviewChanges?: () => void;
   /** Open a shell in the session's worktree (the Error box). */
@@ -132,6 +135,7 @@ export function SessionView(props: SessionViewProps) {
         draft={draft}
         ceiling={policy?.ceiling ?? null}
         switchModelLive={props.switchModelLive ?? false}
+        modelList={props.modelList}
       />
     </section>
   );
@@ -409,8 +413,9 @@ function Composer(props: {
   draft: Draft;
   ceiling: PermissionMode | null;
   switchModelLive: boolean;
+  modelList?: ModelList;
 }) {
-  const { session, send, pending, input, draft, ceiling, switchModelLive } = props;
+  const { session, send, pending, input, draft, ceiling, switchModelLive, modelList } = props;
   const [text, setText] = useState("");
   useEffect(() => {
     if (draft.seq === 0) return;
@@ -454,7 +459,7 @@ function Composer(props: {
       <div className="composer">
         <div className="composer-controls">
           <ModeSegment session={session} send={send} ceiling={ceiling} />
-          <ModelSwitch session={session} send={send} live={switchModelLive} />
+          <ModelSwitch session={session} send={send} live={switchModelLive} list={modelList} />
         </div>
         <textarea
           ref={input}

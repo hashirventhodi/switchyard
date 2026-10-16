@@ -167,3 +167,40 @@ test("a Codex Session's control reads that a switch applies on resume", () => {
 
   expect(sent).toContainEqual({ type: "setModel", sessionId: "session-1", model: "gpt-5.6-sol" });
 });
+
+const aliases: Event = {
+  type: "modelsChanged",
+  agent: "claudeCode",
+  models: {
+    type: "listed",
+    models: [
+      { id: "opus", displayName: "Opus", resolvedModel: "claude-opus-5-5" },
+      { id: "sonnet", displayName: "Sonnet", resolvedModel: "claude-sonnet-5-5" },
+    ],
+    fetchedAtMs: 1_760_000_000_000,
+  },
+};
+const picker = () => within(control()).getByRole("combobox", { name: "Model" }) as HTMLSelectElement;
+
+test("with a cached list the control picks from the Models the CLI listed, as New session does", () => {
+  const { sent } = launch(aliases, { type: "sessionStarted", session }, runningOn("claude-opus-5-5"));
+
+  expect([...picker().options].map((o) => o.textContent)).toEqual(["Opus", "Sonnet"]);
+  expect(picker().value).toBe("opus");
+  expect(within(control()).getByRole("button", { name: "Switch" })).toHaveProperty("disabled", true);
+
+  fireEvent.change(picker(), { target: { value: "sonnet" } });
+  fireEvent.click(within(control()).getByRole("button", { name: "Switch" }));
+
+  expect(sent).toContainEqual({ type: "setModel", sessionId: "session-1", model: "sonnet" });
+});
+
+test("a list that arrives after the user typed in the control leaves the typed Model beside it", () => {
+  const { emit } = launch({ type: "sessionStarted", session }, runningOn("claude-opus-5-5"));
+  fireEvent.change(field(), { target: { value: "claude-opus-5-5[1m]" } });
+
+  act(() => emit(aliases));
+
+  expect(field().value).toBe("claude-opus-5-5[1m]");
+  expect(within(control()).getByRole("combobox", { name: "Listed Models" })).toBeTruthy();
+});

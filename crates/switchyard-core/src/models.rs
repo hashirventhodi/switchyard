@@ -118,6 +118,18 @@ pub(crate) fn read(inner: &mut Inner, agent: AgentKind) {
     crate::sessions::ask_for_models(inner, agent, &version);
 }
 
+/// On attach: each agent's cached list for its installed CLI (Empty when none), so the
+/// composer's Model switch has it without opening New session. Nothing is refreshed here.
+pub(crate) fn replay(inner: &mut Inner) {
+    for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let models = match crate::compat::installed_version(inner, agent) {
+            Some(version) => cached(inner.store.db(), agent, &version),
+            None => ModelList::Empty,
+        };
+        inner.emit(Event::ModelsChanged { agent, models });
+    }
+}
+
 /// A Session started on `choice` for `agent` in `repository_id`: New session pre-fills it
 /// next time. Default is remembered as Default, not as what it resolved to.
 pub(crate) fn remember(inner: &Inner, agent: AgentKind, repository_id: &str, choice: &ModelChoice) {

@@ -378,6 +378,7 @@ impl Inner {
     fn attach(&mut self) {
         self.emit(Event::Attached);
         compat::replay(self);
+        models::replay(self);
         forge::replay_setup(self);
         let stored = match self.store.repositories() {
             Ok(list) => list,
