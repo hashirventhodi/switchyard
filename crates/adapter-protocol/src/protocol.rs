@@ -105,7 +105,9 @@ pub enum Event {
         reason: Option<String>,
     },
     /// The main agent's own requests now run on `model`, a different Model from its last
-    /// request. Never sent for a subagent's, a compaction's or any other background call's
+    /// request; also sent for its first request when [`Event::SessionInit`] named no Model,
+    /// which is how the host resolves an unreported Default (never from
+    /// [`Event::TokenUsage`], whose Model may be a subagent's). Never sent for a subagent's, a compaction's or any other background call's
     /// Model (their usage still comes as [`Event::TokenUsage`] on that Model). An adapter that
     /// cannot tell the main agent's requests from the others never sends it, and says so in
     /// its manifest (`switch_model_live: false`).

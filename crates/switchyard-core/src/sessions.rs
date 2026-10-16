@@ -799,17 +799,11 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
                     cache_write_tokens,
                     reported_usd: cost_usd,
                 };
-                let named = usage.model.clone();
+                // Usage on a named Model never resolves Default: it may be a subagent's or a
+                // background call's. Only the main agent's own Model does (init, model_changed).
                 state.usage.push(usage);
                 let table = PriceTable::read(&inner.data_dir);
-                match named {
-                    // The first concrete Model name resolves an unresolved Default.
-                    Some(model) if unresolved_default(state) => {
-                        out.extend(resolve_default(state, model, &table));
-                        out.push(facts(state));
-                    }
-                    _ => out.push(spend_event(state, state.usage.len() - 1, &table)),
-                }
+                out.push(spend_event(state, state.usage.len() - 1, &table));
             }
             AgentEvent::ClassifierDenial { tool, detail, reason } => {
                 // Counted and noted; never a Permission request, so the status never moves.
@@ -821,7 +815,9 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
             event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. }) => {
                 model_list = crate::models::from_agent(event, (inner.runtime.now_ms)());
             }
-            AgentEvent::ModelChanged { model } => out.extend(model_switch::changed(state, model, &names)),
+            AgentEvent::ModelChanged { model } => {
+                out.extend(model_switch::changed(state, model, &names, &PriceTable::read(&inner.data_dir)))
+            }
             AgentEvent::ModelChangeFailed { model, reason } => {
                 let (events, fall) = model_switch::change_failed(state, model, reason);
                 out.extend(events);
@@ -964,14 +960,14 @@ fn start_line(choice: &ModelChoice, running: Option<&str>) -> String {
 }
 
 /// Started on Default, and the CLI has not yet named the Model Default runs on: usage
-/// meanwhile is unpriced.
+/// meanwhile is unpriced (except usage the CLI itself reports on a named Model).
 fn unresolved_default(state: &SessionState) -> bool {
     state.session.model == ModelChoice::Default && state.facts.model.is_none()
 }
 
-/// Default resolves to `model`, the first concrete Model name the CLI gave: noted in the
-/// Agent log, and the usage held unpriced until now priced on it, once, here. The caller
-/// reports the facts.
+/// Default resolves to `model`, the first Model the CLI named for the main agent (a later
+/// init, or the main agent's first request): noted in the Agent log, and the usage held
+/// unpriced until now priced on it, once, here. The caller reports the facts.
 fn resolve_default(state: &mut SessionState, model: String, table: &PriceTable) -> Vec<Event> {
     let text = format!("Model: Default resolved to {model}; earlier usage is priced on it");
     state.facts.model = Some(model);

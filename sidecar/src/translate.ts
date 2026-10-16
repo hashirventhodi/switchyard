@@ -37,7 +37,8 @@
 //
 // Model switches: only the main agent's own requests (assistant messages with no
 // parent_tool_use_id) count; a subagent's or background call's Model never does. A main
-// request on a different Model from the last one is model_changed. After set_model, the
+// request on a different Model from the last one is model_changed, and so is the first main
+// request when init named no Model: that is how an unreported Default resolves. After set_model, the
 // first main request that starts after it is checked: still on the old Model is
 // model_change_failed. A request already in flight when set_model came is left alone.
 // A request the CLI fails with model_not_found (its synthetic error message) is
@@ -262,6 +263,12 @@ export class ClaudeTranslator {
     if (!model) return [];
     const last = this.mainModel;
     this.mainModel = model;
+    // Init did not name the Model (an unreported Default): the main agent's first request is
+    // the first word on it, and settles any switch made before it (the host compares).
+    if (last === null && this.initModel === null) {
+      this.switching = null;
+      return [{ type: "model_changed", model }];
+    }
     const switching = this.switching;
     if (switching?.skip) {
       // The request that was in flight at the switch: not the one the switch applies to.

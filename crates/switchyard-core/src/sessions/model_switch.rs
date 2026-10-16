@@ -13,9 +13,13 @@ use adapter_protocol::Command as AgentCommand;
 use switchyard_schema::command_name;
 use switchyard_schema::{Entry, Event};
 
-use super::{append, change_status, facts, find, relaunch, requests, send_text, send_to_agent, Cause, SessionState};
+use super::{
+    append, change_status, facts, find, relaunch, requests, resolve_default, send_text, send_to_agent, unresolved_default, Cause,
+    SessionState,
+};
 use crate::compat;
 use crate::models::{self, Names};
+use crate::spend::PriceTable;
 use crate::Inner;
 
 /// A relaunched agent, until its first request has run.
@@ -171,8 +175,9 @@ fn not_taken(model: &str, reason: &str) -> String {
 /// that Model (by its id, or the full id an alias stands for), sent or still queued.
 /// Anything else is the agent moving itself: noted, never recorded as a switch, and the
 /// Session's Model stays as it was (a resume goes back to it). A switch that was sent and
-/// whose next request ran on yet another Model did not take.
-pub(super) fn changed(state: &mut SessionState, model: String, names: &Names) -> Vec<Event> {
+/// whose next request ran on yet another Model did not take. On a Default the CLI did not
+/// name at init, the first one resolves Default ([`resolve_default`]).
+pub(super) fn changed(state: &mut SessionState, model: String, names: &Names, table: &PriceTable) -> Vec<Event> {
     let mut out = Vec::new();
     if state.session.pending_model.as_deref().is_some_and(|pending| names.same(pending, &model)) {
         state.session.pending_model = None;
@@ -184,11 +189,20 @@ pub(super) fn changed(state: &mut SessionState, model: String, names: &Names) ->
         out.push(facts(state));
         return out;
     }
+    // A Default the CLI did not name at init: the main agent's first request says what it is.
+    let resolves = unresolved_default(state);
+    if resolves {
+        out.extend(resolve_default(state, model.clone(), table));
+        out.push(facts(state));
+    }
     if let (false, Some(pending)) = (state.switch_queued, state.session.pending_model.take()) {
         let reason = format!("the agent's next request ran on {model}");
         out.push(append(state, Entry::System { text: not_taken(&pending, &reason) }));
         out.push(switch_event(state));
         out.push(Event::ModelSwitchFailed { session_id: state.session.id.clone(), model: pending, reason: Some(reason) });
+        return out;
+    }
+    if resolves {
         return out;
     }
     let text = match state.facts.model.as_deref() {
