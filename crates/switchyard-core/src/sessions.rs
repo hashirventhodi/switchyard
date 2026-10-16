@@ -697,9 +697,10 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
     let mut fall_back = None;
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     // A resumed agent's first request has run once it says or does something, or its turn ends.
-    let names = crate::models::names(inner.store.db(), state.session.agent, state.facts.cli_version.as_deref());
-    if matches!(&output, AgentOutput::Event(event) if event.shows_a_request_ran()) {
-        out.extend(first_request(state, &names));
+    // The names the CLI lists its Models by, read only when a Model is compared.
+    let names = |state: &SessionState| crate::models::names(inner.store.db(), state.session.agent, state.facts.cli_version.as_deref());
+    if state.resumed.is_some() && matches!(&output, AgentOutput::Event(event) if event.shows_a_request_ran()) {
+        out.extend(first_request(state, &names(state)));
     }
     match output {
         AgentOutput::Event(event) => match event {
@@ -812,6 +813,7 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
                 model_list = crate::models::from_agent(event, (inner.runtime.now_ms)());
             }
             AgentEvent::ModelChanged { model } => {
+                let names = names(state);
                 out.extend(model_switch::changed(state, model, &names, &PriceTable::read(&inner.data_dir)))
             }
             AgentEvent::ModelChangeFailed { model, reason } => {
