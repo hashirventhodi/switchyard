@@ -4,6 +4,6 @@
     "name": "claude-code",
     "version": "2.1.300"
   },
-  "protocol": "0.1.0",
+  "protocol": "0.2.0",
   "description": "MCP servers: system/init reports each server the CLI was given (--mcp-config, --strict-mcp-config) with its status; the sidecar asks query.mcpServerStatus() while one is pending and the adapter reports only servers whose state changed (mcp_status). needs-auth maps to needs_auth; a failed server's error is carried. Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
 }

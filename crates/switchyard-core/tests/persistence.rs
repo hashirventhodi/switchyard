@@ -112,7 +112,7 @@ fn a_session_comes_back_after_relaunch_with_its_transcript_facts_and_spend() {
     core.agent_says(0, text("Fixed the link."));
     core.agent_says(
         0,
-        AgentEvent::TokenUsage { input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd: Some(0.5) },
+        AgentEvent::TokenUsage { model: None, input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd: Some(0.5) },
     );
     core.agent_says(0, AgentEvent::TurnComplete);
     core.agent_says(0, AgentEvent::Done { summary: None });

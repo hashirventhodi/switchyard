@@ -4,6 +4,6 @@
     "name": "claude-code",
     "version": "2.1.300"
   },
-  "protocol": "0.1.0",
+  "protocol": "0.2.0",
   "description": "Permission mode auto_edit: the CLI reports `acceptEdits` at init, read back as auto_edit; switching to ask_first and back to auto_edit asks the live query for `default` then `acceptEdits`. Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
 }

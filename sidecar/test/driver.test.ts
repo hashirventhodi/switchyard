@@ -290,7 +290,7 @@ test("with a record directory it writes a replayable fixture of the run", async 
   expect(JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"))).toMatchObject({
     adapter: "claude-code",
     cli: { name: "claude-code", version: "2.1.300" },
-    protocol: "0.1.0",
+    protocol: "0.2.0",
   });
 });
 

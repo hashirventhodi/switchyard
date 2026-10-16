@@ -42,7 +42,7 @@ pub const NAME: &str = "codex";
 pub fn manifest() -> AdapterManifest {
     AdapterManifest {
         name: NAME.into(),
-        implements: VersionReq::parse("^0.1").expect("valid range"),
+        implements: VersionReq::parse("^0.2").expect("valid range"),
     }
 }
 
@@ -422,6 +422,7 @@ impl CodexAdapter {
                 let count = |name: &str| total.get(name).and_then(Value::as_u64).unwrap_or(0);
                 let cached = count("cachedInputTokens");
                 vec![Event::TokenUsage {
+                    model: None,
                     // The protocol's input excludes cache reads; Codex's includes them.
                     input_tokens: count("inputTokens").saturating_sub(cached),
                     output_tokens: count("outputTokens"),

@@ -23,7 +23,7 @@ impl Adapter for EchoAdapter {
     fn manifest(&self) -> AdapterManifest {
         AdapterManifest {
             name: "echo".into(),
-            implements: VersionReq::parse("^0.1").expect("valid range"),
+            implements: VersionReq::parse("^0.2").expect("valid range"),
         }
     }
 

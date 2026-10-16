@@ -149,6 +149,7 @@ fn cache_writes_are_recorded_priced_and_kept_across_a_relaunch() {
     core.agent_replays(0, &recorded_events("echo/token-only-session"));
 
     let usage = |cache_write_tokens| adapter_protocol::Event::TokenUsage {
+        model: None,
         input_tokens: 300_000,
         output_tokens: 50_000,
         cache_read_tokens: 1_000_000,

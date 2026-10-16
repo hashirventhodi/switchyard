@@ -143,7 +143,7 @@ fn starting_a_session_before_any_attach_detects_first() {
 #[test]
 fn an_adapter_speaking_another_protocol_blocks_sessions_and_is_logged() {
     let (mut core, _repo, worktree) = setup();
-    core.probe.adapter_implements("^0.2");
+    core.probe.adapter_implements("^0.1");
 
     let state = claude_state(&core.send(Command::Attach));
     refusal(&core.start_session(&worktree, "Fix the README"));
@@ -155,8 +155,8 @@ fn an_adapter_speaking_another_protocol_blocks_sessions_and_is_logged() {
     assert_eq!(log[0]["failure_class"], "protocol_mismatch");
     assert_eq!(log[0]["cli_name"], "claude-code");
     assert_eq!(log[0]["cli_version"], "2.1.300");
-    assert_eq!(log[0]["protocol_version"], "0.1.0");
-    assert_eq!(log[0]["adapter_implements"], "^0.2");
+    assert_eq!(log[0]["protocol_version"], "0.2.0");
+    assert_eq!(log[0]["adapter_implements"], "^0.1");
 }
 
 #[test]
@@ -188,8 +188,8 @@ fn a_failed_launch_is_logged_with_the_cli_and_protocol_versions() {
     assert_eq!(record["agent"], "claude-code");
     assert_eq!(record["cli_name"], "claude-code");
     assert_eq!(record["cli_version"], "2.1.300");
-    assert_eq!(record["protocol_version"], "0.1.0");
-    assert_eq!(record["adapter_implements"], "^0.1");
+    assert_eq!(record["protocol_version"], "0.2.0");
+    assert_eq!(record["adapter_implements"], "^0.2");
     assert_eq!(record["at_ms"], NOW_MS);
     assert!(record["detail"].as_str().unwrap().contains("the sidecar script is missing"));
 }

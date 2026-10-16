@@ -61,13 +61,13 @@ fn a_cli_whose_version_run_fails_is_an_error() {
 #[test]
 fn the_adapter_manifest_comes_from_running_the_sidecar_with_manifest() {
     let bin = TempDir::new().unwrap();
-    let node = script(bin.path(), "node", r#"echo '{"name":"claude-code","implements":"^0.1"}'"#);
+    let node = script(bin.path(), "node", r#"echo '{"name":"claude-code","implements":"^0.2"}'"#);
     let probe = probe(vec![], node);
 
     let manifest = probe.adapter_manifest(AgentKind::ClaudeCode).unwrap();
 
     assert_eq!(manifest.name, "claude-code");
-    assert_eq!(manifest.implements.to_string(), "^0.1");
+    assert_eq!(manifest.implements.to_string(), "^0.2");
     assert_eq!(args(bin.path(), "node"), "/app/claude-sidecar.mjs --manifest\n");
 }
 

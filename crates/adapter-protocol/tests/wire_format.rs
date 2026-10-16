@@ -18,8 +18,8 @@ fn round_trip_command(wire: serde_json::Value, expected: Command) {
 }
 
 #[test]
-fn protocol_version_is_0_1_0() {
-    assert_eq!(PROTOCOL_VERSION.to_string(), "0.1.0");
+fn protocol_version_is_0_2_0() {
+    assert_eq!(PROTOCOL_VERSION.to_string(), "0.2.0");
 }
 
 #[test]
@@ -136,6 +136,29 @@ fn session_init_model_may_be_omitted_on_input() {
 }
 
 #[test]
+fn token_usage_from_before_0_2_has_no_model_and_still_parses() {
+    let event: Event = serde_json::from_value(json!({
+        "type": "token_usage",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cache_read_tokens": 2,
+        "cost_usd": null
+    }))
+    .unwrap();
+    assert!(
+        matches!(
+            event,
+            Event::TokenUsage {
+                model: None,
+                input_tokens: 10,
+                ..
+            }
+        ),
+        "{event:?}"
+    );
+}
+
+#[test]
 fn agent_text_and_tool_calls() {
     round_trip_event(
         json!({ "type": "agent_text", "text": "hello" }),
@@ -230,8 +253,9 @@ fn lifecycle_usage_and_classifier_events() {
         },
     );
     round_trip_event(
-        json!({ "type": "token_usage", "input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 2, "cost_usd": 0.01 }),
+        json!({ "type": "token_usage", "model": "claude-opus-5-5", "input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 2, "cost_usd": 0.01 }),
         Event::TokenUsage {
+            model: Some("claude-opus-5-5".into()),
             input_tokens: 10,
             output_tokens: 5,
             cache_read_tokens: 2,
@@ -240,8 +264,9 @@ fn lifecycle_usage_and_classifier_events() {
         },
     );
     round_trip_event(
-        json!({ "type": "token_usage", "input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 2, "cache_write_tokens": 7, "cost_usd": null }),
+        json!({ "type": "token_usage", "model": null, "input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 2, "cache_write_tokens": 7, "cost_usd": null }),
         Event::TokenUsage {
+            model: None,
             input_tokens: 10,
             output_tokens: 5,
             cache_read_tokens: 2,

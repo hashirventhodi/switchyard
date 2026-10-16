@@ -1,7 +1,7 @@
-// Adapter protocol v0.1 wire types (the Rust types in crates/adapter-protocol/src/protocol.rs
+// Adapter protocol v0.2 wire types (the Rust types in crates/adapter-protocol/src/protocol.rs
 // are the reference; see its README). Events and commands are tagged by `type`, snake_case.
 
-export const PROTOCOL_RANGE = "^0.1";
+export const PROTOCOL_RANGE = "^0.2";
 
 export type PermissionMode = "explore" | "ask_first" | "auto_edit" | "full_auto" | "bypass";
 
