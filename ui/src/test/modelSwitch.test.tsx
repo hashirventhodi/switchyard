@@ -142,3 +142,17 @@ test("on a CLI that switches live, there is no such note", () => {
 
   expect(within(control()).queryByRole("note")).toBeNull();
 });
+
+test("a Codex Session's control reads that a switch applies on resume", () => {
+  const codexChecked: Event = {
+    type: "agentsChecked",
+    agents: [{ agent: "codex", name: "Codex", state: { type: "ready", version: "0.144.1" }, switchModelLive: false }],
+  };
+  const codexSession: Session = { ...session, agent: "codex" };
+  const { sent } = launch(codexChecked, { type: "sessionStarted", session: codexSession }, runningOn("gpt-5.6-terra"));
+
+  expect(within(control()).getByRole("note").textContent).toBe("Applies on resume");
+  switchTo("gpt-5.6-sol");
+
+  expect(sent).toContainEqual({ type: "setModel", sessionId: "session-1", model: "gpt-5.6-sol" });
+});
