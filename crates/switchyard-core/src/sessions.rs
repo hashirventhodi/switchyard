@@ -149,32 +149,24 @@ fn transition(from: SessionStatus, cause: &Cause) -> Option<SessionStatus> {
     }
 }
 
-pub(crate) fn start(
-    inner: &mut Inner,
-    core: &Arc<Mutex<Inner>>,
-    worktree_path: &str,
-    agent: AgentKind,
-    permission_mode: PermissionMode,
-    model: ModelChoice,
-    prompt: &str,
-) {
-    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, model, prompt, None);
+/// What a Session starts with, whichever way it is started (New session on a worktree or a
+/// new one, a replacement, a Task's Session).
+pub(crate) struct Start {
+    pub agent: AgentKind,
+    pub permission_mode: PermissionMode,
+    pub model: ModelChoice,
+    pub prompt: String,
+}
+
+pub(crate) fn start(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &str, start: Start) {
+    begin(inner, core, command_name::START_SESSION, worktree_path, start, None);
 }
 
 /// Start a session on a worktree; when `replacing` names its (Paused, Finished or Error)
 /// occupant, that one is archived once the new agent has started.
-#[allow(clippy::too_many_arguments)]
-fn begin(
-    inner: &mut Inner,
-    core: &Arc<Mutex<Inner>>,
-    command: &str,
-    worktree_path: &str,
-    agent: AgentKind,
-    permission_mode: PermissionMode,
-    model: ModelChoice,
-    prompt: &str,
-    replacing: Option<&str>,
-) {
+fn begin(inner: &mut Inner, core: &Arc<Mutex<Inner>>, command: &str, worktree_path: &str, start: Start, replacing: Option<&str>) {
+    let Start { agent, permission_mode, model, prompt } = start;
+    let prompt = prompt.as_str();
     let refuse = |inner: &Inner, reason: String| inner.refuse(command, reason);
     if prompt.trim().is_empty() {
         return refuse(inner, "Write a prompt for the agent first".into());

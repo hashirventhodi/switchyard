@@ -52,7 +52,7 @@ pub(super) struct AppliedSwitch {
 pub(crate) fn set_model(inner: &mut Inner, id: &str, model: &str) {
     const COMMAND: &str = command_name::SET_MODEL;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
+        return inner.refuse(COMMAND, crate::no_session(id));
     };
     let model = model.trim();
     if model.is_empty() {
