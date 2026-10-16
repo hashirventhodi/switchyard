@@ -6,7 +6,7 @@ import type { Policy } from "./schema/Policy";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
-import { choosesModel, modelLabel } from "./model";
+import { modelLabel } from "./model";
 import { ModelSwitch } from "./ModelSwitch";
 import { RequestCard } from "./RequestCard";
 import type { Command } from "./schema/Command";
@@ -131,7 +131,7 @@ export function SessionView(props: SessionViewProps) {
         input={composer}
         draft={draft}
         ceiling={policy?.ceiling ?? null}
-        switchModelLive={props.switchModelLive ?? true}
+        switchModelLive={props.switchModelLive ?? false}
       />
     </section>
   );
@@ -454,7 +454,7 @@ function Composer(props: {
       <div className="composer">
         <div className="composer-controls">
           <ModeSegment session={session} send={send} ceiling={ceiling} />
-          {choosesModel(session.agent) && <ModelSwitch session={session} send={send} live={switchModelLive} />}
+          <ModelSwitch session={session} send={send} live={switchModelLive} />
         </div>
         <textarea
           ref={input}

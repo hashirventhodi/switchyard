@@ -41,10 +41,16 @@ const switchState = (pendingModel: string | null, switchedModel: string | null =
   switchedModel,
 });
 
+const checked = (switchModelLive: boolean): Event => ({
+  type: "agentsChecked",
+  agents: [{ agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" }, switchModelLive }],
+});
+
+/** The app with a Session on Claude Code, which switches live unless `events` say otherwise. */
 function launch(...events: Event[]) {
   const fake = fakeCore();
   render(<App core={fake.core} pickFolder={async () => null} />);
-  act(() => fake.emit(...repoEvents, ...events));
+  act(() => fake.emit(checked(true), ...repoEvents, ...events));
   fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByRole("button", { name: /fix\/readme/ }));
   return fake;
 }
@@ -121,11 +127,6 @@ test("an Explore session switches Models too", () => {
   expect(sent).toContainEqual({ type: "setModel", sessionId: "session-1", model: "claude-haiku-4-5" });
 });
 
-const checked = (switchModelLive: boolean): Event => ({
-  type: "agentsChecked",
-  agents: [{ agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" }, switchModelLive }],
-});
-
 test("on a CLI that cannot switch live, the control reads that a switch applies on resume", () => {
   const { sent, emit } = launch(checked(false), { type: "sessionStarted", session }, runningOn("claude-opus-5-5"));
   expect(within(control()).getByRole("note").textContent).toBe("Applies on resume");
@@ -135,6 +136,15 @@ test("on a CLI that cannot switch live, the control reads that a switch applies 
   act(() => emit(switchState("claude-sonnet-5-5")));
 
   expect(within(control()).getByRole("status").textContent).toBe("Switches to claude-sonnet-5-5 when the session resumes.");
+});
+
+test("before the agents are checked, a switch is taken to apply on resume, as the core takes it", () => {
+  const fake = fakeCore();
+  render(<App core={fake.core} pickFolder={async () => null} />);
+  act(() => fake.emit(...repoEvents, { type: "sessionStarted", session }, runningOn("claude-opus-5-5")));
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Repositories" })).getByRole("button", { name: /fix\/readme/ }));
+
+  expect(within(control()).getByRole("note").textContent).toBe("Applies on resume");
 });
 
 test("on a CLI that switches live, there is no such note", () => {
