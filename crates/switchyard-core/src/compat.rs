@@ -237,6 +237,16 @@ pub(crate) fn installed_version(inner: &mut Inner, agent: AgentKind) -> Option<S
     checked(inner, agent)?.cli_version.clone()
 }
 
+/// Whether `agent`'s adapter switches its CLI's Model live (its manifest's
+/// `switch_model_live`). Unknown (no adapter detected) counts as not: a switch then waits
+/// for the Session to resume, and is never reported as taken when it cannot be confirmed.
+pub(crate) fn switches_model_live(inner: &mut Inner, agent: AgentKind) -> bool {
+    if inner.compat.checked.is_none() {
+        detect(inner);
+    }
+    checked(inner, agent).is_some_and(|c| c.setup.switch_model_live)
+}
+
 /// Append one record to the compat log. `cli_version` is what the agent reported, when it
 /// did; otherwise the detected version is used.
 pub(crate) fn record(inner: &Inner, agent: AgentKind, class: FailureClass, cli_version: Option<&str>, detail: &str) {
@@ -299,8 +309,13 @@ fn detect(inner: &mut Inner) {
 
 fn detect_one(inner: &Inner, agent: &AgentEntry) -> (Checked, Option<(FailureClass, String)>) {
     let probe = &inner.runtime.probe;
-    let done = |state, cli_version, adapter| Checked {
-        setup: AgentSetup { agent: agent.agent, name: agent.name.clone(), state },
+    let done = |state, cli_version, adapter: Option<AdapterManifest>| Checked {
+        setup: AgentSetup {
+            agent: agent.agent,
+            name: agent.name.clone(),
+            state,
+            switch_model_live: adapter.as_ref().is_some_and(|m| m.switch_model_live),
+        },
         cli_version,
         adapter,
     };

@@ -15,7 +15,7 @@ This crate is self-contained (no dependency on the rest of Switchyard) so it can
 
 ## Changes
 
-- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. New `list_models` command, answered by `models_listed` or `cannot_list_models`. Live Model switching: the `set_model` command, the `model_changed` and `model_change_failed` events, and the manifest's `switch_model_live` (false when left out, as from a 0.1 adapter).
+- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. New `list_models` command, answered by `models_listed` or `cannot_list_models`. Live Model switching: the `set_model` command, the `model_changed` and `model_change_failed` events, and the manifest's `switch_model_live` (false when left out, as from a 0.1 adapter). `resume` carries an optional `model` to resume on; a 0.1 `resume` without it means Default. `model_change_failed` also reports a Model the CLI could not resume on.
 - **0.1.0**: first version.
 
 ## Wire format
@@ -40,7 +40,7 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 | `models_listed` | `models`: the Models the CLI offers, in its order, each `{id, display_name}` (`id` is what the CLI takes to run on it). The answer to `list_models` |
 | `cannot_list_models` | `reason` (optional): the answer to `list_models` from a CLI that cannot list its Models, or could not this time |
 | `model_changed` | `model`: the main agent's own requests now run on this Model, a different one from its last request (a `set_model` took, or the CLI moved on its own). Never sent for a subagent's, a compaction's or another background call's Model, whose usage still comes as `token_usage` on that Model. An adapter that cannot tell the main agent's requests apart never sends it |
-| `model_change_failed` | `model` (the Model `set_model` asked for), `reason` (the CLI's, when it gives one): the switch did not take, because the CLI refused it or the main agent's next request was still on the old Model. The CLI carries on as it was |
+| `model_change_failed` | `model` (the Model `set_model` or `resume` asked for), `reason` (the CLI's, when it gives one): the switch did not take, because the CLI refused it or the main agent's next request was still on the old Model. The CLI carries on as it was. Also sent when the CLI cannot run a request on the Model it was resumed on (retired, or no access): the host then resumes it once more on Default |
 
 A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 
@@ -60,7 +60,7 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `answer_request` | `request_id`, `verdict` (below) |
 | `interrupt` | (none) |
 | `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
-| `resume` | `external_session_id` |
+| `resume` | `external_session_id`, `model` (optional): the Model to resume on. Absent or null means Default: the adapter passes no Model, so the CLI or the user's own settings decide |
 | `list_models` | (none): ask which Models the CLI offers. The host asks and the adapter translates the answer, so the adapter does no I/O |
 | `set_model` | `model` (a Model id): switch the live CLI to this Model from the main agent's next request on, leaving the request in flight alone. Answered by `model_changed` or `model_change_failed`. Only sent to an adapter whose manifest has `switch_model_live` |
 

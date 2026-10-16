@@ -71,6 +71,8 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             process: row.process,
             // A switch still pending when the app went away goes to the agent once it runs again.
             switch_queued: pending_switch,
+            resumed: None,
+            launch: 0,
             saved,
         };
         recover(inner, &mut state);

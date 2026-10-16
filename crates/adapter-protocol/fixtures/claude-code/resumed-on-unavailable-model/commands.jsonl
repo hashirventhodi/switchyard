@@ -1,0 +1,2 @@
+{"after_input":0,"command":{"type":"resume","external_session_id":"5b0c2d1e-7a44-4c55-9a1f-2f0e3c9d8b10","model":"claude-opus-4-1"},"expect_responses":[{"op":"resume","session_id":"5b0c2d1e-7a44-4c55-9a1f-2f0e3c9d8b10","model":"claude-opus-4-1"}]}
+{"after_input":0,"command":{"type":"send_text","text":"Continue where you left off."},"expect_responses":[{"op":"push_user_message","message":{"type":"user","message":{"role":"user","content":"Continue where you left off."},"parent_tool_use_id":null}}]}

@@ -69,7 +69,25 @@ struct SessionState {
     /// The pending Model switch (`session.pending_model`) is not yet sent to the agent: it
     /// waits for a Permission request's answer, or for the agent to be running again.
     switch_queued: bool,
+    /// The agent was relaunched to resume, and its first request has not run yet.
+    resumed: Option<Resumed>,
+    /// How many times the agent was relaunched: only the latest process's output counts.
+    launch: u32,
     saved: Saved,
+}
+
+/// A relaunched agent, until its first request has run.
+struct Resumed {
+    /// The Model it resumes on; `None`: Default.
+    model: Option<String>,
+    /// Set when it resumes on the pending switch: the Model the Session ran on before it,
+    /// which the first request must have left for the switch to count as taken.
+    switch_from: Option<Option<String>>,
+    /// The Model the resumed CLI says (at init) it runs on.
+    reported: Option<String>,
+    /// What it was sent to go on with (the prompt, or "continue"), sent again when it
+    /// cannot run on its Model and falls back to Default.
+    text: Option<String>,
 }
 
 /// The stored row's changing parts: status, facts, expected mode, external id, process,
@@ -222,7 +240,7 @@ fn begin(
         mcp_servers: mcp_servers.clone(),
         env: secrets::spawn_env(inner, &repo),
     };
-    let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone())) {
+    let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone(), 0)) {
         Ok(handle) => handle,
         Err(reason) => {
             compat::record(inner, agent, FailureClass::SpawnFailure, None, &reason);
@@ -263,6 +281,8 @@ fn begin(
         external_id: None,
         process,
         switch_queued: false,
+        resumed: None,
+        launch: 0,
         saved: Saved::default(),
     });
     let state = inner.sessions.list.last_mut().expect("just pushed");
@@ -327,7 +347,7 @@ pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str,
     inner.emit(status);
     inner.emit(entry);
     send_queued_switch(inner, id);
-    send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
+    send_text(inner, id, text);
 }
 
 /// The `resumeSession` command: a Paused or Finished session continues where it left off.
@@ -342,6 +362,15 @@ pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
         let label = status_label(state.session.status);
         return inner.refuse(COMMAND, format!("A {label} session cannot be resumed"));
     }
+    // A switch its CLI cannot take live applies on resume: a process still running is
+    // replaced by one resumed on the new Model.
+    let queued = state.switch_queued && state.session.pending_model.is_some() && state.agent.is_some();
+    let agent = state.session.agent;
+    if queued && !compat::switches_model_live(inner, agent) {
+        let state = find(inner, id).expect("found above");
+        state.agent = None;
+        state.process = None;
+    }
     if let Err(reason) = ensure_agent(inner, core, id) {
         return inner.refuse(COMMAND, reason);
     }
@@ -351,15 +380,36 @@ pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
     inner.emit(status);
     inner.emit(entry);
     send_queued_switch(inner, id);
-    send_to_agent(inner, id, AgentCommand::SendText { text: CONTINUE.into() });
+    send_text(inner, id, CONTINUE);
+}
+
+/// Send the agent `text`. A relaunched agent keeps it, to be sent again if it falls back to
+/// Default.
+fn send_text(inner: &mut Inner, id: &str, text: &str) {
+    if let Some(resumed) = find(inner, id).and_then(|state| state.resumed.as_mut()) {
+        resumed.text.get_or_insert_with(|| text.to_string());
+    }
+    send_to_agent(inner, id, AgentCommand::SendText { text: text.into() });
 }
 
 /// Make sure the session has a running agent: relaunch a gone one by its CLI session id.
 fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result<(), String> {
     let Some(state) = find(inner, id) else { return Err(crate::no_session(&id)) };
+    let agent_kind = state.session.agent;
     if state.agent.is_some() {
         return Ok(());
     }
+    let live = compat::switches_model_live(inner, agent_kind);
+    let state = find(inner, id).expect("found above");
+    let (model, applies_switch) = resume_model(state, live);
+    // Resuming on the pending switch applies it: checked against the Model it ran on before.
+    let switch_from = applies_switch.then(|| state.facts.model.clone());
+    relaunch(inner, Arc::downgrade(core), id, Resumed { model, switch_from, reported: None, text: None })
+}
+
+/// Relaunch the session's agent by its CLI session id, resuming on `resumed.model`.
+fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resumed) -> Result<(), String> {
+    let Some(state) = find(inner, id) else { return Err(crate::no_session(&id)) };
     let agent = state.session.agent;
     let Some(external_id) = state.external_id.clone() else {
         return Err(format!(
@@ -368,7 +418,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         ));
     };
     let (cwd, permission_mode) = (state.session.worktree_path.clone(), state.session.permission_mode);
-    let state_model = state.session.model.id().map(str::to_string);
+    let (state_model, state_launch) = (resumed.model.clone(), state.launch);
     let repository_id = state.session.repository_id.clone();
     // Grants as they are now: some may have been made or revoked since the session began.
     let repository = policy::repository(inner, &repository_id);
@@ -389,8 +439,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         agent,
         cwd: cwd.into(),
         permission_mode,
-        // The Model chosen at start (#38 resumes on the Session's current Model).
-        model: state_model,
+        model: state_model.clone(),
         sandboxed,
         allowed_tools,
         disallowed_tools,
@@ -398,7 +447,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         // Secrets as granted now: a revoke since the session began takes effect here.
         env: repository.as_ref().map(|repo| secrets::spawn_env(inner, repo)).unwrap_or_default(),
     };
-    let mut handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.to_string())) {
+    let launch = state_launch + 1;
+    let mut handle = match inner.runtime.agents.launch(spec, sink(core, id.to_string(), launch)) {
         Ok(handle) => handle,
         Err(reason) => {
             compat::record(inner, agent, FailureClass::SpawnFailure, None, &reason);
@@ -406,18 +456,66 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         }
     };
     let process = processes::record(&*inner.runtime.processes, handle.pid());
-    let sent = handle.send(AgentCommand::Resume { external_session_id: external_id });
+    let sent = handle.send(AgentCommand::Resume { external_session_id: external_id, model: state_model });
     // A relaunch starts the CLI again (perhaps upgraded since): refresh its Model list too.
     if sent.is_ok() {
         let _ = handle.send(AgentCommand::ListModels);
     }
     let state = find(inner, id).expect("the session is still there");
+    // A process it replaces (killed as its handle drops) has nothing more to say.
+    state.launch = launch;
     state.agent = Some(handle);
     state.process = process;
     state.expected_mode = expected_mode;
     // A new process: its servers' states come from its own init.
     state.facts.mcp_servers = mcp::facts(&mcp_servers);
+    if resumed.switch_from.is_some() {
+        // Sent with the resume: there is nothing left to send live.
+        state.switch_queued = false;
+    }
+    state.resumed = Some(resumed);
     sent.map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))
+}
+
+/// The Model a relaunched agent resumes on, the Session's current one: the last confirmed
+/// switch, else the pending switch, else the start choice (`None`: Default). True when that
+/// is the pending switch, which the resume then applies. On a CLI that cannot switch `live`
+/// a switch not yet sent comes first: resuming is the only way it applies.
+fn resume_model(state: &SessionState, live: bool) -> (Option<String>, bool) {
+    let session = &state.session;
+    if let (false, true, Some(model)) = (live, state.switch_queued, &session.pending_model) {
+        return (Some(model.clone()), true);
+    }
+    if let Some(model) = &session.switched_model {
+        return (Some(model.clone()), false);
+    }
+    if let Some(model) = &session.pending_model {
+        return (Some(model.clone()), true);
+    }
+    (session.model.id().map(str::to_string), false)
+}
+
+/// The resumed agent's first request has run. A switch the resume applied took when the
+/// CLI reported a Model other than the one the Session ran on before; one still on that
+/// Model did not. A CLI that reported no Model leaves the switch pending.
+fn first_request(state: &mut SessionState) -> Vec<Event> {
+    let Some(resumed) = state.resumed.take() else { return Vec::new() };
+    let (Some(from), Some(reported), Some(model)) = (resumed.switch_from, resumed.reported, resumed.model) else {
+        return Vec::new();
+    };
+    // Confirmed already (model_changed), withdrawn or replaced by another switch since.
+    if state.switch_queued || state.session.pending_model.as_deref() != Some(model.as_str()) {
+        return Vec::new();
+    }
+    state.session.pending_model = None;
+    if from.as_deref() == Some(reported.as_str()) {
+        let text = format!("Model switch to {model} did not take: the agent's next request was still on {reported}");
+        let line = append(state, Entry::System { text });
+        let id = state.session.id.clone();
+        return vec![line, model_switch(state), Event::ModelSwitchFailed { session_id: id, model, reason: None }];
+    }
+    state.session.switched_model = Some(reported.clone());
+    vec![model_switch(state), append(state, Entry::System { text: format!("Model → {reported}") })]
 }
 
 /// Write every session's changes to the store. Called after each command and each agent
@@ -551,9 +649,10 @@ pub(crate) fn set_model(inner: &mut Inner, id: &str, model: &str) {
     if state.facts.model.as_deref() == Some(model) {
         state.session.pending_model = None;
         let sent = !std::mem::take(&mut state.switch_queued);
+        let agent = state.session.agent;
         let event = model_switch(state);
         inner.emit(event);
-        if sent {
+        if sent && compat::switches_model_live(inner, agent) {
             send_to_agent(inner, id, AgentCommand::SetModel { model: model.into() });
         }
         return;
@@ -575,6 +674,12 @@ fn send_queued_switch(inner: &mut Inner, id: &str) {
     if !state.switch_queued || state.agent.is_none() {
         return;
     }
+    // A CLI that cannot switch live takes it when the Session resumes, never before.
+    let agent = state.session.agent;
+    if !compat::switches_model_live(inner, agent) {
+        return;
+    }
+    let state = find(inner, id).expect("found above");
     state.switch_queued = false;
     if let Some(model) = state.session.pending_model.clone() {
         send_to_agent(inner, id, AgentCommand::SetModel { model });
@@ -685,11 +790,15 @@ pub(crate) fn replay(inner: &Inner) {
     }
 }
 
-fn sink(core: Weak<Mutex<Inner>>, session_id: String) -> AgentSink {
+/// Where the session's `launch`-th agent process reports.
+fn sink(core: Weak<Mutex<Inner>>, session_id: String, launch: u32) -> AgentSink {
     Arc::new(move |output| {
-        if let Some(core) = core.upgrade() {
-            let mut inner = core.lock().expect("core lock");
-            on_agent(&mut inner, &session_id, output);
+        if let Some(strong) = core.upgrade() {
+            let mut inner = strong.lock().expect("core lock");
+            // A process the session has replaced since (relaunched it) has nothing more to say.
+            if find(&mut inner, &session_id).is_some_and(|s| s.launch == launch) {
+                on_agent(&mut inner, &core, &session_id, output);
+            }
             flush(&mut inner);
         }
     })
@@ -699,7 +808,7 @@ fn find<'a>(inner: &'a mut Inner, id: &str) -> Option<&'a mut SessionState> {
     inner.sessions.list.iter_mut().find(|s| s.session.id == id)
 }
 
-fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
+fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: AgentOutput) {
     if let AgentOutput::Event(AgentEvent::PermissionRequest { request_id, request, reason }) = output {
         return requests::arrived(inner, id, request_id, request, reason);
     }
@@ -711,7 +820,12 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     }
     let mut failure = None;
     let mut model_list = None;
+    let mut fall_back = None;
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
+    // A resumed agent's first request has run once it says or does something, or its turn ends.
+    if matches!(output, AgentOutput::Event(AgentEvent::AgentText { .. } | AgentEvent::ToolCallStarted { .. } | AgentEvent::TurnComplete)) {
+        out.extend(first_request(state));
+    }
     match output {
         AgentOutput::Event(event) => match event {
             AgentEvent::SessionInit {
@@ -734,9 +848,16 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 // A relaunched CLI (resume) initialises again; the start line is written once.
                 let first = state.external_id.is_none();
                 state.external_id = Some(external_session_id);
-                // What the CLI says it runs on, else the Model it was started on; a Default it
-                // does not report stays unknown, never guessed.
-                let model = model.or_else(|| state.session.model.id().map(str::to_string));
+                if let Some(resumed) = state.resumed.as_mut() {
+                    resumed.reported = model.clone();
+                }
+                // What the CLI says it runs on, else the Model it was started (or resumed) on;
+                // a Default it does not report stays unknown, never guessed.
+                let asked = match &state.resumed {
+                    Some(resumed) => resumed.model.clone(),
+                    None => state.session.model.id().map(str::to_string),
+                };
+                let model = model.or(asked);
                 if first {
                     state.facts.model = model;
                     let text = start_line(&state.session.model, state.facts.model.as_deref());
@@ -832,6 +953,30 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
                 state.facts.model = Some(model);
                 out.push(facts(state));
             }
+            AgentEvent::ModelChangeFailed { model, reason }
+                if state.resumed.as_ref().is_some_and(|r| r.model.as_deref() == Some(model.as_str())) =>
+            {
+                // The CLI cannot run on the Model it was resumed on (retired, or no access): it
+                // resumes once more, on Default, so the Session always runs; the user picks again.
+                let resumed = state.resumed.take().expect("matched above");
+                let why = match &reason {
+                    Some(reason) if reason.ends_with('.') => format!(": {reason}"),
+                    Some(reason) => format!(": {reason}."),
+                    None => ".".into(),
+                };
+                out.push(append(state, Entry::System { text: format!("Could not resume on {model}{why} Resumed on Default.") }));
+                let session = &mut state.session;
+                let pending = session.pending_model.take_if(|m| *m == model).is_some();
+                let switched = session.switched_model.take_if(|m| *m == model).is_some();
+                if pending || switched {
+                    out.push(model_switch(state));
+                }
+                out.push(Event::ModelSwitchFailed { session_id: id.into(), model, reason });
+                // Unknown until the CLI resumed on Default says.
+                state.facts.model = None;
+                out.push(facts(state));
+                fall_back = Some(resumed.text);
+            }
             AgentEvent::ModelChangeFailed { model, reason } => {
                 // Noted, never retried; the Session carries on as it was, in the same status.
                 let running = state.facts.model.as_deref().unwrap_or("the Model it was on");
@@ -868,6 +1013,9 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
             // Gone: the next prompt or Resume relaunches it by its CLI session id.
             state.agent = None;
             state.process = None;
+            // A switch it was told of but never confirmed goes to the relaunched one.
+            state.switch_queued = state.session.pending_model.is_some();
+            state.resumed = None;
         }
     }
     if let Some(event) = cause.and_then(|c| change_status(state, &c)) {
@@ -891,6 +1039,34 @@ fn on_agent(inner: &mut Inner, id: &str, output: AgentOutput) {
     }
     if let Some(list) = model_list {
         crate::models::answered(inner, agent, cli_version.as_deref(), list);
+    }
+    if let Some(text) = fall_back {
+        resume_on_default(inner, core, id, text);
+    }
+}
+
+/// Replace the agent that could not run on the Model it resumed on with one resumed on
+/// Default, and send it what the first one was sent. Tried once: a resume on Default is never
+/// retried.
+fn resume_on_default(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, text: Option<String>) {
+    let Some(state) = find(inner, id) else { return };
+    state.agent = None; // its process is killed as the handle drops
+    state.process = None;
+    let resumed = Resumed { model: None, switch_from: None, reported: None, text: None };
+    match relaunch(inner, core.clone(), id, resumed) {
+        Ok(()) => {
+            if let Some(text) = text {
+                send_text(inner, id, &text);
+            }
+        }
+        Err(reason) => {
+            let Some(state) = find(inner, id) else { return };
+            let mut events = vec![append(state, Entry::System { text: reason })];
+            events.extend(change_status(state, &Cause::AgentFailed));
+            for event in events {
+                inner.emit(event);
+            }
+        }
     }
 }
 

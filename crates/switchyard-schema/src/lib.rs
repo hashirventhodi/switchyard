@@ -1579,6 +1579,11 @@ pub struct AgentSetup {
     /// Display name, e.g. "Claude Code".
     pub name: String,
     pub state: AgentSetupState,
+    /// Its adapter switches a running Session's Model live. When false (or not known), the
+    /// composer's Model control reads "applies on resume": a switch is recorded and applied
+    /// when the Session resumes.
+    #[serde(default)]
+    pub switch_model_live: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

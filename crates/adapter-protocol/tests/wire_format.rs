@@ -292,9 +292,10 @@ fn commands() {
     );
     round_trip_command(json!({ "type": "interrupt" }), Command::Interrupt);
     round_trip_command(
-        json!({ "type": "resume", "external_session_id": "sess-1" }),
+        json!({ "type": "resume", "external_session_id": "sess-1", "model": null }),
         Command::Resume {
             external_session_id: "sess-1".into(),
+            model: None,
         },
     );
     for (verdict_wire, verdict) in [
@@ -321,6 +322,28 @@ fn commands() {
             },
         );
     }
+}
+
+#[test]
+fn resume_may_carry_the_model_to_resume_on() {
+    round_trip_command(
+        json!({ "type": "resume", "external_session_id": "sess-1", "model": "claude-sonnet-5-5" }),
+        Command::Resume {
+            external_session_id: "sess-1".into(),
+            model: Some("claude-sonnet-5-5".into()),
+        },
+    );
+    // A 0.1 resume names no Model: Default.
+    let old: Command =
+        serde_json::from_value(json!({ "type": "resume", "external_session_id": "sess-1" }))
+            .unwrap();
+    assert_eq!(
+        old,
+        Command::Resume {
+            external_session_id: "sess-1".into(),
+            model: None,
+        }
+    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-{"after_input":0,"command":{"type":"resume","external_session_id":"echo-sess-1"},"expect_responses":[{"echo":{"type":"resume","external_session_id":"echo-sess-1"}}]}
+{"after_input":0,"command":{"type":"resume","external_session_id":"echo-sess-1"},"expect_responses":[{"echo":{"type":"resume","external_session_id":"echo-sess-1","model":null}}]}
 {"after_input":7,"command":{"type":"answer_request","request_id":"r1","verdict":{"decision":"allow_once"}},"expect_responses":[{"echo":{"type":"answer_request","request_id":"r1","verdict":{"decision":"allow_once"}}}]}
 {"after_input":7,"command":{"type":"answer_request","request_id":"r2","verdict":{"decision":"deny","message":"Not that file"}},"expect_responses":[{"echo":{"type":"answer_request","request_id":"r2","verdict":{"decision":"deny","message":"Not that file"}}}]}
 {"after_input":10,"command":{"type":"answer_request","request_id":"r3","verdict":{"decision":"allow_always"}},"expect_responses":[{"echo":{"type":"answer_request","request_id":"r3","verdict":{"decision":"allow_always"}}}]}

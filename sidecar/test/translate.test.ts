@@ -104,3 +104,33 @@ test("a switch back to the Model the main agent runs on withdraws the check", ()
   t.command({ type: "set_model", model: "claude-opus-5-5" });
   expect(said("msg_02", "claude-opus-5-5")).toEqual([]);
 });
+
+test("the CLI's message for a failed request is never a Model change", () => {
+  const t = new ClaudeTranslator();
+  const said = (id: string, model: string, error?: string) =>
+    t.ingest(
+      JSON.stringify({
+        type: "assistant",
+        message: { id, model, content: [{ type: "text", text: `${id} said` }] },
+        parent_tool_use_id: null,
+        ...(error ? { error } : {}),
+      }),
+    );
+  said("msg_01", "claude-opus-5-5");
+  expect(said("msg_02", "<synthetic>", "rate_limit")).toEqual([{ type: "agent_text", text: "msg_02 said" }]);
+  expect(said("msg_03", "claude-opus-5-5")).toEqual([{ type: "agent_text", text: "msg_03 said" }]);
+});
+
+test("a live switch to a Model the CLI then cannot find fails it with the CLI's message", () => {
+  const t = new ClaudeTranslator();
+  t.command({ type: "set_model", model: "claude-opus-4-1" });
+  const failed = t.ingest(
+    JSON.stringify({
+      type: "assistant",
+      message: { id: "msg_01", model: "<synthetic>", content: [{ type: "text", text: "There's an issue with the selected model." }] },
+      parent_tool_use_id: null,
+      error: "model_not_found",
+    }),
+  );
+  expect(failed).toEqual([{ type: "model_change_failed", model: "claude-opus-4-1", reason: "There's an issue with the selected model." }]);
+});

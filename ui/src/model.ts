@@ -2,6 +2,7 @@
 // to the CLI) and how it reads once the Session runs. Default is never shown opaque: it
 // reads as what it resolved to, or says the CLI did not report it.
 import type { AgentKind } from "./schema/AgentKind";
+import type { AgentSetup } from "./schema/AgentSetup";
 import type { ModelChoice } from "./schema/ModelChoice";
 import type { SessionFacts } from "./schema/SessionFacts";
 
@@ -12,6 +13,13 @@ const CHOOSES_MODEL: Record<AgentKind, boolean> = { claudeCode: true, codex: fal
 
 export function choosesModel(agent: AgentKind): boolean {
   return CHOOSES_MODEL[agent];
+}
+
+/** Whether the agent's adapter switches a running Session's Model live; otherwise a switch
+ * applies when the Session resumes. Before the agents are checked it is taken as live (the
+ * core decides either way). */
+export function switchesModelLive(agents: AgentSetup[], agent: AgentKind): boolean {
+  return agents.find((a) => a.agent === agent)?.switchModelLive ?? true;
 }
 
 /** What a typed Model id means: blank is Default. */

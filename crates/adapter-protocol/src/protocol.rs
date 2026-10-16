@@ -212,8 +212,12 @@ pub enum Command {
     SetPermissionMode {
         permission_mode: PermissionMode,
     },
+    /// Reload the CLI's conversation by its own session id, on `model` (none: Default, so
+    /// the adapter passes no Model and the CLI or the user's own settings decide).
     Resume {
         external_session_id: String,
+        #[serde(default)]
+        model: Option<String>,
     },
     /// Ask the CLI which Models it offers. Answered by [`Event::ModelsListed`] or
     /// [`Event::CannotListModels`]; the host does the asking, so the adapter does no I/O.
