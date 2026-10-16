@@ -56,6 +56,8 @@
 .hcomment-edit{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
 .hcomment-edit textarea{width:100%;box-sizing:border-box;resize:vertical;font:12px var(--font-ui)}
 .hcomment-edit .row{display:flex;justify-content:flex-end;gap:6px}
+/* A Stale decision's Accept or Reject: flagged, not drawn pressed. */
+.btn.stale{border-style:dashed;border-color:var(--warn);color:var(--warn)}
 .stale-note{margin:8px 10px 0;padding:4px 8px;font:11px var(--font-ui);color:var(--warn);background:var(--warn-soft);border-radius:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .hunkbox.stale{opacity:.75}
 .hunkbox .hh .stale-flag{font:10px var(--font-ui);color:var(--warn)}

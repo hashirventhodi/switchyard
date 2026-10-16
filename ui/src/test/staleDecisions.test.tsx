@@ -85,6 +85,20 @@ test("a stale Accept is flagged on its row and in its diff and does not count as
   );
 });
 
+test("a stale decision's button is neither pressed nor drawn pressed, but flagged", () => {
+  launch([changed("a.ts", { decision: "accept", stale: true }), changed("b.ts", { decision: "accept" })]);
+
+  fireEvent.click(row("a.ts"));
+  const stale = within(within(pane()).getByLabelText("Diff of a.ts")).getByRole("button", { name: "Accept file" });
+  expect(stale.getAttribute("aria-pressed")).toBe("false");
+  expect(stale.classList.contains("ok")).toBe(false);
+  expect(stale.classList.contains("stale")).toBe(true);
+  fireEvent.click(row("b.ts"));
+  const current = within(within(pane()).getByLabelText("Diff of b.ts")).getByRole("button", { name: "Accept file" });
+  expect(current.getAttribute("aria-pressed")).toBe("true");
+  expect(current.classList.contains("ok")).toBe(true);
+});
+
 test("a stale Reject does not count as rejected", () => {
   launch([changed("a.ts", { decision: "reject", stale: true })]);
   expect(tally()).toBe("0 accepted · 0 rejected · 1 undecided");
