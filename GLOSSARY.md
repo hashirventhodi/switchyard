@@ -23,7 +23,7 @@ One agent running on one Worktree for a while. Owns its transcript; owns no git 
 _Avoid_: Run, conversation, chat, thread
 
 **Model**:
-The LLM a Session's agent is using. Chosen by the user when the Session starts (or left at Default, meaning the CLI's own choice) and changeable by the user between requests; the agent never changes it. Every Model the Session uses is a named one in its transcript, Default included once resolved.
+The LLM a Session's agent is using. Chosen by the user when the Session starts (or left at Default, meaning the CLI's own choice) and changeable by the user between requests; the agent never changes it: a CLI that moves its main agent to another Model on its own is noted in the transcript, never taken as the Session's Model, and the Session resumes on the user's. Every Model the Session uses is a named one in its transcript, Default included once resolved. A CLI may name one Model two ways (an alias such as `opus`, and the full id it stands for); both are the same Model.
 _Avoid_: Engine, LLM, agent (the agent is the CLI)
 
 **Archived session**:

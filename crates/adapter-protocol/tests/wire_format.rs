@@ -353,7 +353,7 @@ fn list_models_is_answered_by_the_models_the_cli_offers() {
         json!({
             "type": "models_listed",
             "models": [
-                { "id": "opus", "display_name": "Opus" },
+                { "id": "opus", "display_name": "Opus", "resolved_model": "claude-opus-5-5" },
                 { "id": "claude-sonnet-5-5", "display_name": "Sonnet 5.5" }
             ]
         }),
@@ -362,10 +362,12 @@ fn list_models_is_answered_by_the_models_the_cli_offers() {
                 ListedModel {
                     id: "opus".into(),
                     display_name: "Opus".into(),
+                    resolved_model: Some("claude-opus-5-5".into()),
                 },
                 ListedModel {
                     id: "claude-sonnet-5-5".into(),
                     display_name: "Sonnet 5.5".into(),
+                    resolved_model: None,
                 },
             ],
         },

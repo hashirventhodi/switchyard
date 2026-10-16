@@ -176,7 +176,7 @@ fn cents(usd: Option<f64>) -> Option<f64> {
 }
 
 #[test]
-fn usage_on_an_unresolved_default_is_unpriced_until_a_model_name_resolves_it() {
+fn usage_on_an_unresolved_default_is_unpriced_until_the_main_agents_model_resolves_it() {
     let (mut core, _repo, worktree) = setup();
     std::fs::write(core.data_dir().join("price-table.json"), TABLE).unwrap();
     started_session(&core.start_session(&worktree, "Fix it."));
@@ -187,27 +187,61 @@ fn usage_on_an_unresolved_default_is_unpriced_until_a_model_name_resolves_it() {
     assert_eq!((held.reported_usd, held.estimated_usd), (None, None), "unpriced, never $0");
     assert_eq!(held.by_model[0].model, None);
 
-    // The first concrete Model name resolves Default: the usage so far is on it.
-    let resolved = core.agent_says(0, usage(Some("echo-model-1-20261001"), 300_000, 50_000, 1_000_000));
+    // The main agent's own request names its Model: Default resolves, the usage so far is on it.
+    let resolved = core.agent_says(0, AgentEvent::ModelChanged { model: "echo-model-1-20261001".into() });
 
     assert_eq!(
         system_lines(&resolved),
         vec!["Model: Default resolved to echo-model-1-20261001; earlier usage is priced on it".to_string()]
     );
     assert_eq!(last_facts(&resolved).model.as_deref(), Some("echo-model-1-20261001"));
-    // 300k in * 2 + 50k out * 10 + 1M cache * 0.5 = 0.6 + 0.5 + 0.5: the running total on
-    // that Model, superseding what was reported before it had a name (never added to it).
-    let spend = spends(&resolved).pop().unwrap();
+    // 100k in * 2 + 20k out * 10 + 400k cache * 0.5 = 0.2 + 0.2 + 0.2.
+    assert_eq!(cents(spends(&resolved).pop().unwrap().estimated_usd), Some(60.0));
+
+    // Its next running total on that Model supersedes what was reported before it had a name.
+    let later = core.agent_says(0, usage(Some("echo-model-1-20261001"), 300_000, 50_000, 1_000_000));
+    assert_eq!(system_lines(&later), Vec::<String>::new(), "resolved once");
+    let spend = spends(&later).pop().unwrap();
     assert_eq!(cents(spend.estimated_usd), Some(160.0));
     assert_eq!(spend.by_model.len(), 1);
-    assert_eq!(spend.by_model[0].model.as_deref(), Some("echo-model-1-20261001"));
-
-    let later = core.agent_says(0, usage(Some("echo-model-1-20261001"), 400_000, 50_000, 1_000_000));
-    assert_eq!(system_lines(&later), Vec::<String>::new(), "resolved once");
 }
 
 #[test]
-fn a_claude_code_default_its_init_does_not_name_is_resolved_by_its_usage() {
+fn usage_naming_a_model_never_resolves_default_for_it_may_be_a_subagents() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init(None));
+
+    let events = core.agent_says(0, usage(Some("claude-haiku-4-5-20251001"), 2_400, 260, 9_000));
+
+    assert_eq!(system_lines(&events), Vec::<String>::new());
+    assert_eq!(core.send(Command::Attach).iter().rev().find_map(|e| match e {
+        Event::SessionFactsChanged { facts, .. } => Some(facts.model.clone()),
+        _ => None,
+    }), Some(None), "still Default (not reported)");
+}
+
+#[test]
+fn a_subagents_model_whose_usage_comes_first_never_resolves_default() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix the broken links in docs."));
+
+    let events = core.agent_replays(0, &recorded_events("claude-code/default-not-reported-subagent-first"));
+
+    assert_eq!(
+        system_lines(&events),
+        vec![
+            "Model: Default (not reported)".to_string(),
+            "Model: Default resolved to claude-opus-5-5; earlier usage is priced on it".to_string(),
+        ]
+    );
+    assert_eq!(last_facts(&events).model.as_deref(), Some("claude-opus-5-5"));
+    let models: Vec<_> = spends(&events).pop().unwrap().by_model.into_iter().map(|m| m.model).collect();
+    assert_eq!(models, vec![Some("claude-haiku-4-5-20251001".to_string()), Some("claude-opus-5-5".to_string())]);
+}
+
+#[test]
+fn a_claude_code_default_its_init_does_not_name_is_resolved_by_its_first_request() {
     let (mut core, _repo, worktree) = setup();
     started_session(&core.start_session(&worktree, "Fix the README."));
 

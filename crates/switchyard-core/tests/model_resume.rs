@@ -164,7 +164,8 @@ fn a_switch_applied_on_resume_fails_when_the_resumed_cli_is_still_on_the_old_mod
 
     assert_eq!(switch_state(&first), Some((None, None)));
     assert!(
-        first.iter().any(|e| matches!(e, Event::ModelSwitchFailed { model, reason: None, .. } if model == SONNET)),
+        first.iter().any(|e| matches!(e, Event::ModelSwitchFailed { model, reason: Some(why), .. }
+            if model == SONNET && *why == format!("the agent's next request was still on {OPUS}"))),
         "{first:#?}"
     );
     assert_eq!(

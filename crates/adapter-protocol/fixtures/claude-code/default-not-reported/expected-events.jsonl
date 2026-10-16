@@ -1,4 +1,5 @@
 {"type":"session_init","external_session_id":"7d2e4f30-9c66-4e77-8c3b-4b2a5e1fad32","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":null}
+{"type":"model_changed","model":"claude-opus-5-5"}
 {"type":"agent_text","text":"The README's link is fixed."}
 {"type":"token_usage","model":"claude-opus-5-5","input_tokens":16,"output_tokens":220,"cache_read_tokens":11800,"cache_write_tokens":2100,"cost_usd":0.0412}
 {"type":"turn_complete"}

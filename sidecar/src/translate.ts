@@ -32,12 +32,14 @@
 //   {"op":"set_permission_mode","mode":"<CLI mode>","permission_mode":"<protocol mode>"}
 //                                                        await query.setPermissionMode(mode)
 //   {"op":"list_models"}                                 query.supportedModels(), written back
-//                                                        as a supported_models line
+//                                                        as a supported_models line (starting
+//                                                        the query, with no prompt, if none is)
 //   {"op":"set_model","model"}                           await query.setModel(model)
 //
 // Model switches: only the main agent's own requests (assistant messages with no
 // parent_tool_use_id) count; a subagent's or background call's Model never does. A main
-// request on a different Model from the last one is model_changed. After set_model, the
+// request on a different Model from the last one is model_changed, and so is the first main
+// request when init named no Model: that is how an unreported Default resolves. After set_model, the
 // first main request that starts after it is checked: still on the old Model is
 // model_change_failed. A request already in flight when set_model came is left alone.
 // A request the CLI fails with model_not_found (its synthetic error message) is
@@ -262,6 +264,12 @@ export class ClaudeTranslator {
     if (!model) return [];
     const last = this.mainModel;
     this.mainModel = model;
+    // Init did not name the Model (an unreported Default): the main agent's first request is
+    // the first word on it, and settles any switch made before it (the host compares).
+    if (last === null && this.initModel === null) {
+      this.switching = null;
+      return [{ type: "model_changed", model }];
+    }
     const switching = this.switching;
     if (switching?.skip) {
       // The request that was in flight at the switch: not the one the switch applies to.
@@ -461,13 +469,19 @@ function mcpStatuses(raw: unknown): McpServerStatus[] {
     }));
 }
 
-/** The SDK's ModelInfo rows as listed Models, in its order. Its own "default" row is left
- * out: that is Switchyard's Default, which passes no Model at all. */
+/** The SDK's ModelInfo rows as listed Models, in its order, each with the full id it resolves
+ * to. Its own "default" row is left out: that is Switchyard's Default, which passes no Model
+ * at all. */
 function listedModels(raw: unknown): ListedModel[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((m: Json) => typeof m?.value === "string" && m.value !== "default")
-    .map((m: Json) => ({ id: m.value, display_name: typeof m.displayName === "string" ? m.displayName : m.value }));
+    .map((m: Json) => ({
+      id: m.value,
+      display_name: typeof m.displayName === "string" ? m.displayName : m.value,
+      // An alias ("opus") with the full id it stands for, which init and requests report.
+      resolved_model: typeof m.resolvedModel === "string" ? m.resolvedModel : null,
+    }));
 }
 
 const MCP_STATE: Record<string, McpServerState> = {

@@ -27,8 +27,11 @@ use crate::Inner;
 
 mod archive;
 mod recovery;
+mod model_switch;
 mod requests;
 pub(crate) use archive::{archive_gone, archive_occupant, export, read_archived, replace, update_settings};
+pub(crate) use model_switch::set_model;
+use model_switch::{first_request, resume_on_default, send_queued_switch, Resumed};
 pub(crate) use recovery::load;
 pub(crate) use requests::answer as answer_request;
 
@@ -74,20 +77,6 @@ struct SessionState {
     /// How many times the agent was relaunched: only the latest process's output counts.
     launch: u32,
     saved: Saved,
-}
-
-/// A relaunched agent, until its first request has run.
-struct Resumed {
-    /// The Model it resumes on; `None`: Default.
-    model: Option<String>,
-    /// Set when it resumes on the pending switch: the Model the Session ran on before it,
-    /// which the first request must have left for the switch to count as taken.
-    switch_from: Option<Option<String>>,
-    /// The Model the resumed CLI says (at init) it runs on.
-    reported: Option<String>,
-    /// What it was sent to go on with (the prompt, or "continue"), sent again when it
-    /// cannot run on its Model and falls back to Default.
-    text: Option<String>,
 }
 
 /// The stored row's changing parts: status, facts, expected mode, external id, process,
@@ -160,32 +149,24 @@ fn transition(from: SessionStatus, cause: &Cause) -> Option<SessionStatus> {
     }
 }
 
-pub(crate) fn start(
-    inner: &mut Inner,
-    core: &Arc<Mutex<Inner>>,
-    worktree_path: &str,
-    agent: AgentKind,
-    permission_mode: PermissionMode,
-    model: ModelChoice,
-    prompt: &str,
-) {
-    begin(inner, core, command_name::START_SESSION, worktree_path, agent, permission_mode, model, prompt, None);
+/// What a Session starts with, whichever way it is started (New session on a worktree or a
+/// new one, a replacement, a Task's Session).
+pub(crate) struct Start {
+    pub agent: AgentKind,
+    pub permission_mode: PermissionMode,
+    pub model: ModelChoice,
+    pub prompt: String,
+}
+
+pub(crate) fn start(inner: &mut Inner, core: &Arc<Mutex<Inner>>, worktree_path: &str, start: Start) {
+    begin(inner, core, command_name::START_SESSION, worktree_path, start, None);
 }
 
 /// Start a session on a worktree; when `replacing` names its (Paused, Finished or Error)
 /// occupant, that one is archived once the new agent has started.
-#[allow(clippy::too_many_arguments)]
-fn begin(
-    inner: &mut Inner,
-    core: &Arc<Mutex<Inner>>,
-    command: &str,
-    worktree_path: &str,
-    agent: AgentKind,
-    permission_mode: PermissionMode,
-    model: ModelChoice,
-    prompt: &str,
-    replacing: Option<&str>,
-) {
+fn begin(inner: &mut Inner, core: &Arc<Mutex<Inner>>, command: &str, worktree_path: &str, start: Start, replacing: Option<&str>) {
+    let Start { agent, permission_mode, model, prompt } = start;
+    let prompt = prompt.as_str();
     let refuse = |inner: &Inner, reason: String| inner.refuse(command, reason);
     if prompt.trim().is_empty() {
         return refuse(inner, "Write a prompt for the agent first".into());
@@ -239,6 +220,7 @@ fn begin(
         disallowed_tools,
         mcp_servers: mcp_servers.clone(),
         env: secrets::spawn_env(inner, &repo),
+        spent: Vec::new(),
     };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone(), 0)) {
         Ok(handle) => handle,
@@ -400,11 +382,8 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
         return Ok(());
     }
     let live = compat::switches_model_live(inner, agent_kind);
-    let state = find(inner, id).expect("found above");
-    let (model, applies_switch) = resume_model(state, live);
-    // Resuming on the pending switch applies it: checked against the Model it ran on before.
-    let switch_from = applies_switch.then(|| state.facts.model.clone());
-    relaunch(inner, Arc::downgrade(core), id, Resumed { model, switch_from, reported: None, text: None })
+    let resumed = model_switch::resume_on(find(inner, id).expect("found above"), live);
+    relaunch(inner, Arc::downgrade(core), id, resumed)
 }
 
 /// Relaunch the session's agent by its CLI session id, resuming on `resumed.model`.
@@ -418,6 +397,7 @@ fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resu
         ));
     };
     let (cwd, permission_mode) = (state.session.worktree_path.clone(), state.session.permission_mode);
+    let spent = spent_so_far(state);
     let (state_model, state_launch) = (resumed.model.clone(), state.launch);
     let repository_id = state.session.repository_id.clone();
     // Grants as they are now: some may have been made or revoked since the session began.
@@ -446,6 +426,7 @@ fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resu
         mcp_servers: mcp_servers.clone(),
         // Secrets as granted now: a revoke since the session began takes effect here.
         env: repository.as_ref().map(|repo| secrets::spawn_env(inner, repo)).unwrap_or_default(),
+        spent,
     };
     let launch = state_launch + 1;
     let mut handle = match inner.runtime.agents.launch(spec, sink(core, id.to_string(), launch)) {
@@ -469,53 +450,12 @@ fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resu
     state.expected_mode = expected_mode;
     // A new process: its servers' states come from its own init.
     state.facts.mcp_servers = mcp::facts(&mcp_servers);
-    if resumed.switch_from.is_some() {
+    if resumed.applies.is_some() {
         // Sent with the resume: there is nothing left to send live.
         state.switch_queued = false;
     }
     state.resumed = Some(resumed);
     sent.map_err(|reason| format!("Could not resume {}: {reason}", agent_name(agent)))
-}
-
-/// The Model a relaunched agent resumes on, the Session's current one: the last confirmed
-/// switch, else the pending switch, else the start choice (`None`: Default). True when that
-/// is the pending switch, which the resume then applies. On a CLI that cannot switch `live`
-/// a switch not yet sent comes first: resuming is the only way it applies.
-fn resume_model(state: &SessionState, live: bool) -> (Option<String>, bool) {
-    let session = &state.session;
-    if let (false, true, Some(model)) = (live, state.switch_queued, &session.pending_model) {
-        return (Some(model.clone()), true);
-    }
-    if let Some(model) = &session.switched_model {
-        return (Some(model.clone()), false);
-    }
-    if let Some(model) = &session.pending_model {
-        return (Some(model.clone()), true);
-    }
-    (session.model.id().map(str::to_string), false)
-}
-
-/// The resumed agent's first request has run. A switch the resume applied took when the
-/// CLI reported a Model other than the one the Session ran on before; one still on that
-/// Model did not. A CLI that reported no Model leaves the switch pending.
-fn first_request(state: &mut SessionState) -> Vec<Event> {
-    let Some(resumed) = state.resumed.take() else { return Vec::new() };
-    let (Some(from), Some(reported), Some(model)) = (resumed.switch_from, resumed.reported, resumed.model) else {
-        return Vec::new();
-    };
-    // Confirmed already (model_changed), withdrawn or replaced by another switch since.
-    if state.switch_queued || state.session.pending_model.as_deref() != Some(model.as_str()) {
-        return Vec::new();
-    }
-    state.session.pending_model = None;
-    if from.as_deref() == Some(reported.as_str()) {
-        let text = format!("Model switch to {model} did not take: the agent's next request was still on {reported}");
-        let line = append(state, Entry::System { text });
-        let id = state.session.id.clone();
-        return vec![line, model_switch(state), Event::ModelSwitchFailed { session_id: id, model, reason: None }];
-    }
-    state.session.switched_model = Some(reported.clone());
-    vec![model_switch(state), append(state, Entry::System { text: format!("Model → {reported}") })]
 }
 
 /// Write every session's changes to the store. Called after each command and each agent
@@ -628,73 +568,6 @@ pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
     send_to_agent(inner, id, AgentCommand::SetPermissionMode { permission_mode: expected });
 }
 
-/// The `setModel` command: the composer's Model control. The switch is pending from now
-/// until the agent's own requests run on the new Model (`model_changed`) or it fails.
-pub(crate) fn set_model(inner: &mut Inner, id: &str, model: &str) {
-    const COMMAND: &str = command_name::SET_MODEL;
-    let Some(state) = find(inner, id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
-    };
-    let model = model.trim();
-    if model.is_empty() {
-        return inner.refuse(COMMAND, "Choose a Model to switch to".into());
-    }
-    if state.session.pending_model.as_deref() == Some(model)
-        || (state.session.pending_model.is_none() && state.facts.model.as_deref() == Some(model))
-    {
-        return;
-    }
-    // Back to the Model it runs on: the pending switch is withdrawn, and a CLI already told
-    // to switch is told to stay. There is nothing to confirm.
-    if state.facts.model.as_deref() == Some(model) {
-        state.session.pending_model = None;
-        let sent = !std::mem::take(&mut state.switch_queued);
-        let agent = state.session.agent;
-        let event = model_switch(state);
-        inner.emit(event);
-        if sent && compat::switches_model_live(inner, agent) {
-            send_to_agent(inner, id, AgentCommand::SetModel { model: model.into() });
-        }
-        return;
-    }
-    state.session.pending_model = Some(model.into());
-    // While a Permission request is pending the switch waits for the answer: the request
-    // stays exactly as asked, and the switch's one-request check starts after it.
-    state.switch_queued = true;
-    let event = model_switch(state);
-    inner.emit(event);
-    if !requests::has_pending(find(inner, id).expect("found above")) {
-        send_queued_switch(inner, id);
-    }
-}
-
-/// Send the agent the pending Model switch that waited (for an answer, or for the agent).
-fn send_queued_switch(inner: &mut Inner, id: &str) {
-    let Some(state) = find(inner, id) else { return };
-    if !state.switch_queued || state.agent.is_none() {
-        return;
-    }
-    // A CLI that cannot switch live takes it when the Session resumes, never before.
-    let agent = state.session.agent;
-    if !compat::switches_model_live(inner, agent) {
-        return;
-    }
-    let state = find(inner, id).expect("found above");
-    state.switch_queued = false;
-    if let Some(model) = state.session.pending_model.clone() {
-        send_to_agent(inner, id, AgentCommand::SetModel { model });
-    }
-}
-
-/// The Session's Model switch as it now stands.
-fn model_switch(state: &SessionState) -> Event {
-    Event::SessionModelChanged {
-        session_id: state.session.id.clone(),
-        pending_model: state.session.pending_model.clone(),
-        switched_model: state.session.switched_model.clone(),
-    }
-}
-
 /// The worktree path and status of session `id`, if it exists.
 pub(crate) fn worktree_and_status(inner: &Inner, id: &str) -> Option<(String, SessionStatus)> {
     let state = inner.sessions.list.iter().find(|s| s.session.id == id)?;
@@ -757,14 +630,15 @@ pub(crate) fn note_running(inner: &mut Inner, repository_id: &str, text: &str) {
 }
 
 /// Ask one Session whose agent of `kind` is running CLI `cli_version` to list its Models (a
-/// background refresh of the Model-list cache; the answer arrives as agent output).
-pub(crate) fn ask_for_models(inner: &mut Inner, kind: AgentKind, cli_version: &str) {
+/// background refresh of the Model-list cache; the answer arrives as agent output). False
+/// when there is no such Session.
+pub(crate) fn ask_for_models(inner: &mut Inner, kind: AgentKind, cli_version: &str) -> bool {
     let live = inner.sessions.list.iter().find(|s| {
         s.session.agent == kind && s.agent.is_some() && s.facts.cli_version.as_deref() == Some(cli_version)
     });
-    if let Some(id) = live.map(|s| s.session.id.clone()) {
-        send_to_agent(inner, &id, AgentCommand::ListModels);
-    }
+    let Some(id) = live.map(|s| s.session.id.clone()) else { return false };
+    send_to_agent(inner, &id, AgentCommand::ListModels);
+    true
 }
 
 /// Emit every session, its facts, its spend (priced now) and its transcript (on attach).
@@ -823,8 +697,10 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
     let mut fall_back = None;
     let turn_ended = matches!(output, AgentOutput::Event(AgentEvent::TurnComplete | AgentEvent::Done { .. }));
     // A resumed agent's first request has run once it says or does something, or its turn ends.
-    if matches!(output, AgentOutput::Event(AgentEvent::AgentText { .. } | AgentEvent::ToolCallStarted { .. } | AgentEvent::TurnComplete)) {
-        out.extend(first_request(state));
+    // The names the CLI lists its Models by, read only when a Model is compared.
+    let names = |state: &SessionState| crate::models::names(inner.store.db(), state.session.agent, state.facts.cli_version.as_deref());
+    if state.resumed.is_some() && matches!(&output, AgentOutput::Event(event) if event.shows_a_request_ran()) {
+        out.extend(first_request(state, &names(state)));
     }
     match output {
         AgentOutput::Event(event) => match event {
@@ -920,17 +796,11 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
                     cache_write_tokens,
                     reported_usd: cost_usd,
                 };
-                let named = usage.model.clone();
+                // Usage on a named Model never resolves Default: it may be a subagent's or a
+                // background call's. Only the main agent's own Model does (init, model_changed).
                 state.usage.push(usage);
                 let table = PriceTable::read(&inner.data_dir);
-                match named {
-                    // The first concrete Model name resolves an unresolved Default.
-                    Some(model) if unresolved_default(state) => {
-                        out.extend(resolve_default(state, model, &table));
-                        out.push(facts(state));
-                    }
-                    _ => out.push(spend_event(state, state.usage.len() - 1, &table)),
-                }
+                out.push(spend_event(state, state.usage.len() - 1, &table));
             }
             AgentEvent::ClassifierDenial { tool, detail, reason } => {
                 // Counted and noted; never a Permission request, so the status never moves.
@@ -943,54 +813,13 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
                 model_list = crate::models::from_agent(event, (inner.runtime.now_ms)());
             }
             AgentEvent::ModelChanged { model } => {
-                // The main agent's own requests run on `model` now: the user's switch took (one
-                // still waiting to be sent cannot have).
-                if !state.switch_queued && state.session.pending_model.take().is_some() {
-                    state.session.switched_model = Some(model.clone());
-                    out.push(model_switch(state));
-                }
-                out.push(append(state, Entry::System { text: format!("Model → {model}") }));
-                state.facts.model = Some(model);
-                out.push(facts(state));
-            }
-            AgentEvent::ModelChangeFailed { model, reason }
-                if state.resumed.as_ref().is_some_and(|r| r.model.as_deref() == Some(model.as_str())) =>
-            {
-                // The CLI cannot run on the Model it was resumed on (retired, or no access): it
-                // resumes once more, on Default, so the Session always runs; the user picks again.
-                let resumed = state.resumed.take().expect("matched above");
-                let why = match &reason {
-                    Some(reason) if reason.ends_with('.') => format!(": {reason}"),
-                    Some(reason) => format!(": {reason}."),
-                    None => ".".into(),
-                };
-                out.push(append(state, Entry::System { text: format!("Could not resume on {model}{why} Resumed on Default.") }));
-                let session = &mut state.session;
-                let pending = session.pending_model.take_if(|m| *m == model).is_some();
-                let switched = session.switched_model.take_if(|m| *m == model).is_some();
-                if pending || switched {
-                    out.push(model_switch(state));
-                }
-                out.push(Event::ModelSwitchFailed { session_id: id.into(), model, reason });
-                // Unknown until the CLI resumed on Default says.
-                state.facts.model = None;
-                out.push(facts(state));
-                fall_back = Some(resumed.text);
+                let names = names(state);
+                out.extend(model_switch::changed(state, model, &names, &PriceTable::read(&inner.data_dir)))
             }
             AgentEvent::ModelChangeFailed { model, reason } => {
-                // Noted, never retried; the Session carries on as it was, in the same status.
-                let running = state.facts.model.as_deref().unwrap_or("the Model it was on");
-                let text = match &reason {
-                    Some(reason) => format!("Model switch to {model} failed: {reason}"),
-                    None => format!("Model switch to {model} did not take: the agent's next request was still on {running}"),
-                };
-                out.push(append(state, Entry::System { text }));
-                // A failure for a switch since superseded by another leaves that one pending.
-                if !state.switch_queued && state.session.pending_model.as_deref() == Some(model.as_str()) {
-                    state.session.pending_model = None;
-                    out.push(model_switch(state));
-                    out.push(Event::ModelSwitchFailed { session_id: id.into(), model, reason });
-                }
+                let (events, fall) = model_switch::change_failed(state, model, reason);
+                out.extend(events);
+                fall_back = fall;
             }
         },
         AgentOutput::Unreadable { line } => {
@@ -1040,33 +869,8 @@ fn on_agent(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, output: Agen
     if let Some(list) = model_list {
         crate::models::answered(inner, agent, cli_version.as_deref(), list);
     }
-    if let Some(text) = fall_back {
-        resume_on_default(inner, core, id, text);
-    }
-}
-
-/// Replace the agent that could not run on the Model it resumed on with one resumed on
-/// Default, and send it what the first one was sent. Tried once: a resume on Default is never
-/// retried.
-fn resume_on_default(inner: &mut Inner, core: &Weak<Mutex<Inner>>, id: &str, text: Option<String>) {
-    let Some(state) = find(inner, id) else { return };
-    state.agent = None; // its process is killed as the handle drops
-    state.process = None;
-    let resumed = Resumed { model: None, switch_from: None, reported: None, text: None };
-    match relaunch(inner, core.clone(), id, resumed) {
-        Ok(()) => {
-            if let Some(text) = text {
-                send_text(inner, id, &text);
-            }
-        }
-        Err(reason) => {
-            let Some(state) = find(inner, id) else { return };
-            let mut events = vec![append(state, Entry::System { text: reason })];
-            events.extend(change_status(state, &Cause::AgentFailed));
-            for event in events {
-                inner.emit(event);
-            }
-        }
+    if let Some(fall_back) = fall_back {
+        resume_on_default(inner, core, id, fall_back);
     }
 }
 
@@ -1136,6 +940,22 @@ fn replaced(state: &mut SessionState, index: usize) {
     }
 }
 
+/// What the Session has spent on each named Model so far, for a relaunched agent.
+fn spent_so_far(state: &SessionState) -> Vec<agents::SpentOn> {
+    spend::latest(&state.usage, state.facts.model.as_deref())
+        .into_iter()
+        .filter_map(|(model, usage)| {
+            Some(agents::SpentOn {
+                model: model?,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_tokens: usage.cache_read_tokens,
+                cache_write_tokens: usage.cache_write_tokens,
+            })
+        })
+        .collect()
+}
+
 /// The Session's spend as of its usage report number `upto`, priced now.
 fn spend_event(state: &SessionState, upto: usize, table: &PriceTable) -> Event {
     let reports = &state.usage[..=upto];
@@ -1154,14 +974,14 @@ fn start_line(choice: &ModelChoice, running: Option<&str>) -> String {
 }
 
 /// Started on Default, and the CLI has not yet named the Model Default runs on: usage
-/// meanwhile is unpriced.
+/// meanwhile is unpriced (except usage the CLI itself reports on a named Model).
 fn unresolved_default(state: &SessionState) -> bool {
     state.session.model == ModelChoice::Default && state.facts.model.is_none()
 }
 
-/// Default resolves to `model`, the first concrete Model name the CLI gave: noted in the
-/// Agent log, and the usage held unpriced until now priced on it, once, here. The caller
-/// reports the facts.
+/// Default resolves to `model`, the first Model the CLI named for the main agent (a later
+/// init, or the main agent's first request): noted in the Agent log, and the usage held
+/// unpriced until now priced on it, once, here. The caller reports the facts.
 fn resolve_default(state: &mut SessionState, model: String, table: &PriceTable) -> Vec<Event> {
     let text = format!("Model: Default resolved to {model}; earlier usage is priced on it");
     state.facts.model = Some(model);

@@ -105,29 +105,54 @@ pub enum Event {
         reason: Option<String>,
     },
     /// The main agent's own requests now run on `model`, a different Model from its last
-    /// request: a [`Command::SetModel`] took, or the CLI moved on its own. Never sent for a
-    /// subagent's, a compaction's or any other background call's Model (their usage still
-    /// comes as [`Event::TokenUsage`] on that Model). An adapter that cannot tell the main
-    /// agent's requests from the others never sends it, and says so in its manifest
-    /// (`switch_model_live: false`).
+    /// request; also sent for its first request when [`Event::SessionInit`] named no Model,
+    /// which is how the host resolves an unreported Default (never from
+    /// [`Event::TokenUsage`], whose Model may be a subagent's). Never sent for a subagent's, a compaction's or any other background call's
+    /// Model (their usage still comes as [`Event::TokenUsage`] on that Model). An adapter that
+    /// cannot tell the main agent's requests from the others never sends it, and says so in
+    /// its manifest (`switch_model_live: false`).
+    ///
+    /// Only the user's switches change a Session's Model. The host takes this as the
+    /// [`Command::SetModel`] it sent having taken only when `model` names that Model (its id,
+    /// or the [`ListedModel::resolved_model`] an alias stands for); any other is the CLI
+    /// moving on its own, which the host notes and never records as the Session's Model.
     ModelChanged {
         model: String,
     },
-    /// A [`Command::SetModel`] to `model` did not take: the CLI refused it (`reason`, when it
-    /// gives one), or the main agent's next request was still on the old Model. The CLI
-    /// carries on as it was.
+    /// The CLI will not run on `model`; `reason` is the CLI's, when it gives one. Either a
+    /// [`Command::SetModel`] to `model` did not take (the CLI refused it, or the main agent's
+    /// next request was still on the old Model), and the CLI carries on as it was; or, before
+    /// the first request of a CLI resumed on `model` ([`Command::Resume`]) has run, the CLI
+    /// cannot run on it (retired, or no access), and the host resumes it once more on Default.
     ModelChangeFailed {
         model: String,
         reason: Option<String>,
     },
 }
 
+impl Event {
+    /// True when the event shows that a request of the agent's ran: it said or did
+    /// something, or its turn ended. A host or adapter waiting on a relaunched CLI's first
+    /// request (to confirm the Model it resumed on) counts from these.
+    pub fn shows_a_request_ran(&self) -> bool {
+        matches!(
+            self,
+            Event::AgentText { .. } | Event::ToolCallStarted { .. } | Event::TurnComplete
+        )
+    }
+}
+
 /// One Model a CLI offers: `id` is what the CLI takes to run on it, `display_name` what
-/// the user reads.
+/// the user reads, and `resolved_model` the full Model id `id` stands for when `id` is an
+/// alias (Claude Code's `opus` for `claude-opus-5-5`), which is the name `session_init`,
+/// `model_changed` and `token_usage` report it by. Absent when `id` is itself the full id or
+/// the CLI does not say.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListedModel {
     pub id: String,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_model: Option<String>,
 }
 
 /// An MCP server's connection state, as the CLI reports it.
@@ -220,7 +245,9 @@ pub enum Command {
         model: Option<String>,
     },
     /// Ask the CLI which Models it offers. Answered by [`Event::ModelsListed`] or
-    /// [`Event::CannotListModels`]; the host does the asking, so the adapter does no I/O.
+    /// [`Event::CannotListModels`]; the host does the asking, so the adapter does no I/O. As
+    /// the first command it means the adapter was started only to list: it starts its CLI
+    /// without a prompt or a conversation, and the host stops it once it answered.
     ListModels,
     /// Switch the running CLI to another Model, from the main agent's next request on (the
     /// request in flight is left alone). Answered by [`Event::ModelChanged`] once the main

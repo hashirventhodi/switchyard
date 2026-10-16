@@ -8,18 +8,11 @@ import type { SessionFacts } from "./schema/SessionFacts";
 
 export const DEFAULT_MODEL: ModelChoice = { type: "default" };
 
-/** Agents whose Model can be chosen at start and switched (live, or on resume). */
-const CHOOSES_MODEL: Record<AgentKind, boolean> = { claudeCode: true, codex: true };
-
-export function choosesModel(agent: AgentKind): boolean {
-  return CHOOSES_MODEL[agent];
-}
-
 /** Whether the agent's adapter switches a running Session's Model live; otherwise a switch
- * applies when the Session resumes. Before the agents are checked it is taken as live (the
- * core decides either way). */
+ * applies when the Session resumes. Unknown (before the agents are checked) is not live, as
+ * the core takes it. */
 export function switchesModelLive(agents: AgentSetup[], agent: AgentKind): boolean {
-  return agents.find((a) => a.agent === agent)?.switchModelLive ?? true;
+  return agents.find((a) => a.agent === agent)?.switchModelLive ?? false;
 }
 
 /** What a typed Model id means: blank is Default. */

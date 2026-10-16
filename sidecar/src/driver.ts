@@ -103,8 +103,8 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   };
 
   const prompts = new Pushable<SDKUserMessage>();
-  // The query starts with the first command: a resume (the CLI reloads that conversation)
-  // or the first prompt. A session that never gets a command never starts the CLI.
+  // The query starts with the first command: a resume (the CLI reloads that conversation),
+  // the first prompt, or a list_models. A session that never gets a command never starts the CLI.
   let q = null as Query | null;
   // The CLI-facing mode to start in; a switch before the first prompt changes it.
   let cliMode: string = CLI_MODE[config.permission_mode];
@@ -183,11 +183,11 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
               ingest(JSON.stringify({ type: "switchyard", subtype: "set_model_failed", model: op.model, message }));
             });
         } else if (op.op === "list_models") {
-          // Answered whenever the CLI is ready (after the first prompt, if it has not come
-          // yet), never holding up the commands behind it.
+          // Answered in the background, never holding up the commands behind it. Before any
+          // prompt the CLI is started without one: the host may start the sidecar only to
+          // list (New session with no Session running), and it never gets a prompt.
           void (async () => {
-            const live = q ?? (await ready);
-            if (!live) return;
+            const live = q ?? start();
             try {
               const models = await live.supportedModels();
               ingest(JSON.stringify({ type: "switchyard", subtype: "supported_models", models }));

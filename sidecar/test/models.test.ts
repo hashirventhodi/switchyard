@@ -46,11 +46,17 @@ const sdkModels = [
   { value: "sonnet", resolvedModel: "claude-sonnet-5-5", displayName: "Sonnet", description: "" },
 ];
 
-test("list_models asks the live query which Models it offers", async () => {
-  const { query, calls } = fakeQuery(async () => sdkModels);
+test("list_models asks the live query which Models it offers, each with the full id an alias stands for", async () => {
+  const { query, calls } = fakeQuery(async () => [...sdkModels, { value: "claude-haiku-4-5", displayName: "Haiku", description: "" }]);
   const events = await run(query, prompt, listModels);
   expect(calls.lists).toBe(1);
-  expect(events).toContainEqual({ type: "models_listed", models: [{ id: "sonnet", display_name: "Sonnet" }] });
+  expect(events).toContainEqual({
+    type: "models_listed",
+    models: [
+      { id: "sonnet", display_name: "Sonnet", resolved_model: "claude-sonnet-5-5" },
+      { id: "claude-haiku-4-5", display_name: "Haiku", resolved_model: null },
+    ],
+  });
 });
 
 test("a query that cannot list its Models answers cannot_list_models with the reason", async () => {
@@ -67,6 +73,21 @@ test("list_models before the first prompt is answered once the query starts", as
   const events = await run(query, listModels, prompt);
   expect(calls.lists).toBe(1);
   expect(events.some((e) => e.type === "models_listed")).toBe(true);
+});
+
+test("list_models with no prompt at all starts the CLI only to list its Models", async () => {
+  const { query, calls } = fakeQuery(async () => sdkModels);
+  let prompted = false;
+  const listing: QueryFn = (params) => {
+    void (async () => {
+      for await (const _ of params.prompt) prompted = true;
+    })();
+    return query(params);
+  };
+  const events = await run(listing, listModels);
+  expect(calls.lists).toBe(1);
+  expect(events.some((e) => e.type === "models_listed")).toBe(true);
+  expect(prompted).toBe(false);
 });
 
 test("a slow list does not hold up the commands behind it", async () => {

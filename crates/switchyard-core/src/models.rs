@@ -1,18 +1,42 @@
 //! The Model-list cache: the Models each agent's CLI offers, per agent and CLI version, with
 //! when they were fetched. New session reads it ([`read`]) and never waits on a CLI: the
-//! list itself comes from a `list_models` exchange with a running Session's agent, asked
-//! when a Session starts and again when New session opens ([`read`]); its answer is
-//! stored and pushed ([`answered`]). A CLI upgrade reads its own version's entry, so it
-//! starts empty rather than offering the old version's Models.
+//! list itself comes from a `list_models` exchange with an agent, asked when a Session
+//! starts and again when New session opens ([`read`]): of a running Session's agent, or,
+//! with none running, of an agent started only to list ([`Listers`]), which is gone once
+//! it answers. Its answer is stored and pushed ([`answered`]). A CLI upgrade reads its own
+//! version's entry, so it starts empty rather than offering the old version's Models.
 //!
 //! Also New session's pre-fill: the last Model *choice* (an id, or Default) made for each
 //! agent in each Repository ([`remember`], [`read_prefill`]), kept here in Switchyard's
 //! store and never in the Repository.
 
-use rusqlite::{params, Connection, OptionalExtension};
-use switchyard_schema::{AgentKind, Event, ListedModel, ModelChoice, ModelList};
+use std::collections::HashMap;
+use std::sync::Arc;
 
+use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
+use rusqlite::{params, Connection, OptionalExtension};
+use switchyard_schema::{AgentKind, Event, ListedModel, ModelChoice, ModelList, PermissionMode};
+
+use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::Inner;
+
+/// Agents started only to list their CLI's Models, at most one per agent (ADR-0002: the
+/// list still comes through the adapter protocol). Each runs in the background, never holds
+/// the core while its CLI starts, is never given a prompt, and is dropped (its process
+/// killed) once it answers or exits.
+#[derive(Default)]
+pub(crate) struct Listers {
+    running: HashMap<AgentKind, Lister>,
+    launches: u32,
+}
+
+struct Lister {
+    _handle: Box<dyn AgentHandle>,
+    /// The installed CLI version it was started for: its answer is cached under it.
+    version: String,
+    /// Which launch it is: output from one replaced since is dropped.
+    launch: u32,
+}
 
 pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
     // `list` is the schema ModelList as JSON (never `empty`); `choice` is the schema
@@ -50,11 +74,34 @@ fn cached(db: &Connection, agent: AgentKind, cli_version: &str) -> ModelList {
     json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(ModelList::Empty)
 }
 
+/// The Models a CLI listed, to tell when two names are one Model: an alias the CLI takes
+/// (`opus`) and the full id it reports that Model by (`claude-opus-5-5`).
+pub(crate) struct Names(Vec<ListedModel>);
+
+impl Names {
+    /// Whether `a` and `b` name the same Model: equal, or one listed Model's id and the full
+    /// id it resolves to. Without a list, only equal names are known to be one Model.
+    pub fn same(&self, a: &str, b: &str) -> bool {
+        a == b || self.0.iter().any(|m| m.is(a) && m.is(b))
+    }
+}
+
+/// The names `agent`'s CLI at `cli_version` listed its Models by (none when nothing is cached).
+pub(crate) fn names(db: &Connection, agent: AgentKind, cli_version: Option<&str>) -> Names {
+    match cli_version.map(|version| cached(db, agent, version)) {
+        Some(ModelList::Listed { models, .. }) => Names(models),
+        _ => Names(Vec::new()),
+    }
+}
+
 /// What a CLI answered to `list_models`, as the cache keeps it.
 pub(crate) fn from_agent(event: adapter_protocol::Event, fetched_at_ms: u64) -> Option<ModelList> {
     match event {
         adapter_protocol::Event::ModelsListed { models } => Some(ModelList::Listed {
-            models: models.into_iter().map(|m| ListedModel { id: m.id, display_name: m.display_name }).collect(),
+            models: models
+                .into_iter()
+                .map(|m| ListedModel { id: m.id, display_name: m.display_name, resolved_model: m.resolved_model })
+                .collect(),
             fetched_at_ms,
         }),
         adapter_protocol::Event::CannotListModels { reason } => Some(ModelList::CannotList { reason }),
@@ -92,7 +139,74 @@ pub(crate) fn read(inner: &mut Inner, agent: AgentKind) {
     };
     let models = cached(inner.store.db(), agent, &version);
     inner.emit(Event::ModelsChanged { agent, models });
-    crate::sessions::ask_for_models(inner, agent, &version);
+    if !crate::sessions::ask_for_models(inner, agent, &version) {
+        list_without_a_session(inner, agent, version);
+    }
+}
+
+/// No Session of `agent` runs CLI `version`: start its agent just to list the Models, in
+/// the worktree-less data directory, read-only (Explore), with no Model, server or secret.
+fn list_without_a_session(inner: &mut Inner, agent: AgentKind, version: String) {
+    if inner.listers.running.contains_key(&agent) {
+        return;
+    }
+    inner.listers.launches += 1;
+    let launch = inner.listers.launches;
+    let spec = LaunchSpec {
+        agent,
+        cwd: inner.data_dir.clone(),
+        permission_mode: PermissionMode::Explore,
+        model: None,
+        sandboxed: false,
+        allowed_tools: Vec::new(),
+        disallowed_tools: Vec::new(),
+        mcp_servers: Vec::new(),
+        env: crate::secrets::no_secrets_env(inner),
+        spent: Vec::new(),
+    };
+    let mut handle = match inner.runtime.agents.launch(spec, lister_sink(inner, agent, launch)) {
+        Ok(handle) => handle,
+        Err(reason) => return eprintln!("switchyard: cannot start {agent:?} to list its Models: {reason}"),
+    };
+    if handle.send(AgentCommand::ListModels).is_ok() {
+        inner.listers.running.insert(agent, Lister { _handle: handle, version, launch });
+    }
+}
+
+/// Where a lister reports: its answer is cached and pushed, and then it is dropped, as it
+/// is when it exits; everything else it says is ignored.
+fn lister_sink(inner: &Inner, agent: AgentKind, launch: u32) -> AgentSink {
+    let core = inner.me.clone();
+    Arc::new(move |output| {
+        let Some(core) = core.upgrade() else { return };
+        let mut inner = core.lock().expect("core lock");
+        if inner.listers.running.get(&agent).is_none_or(|l| l.launch != launch) {
+            return;
+        }
+        let list = match output {
+            AgentOutput::Event(event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. })) => {
+                from_agent(event, (inner.runtime.now_ms)())
+            }
+            AgentOutput::Exited { .. } => None,
+            _ => return,
+        };
+        let lister = inner.listers.running.remove(&agent).expect("checked above");
+        if let Some(list) = list {
+            answered(&mut inner, agent, Some(&lister.version), list);
+        }
+    })
+}
+
+/// On attach: each agent's cached list for its installed CLI (Empty when none), so the
+/// composer's Model switch has it without opening New session. Nothing is refreshed here.
+pub(crate) fn replay(inner: &mut Inner) {
+    for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let models = match crate::compat::installed_version(inner, agent) {
+            Some(version) => cached(inner.store.db(), agent, &version),
+            None => ModelList::Empty,
+        };
+        inner.emit(Event::ModelsChanged { agent, models });
+    }
 }
 
 /// A Session started on `choice` for `agent` in `repository_id`: New session pre-fills it
@@ -130,11 +244,12 @@ pub(crate) fn read_prefill(inner: &mut Inner, agent: AgentKind, repository_id: S
     inner.emit(Event::ModelPrefill { agent, repository_id, choice, retired });
 }
 
-/// Whether the installed CLI's cached list offers `id`; true when no list is cached.
+/// Whether the installed CLI's cached list offers `id` (by its id, or as the full id one of its
+/// aliases resolves to); true when no list is cached.
 fn offered(inner: &mut Inner, agent: AgentKind, id: &str) -> bool {
     let Some(version) = crate::compat::installed_version(inner, agent) else { return true };
     match cached(inner.store.db(), agent, &version) {
-        ModelList::Listed { models, .. } => models.iter().any(|m| m.id == id),
+        ModelList::Listed { models, .. } => models.iter().any(|m| m.is(id)),
         ModelList::Empty | ModelList::CannotList { .. } => true,
     }
 }

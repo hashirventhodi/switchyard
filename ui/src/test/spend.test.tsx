@@ -86,6 +86,11 @@ test("with tokens but no price, the cost is unknown rather than zero", () => {
   expect(cost.querySelector(".v")!.textContent).toBe("Unpriced");
   expect(cost.title).toMatch(/No price for mystery-model in the price table/);
   expect(cost.title).toMatch(/40 in · 310 out/);
+  // Its tokens are in plain sight, not only in a tooltip, even on one Model.
+  const list = screen.getByRole("list", { name: "Spend by Model" });
+  expect(within(list).getByRole("listitem").textContent).toBe(
+    "mystery-model unpriced · 40 in · 310 out · 24,100 cache reads · 2,100 cache writes",
+  );
 });
 
 const modelRow = (model: string, inputTokens: number, cost: Cost) => ({
@@ -144,12 +149,15 @@ test("a Model with no price is listed as unpriced with its tokens, and the total
   expect(cost.title).toMatch(/Unpriced: mystery-model/);
   expect(spendByModel()).toEqual([
     ["big-model ~$0.30", expect.stringMatching(/Estimated from price table test-4/)],
-    ["mystery-model unpriced", expect.stringMatching(/No price for mystery-model in the price table · 7,000 in/)],
+    [
+      "mystery-model unpriced · 7,000 in · 0 out · 0 cache reads · 0 cache writes",
+      expect.stringMatching(/No price for mystery-model in the price table · 7,000 in/),
+    ],
   ]);
   expect(screen.queryByText(/\$0\.00/)).toBeNull();
 });
 
-test("a Session on one Model has no breakdown", () => {
+test("a Session on one priced Model has no breakdown", () => {
   vi.useFakeTimers({ now: at(12) });
   launch(session("session-1", "/wt/a", "fix/readme"), spent("session-1", at(11), reported(0.0412)));
 

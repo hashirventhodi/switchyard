@@ -153,6 +153,8 @@ pub(crate) struct Inner {
     /// the slow cadence and the end of a turn compare with, so unchanged configuration is
     /// not pushed again.
     config_stamps: std::collections::HashMap<String, u64>,
+    /// Agents started only to list their CLI's Models (New session with no Session running).
+    listers: models::Listers,
 }
 
 #[derive(Debug)]
@@ -185,6 +187,7 @@ impl Core {
             unwatched: Default::default(),
             watched_memory: Default::default(),
             config_stamps: Default::default(),
+            listers: Default::default(),
         };
         // Reload sessions and recover from a quit or crash before anything else happens.
         sessions::load(&mut inner).map_err(|e| CoreError(format!("cannot read sessions from the store: {e}")))?;
@@ -252,7 +255,8 @@ impl Core {
             Command::Attach => inner.attach(),
             Command::AddRepository { path } => inner.add_repository(&path),
             Command::StartSession { worktree_path, agent, permission_mode, model, prompt } => {
-                sessions::start(&mut inner, &self.inner, &worktree_path, agent, permission_mode, model, &prompt)
+                let start = sessions::Start { agent, permission_mode, model, prompt };
+                sessions::start(&mut inner, &self.inner, &worktree_path, start)
             }
             Command::StopSession { session_id } => sessions::stop(&mut inner, &session_id),
             Command::SendPrompt { session_id, text } => sessions::send_prompt(&mut inner, &self.inner, &session_id, &text),
@@ -271,16 +275,8 @@ impl Core {
                 worktrees::create(&mut inner, command_name::CREATE_WORKTREE, &repository_id, &branch);
             }
             Command::StartSessionOnNewWorktree { repository_id, branch, agent, permission_mode, model, prompt } => {
-                worktrees::start_session_on_new(
-                    &mut inner,
-                    &self.inner,
-                    &repository_id,
-                    &branch,
-                    agent,
-                    permission_mode,
-                    model,
-                    &prompt,
-                )
+                let start = sessions::Start { agent, permission_mode, model, prompt };
+                worktrees::start_session_on_new(&mut inner, &self.inner, &repository_id, &branch, start)
             }
             Command::RemoveWorktree { worktree_path } => worktrees::remove(&mut inner, &worktree_path),
             Command::RefreshWorktrees => worktrees::refresh(&inner),
@@ -290,7 +286,8 @@ impl Core {
             Command::CheckAgents => compat::check(&mut inner),
             Command::ResumeSession { session_id } => sessions::resume(&mut inner, &self.inner, &session_id),
             Command::ReplaceSession { session_id, agent, permission_mode, model, prompt } => {
-                sessions::replace(&mut inner, &self.inner, &session_id, agent, permission_mode, model, &prompt)
+                let start = sessions::Start { agent, permission_mode, model, prompt };
+                sessions::replace(&mut inner, &self.inner, &session_id, start)
             }
             Command::ReadArchivedSession { session_id } => sessions::read_archived(&inner, &session_id),
             Command::ExportTranscript { session_id } => sessions::export(&inner, &session_id),
@@ -346,7 +343,8 @@ impl Core {
                 tasks::link(&inner, &session_id, task_id.as_deref(), relink)
             }
             Command::StartTaskSession { task_id, target, agent, permission_mode, model, prompt } => {
-                tasks::start_session(&mut inner, &self.inner, &task_id, target, agent, permission_mode, model, &prompt)
+                let start = sessions::Start { agent, permission_mode, model, prompt };
+                tasks::start_session(&mut inner, &self.inner, &task_id, target, start)
             }
             Command::ReadModels { agent } => models::read(&mut inner, agent),
             Command::ReadModelPrefill { agent, repository_id } => models::read_prefill(&mut inner, agent, repository_id),
@@ -378,6 +376,7 @@ impl Inner {
     fn attach(&mut self) {
         self.emit(Event::Attached);
         compat::replay(self);
+        models::replay(self);
         forge::replay_setup(self);
         let stored = match self.store.repositories() {
             Ok(list) => list,

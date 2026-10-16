@@ -2,6 +2,8 @@
 
 /**
  * One Model a CLI offers: `id` is what the CLI takes to run on it, `displayName` what the
- * user reads.
+ * user reads, and `resolvedModel` the full Model id an alias `id` stands for (`opus` for
+ * `claude-opus-5-5`), the name the CLI reports it by once running; absent when the CLI does
+ * not say.
  */
-export type ListedModel = { id: string, displayName: string, };
+export type ListedModel = { id: string, displayName: string, resolvedModel?: string | null, };

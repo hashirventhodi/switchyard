@@ -118,10 +118,12 @@ export function sessionCost(session: SessionView): [string, string] {
   return [`${value} + unpriced`, [...parts, `Unpriced: ${unpriced.join(", ")}`, tokensText(latest)].join(" · ")];
 }
 
-/** What each Model cost, when a Session used more than one. */
+/** What each Model cost, when a Session used more than one or some of it is unpriced. An
+ * unpriced Model's tokens are shown in the row itself, not only in its tooltip; a Session on
+ * one priced Model has no breakdown (the summary's cost says it all). */
 export function SpendByModel({ session }: { session: SessionView }) {
   const models = session.spend[session.spend.length - 1]?.spend.byModel ?? [];
-  if (models.length < 2) return null;
+  if (models.length < 2 && !models.some(isUnpriced)) return null;
   return (
     <div className="c by-model">
       <div className="l">By Model</div>
@@ -132,6 +134,7 @@ export function SpendByModel({ session }: { session: SessionView }) {
           return (
             <li key={modelName(m)} title={[...parts, tokensText(m)].join(" · ")}>
               <span className="m">{modelName(m)}</span> <span className={cost ? "v" : "v unpriced"}>{value}</span>
+              {!cost && <span className="t"> · {tokensText(m)}</span>}
             </li>
           );
         })}

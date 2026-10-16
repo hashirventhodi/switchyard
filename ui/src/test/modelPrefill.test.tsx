@@ -80,6 +80,28 @@ test("the last choice is pre-filled and started with", () => {
   expect(startedModel(sent)).toEqual(sonnet);
 });
 
+test("a remembered full id shows as the listed alias that stands for it, and starts on that id", () => {
+  const aliases: ModelList = {
+    type: "listed",
+    models: [
+      { id: "opus", displayName: "Opus", resolvedModel: "claude-opus-5-5" },
+      { id: "sonnet", displayName: "Sonnet", resolvedModel: "claude-sonnet-5-5" },
+    ],
+    fetchedAtMs: 1_760_000_000_000,
+  };
+  const full: ModelChoice = { type: "model", id: "claude-sonnet-5-5" };
+  const { emit, sent } = launch(modelsChanged(aliases));
+  const dialog = newSession();
+
+  act(() => emit(prefill(full)));
+
+  const picker = dialog.getByLabelText("Model") as HTMLSelectElement;
+  expect(picker.value).toBe("sonnet");
+  expect([...picker.options].map((o) => o.textContent)).toEqual(["Default", "Opus", "Sonnet"]);
+  start(dialog);
+  expect(startedModel(sent)).toEqual(full);
+});
+
 test("another Repository's last choice is not pre-filled", () => {
   const { emit } = launch(modelsChanged(listed));
   const dialog = newSession();

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use adapter_protocol::{Command as AgentCommand, Event as AgentEvent, Verdict as AgentVerdict};
 use harness::{added_repository, recorded_events, started_session, Harness, TempRepo};
+use switchyard_core::agents::SpentOn;
 use switchyard_schema::{AgentKind, AgentSetupState, Command, Event, PermissionMode, SessionStatus, Verdict};
 
 struct Setup {
@@ -252,6 +253,37 @@ fn a_codex_session_resumes_by_its_thread_id_after_a_relaunch() {
             AgentCommand::SendText { text: "Continue where you left off.".into() },
         ]
     );
+}
+
+#[test]
+fn a_relaunched_codex_agent_is_told_what_the_session_spent_on_each_model_so_far() {
+    let mut s = setup();
+    let id = start(&mut s.core, &s.worktrees[0], AgentKind::Codex, PermissionMode::AskFirst, "Fix the README link");
+    s.core.agent_says(0, thread_init("019a-thread", adapter_protocol::PermissionMode::AskFirst, "untrusted / workspace-write"));
+    let usage = |model: &str, input: u64| AgentEvent::TokenUsage {
+        model: Some(model.into()),
+        input_tokens: input,
+        output_tokens: 300,
+        cache_read_tokens: 4000,
+        cache_write_tokens: 0,
+        cost_usd: None,
+    };
+    s.core.agent_says(0, usage("gpt-5.6-terra", 6000));
+    s.core.agent_says(0, usage("gpt-5.6-terra", 8000));
+    s.core.agent_says(0, AgentEvent::TurnComplete);
+    s.core.agent_exits(0, Some(0), "");
+
+    s.core.send(Command::SendPrompt { session_id: id, text: "Go on.".into() });
+
+    let terra = SpentOn {
+        model: "gpt-5.6-terra".into(),
+        input_tokens: 8000,
+        output_tokens: 300,
+        cache_read_tokens: 4000,
+        cache_write_tokens: 0,
+    };
+    assert_eq!(s.core.agents.launches()[1].spent, vec![terra], "the latest running total on each Model");
+    assert!(s.core.agents.launches()[0].spent.is_empty(), "nothing at start");
 }
 
 #[test]

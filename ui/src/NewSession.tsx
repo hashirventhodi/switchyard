@@ -11,7 +11,7 @@ import { taskBranch, taskPrompt } from "./tasks";
 import { prefillKey, sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { AGENT_LABEL, AGENTS, MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
-import { choosesModel, DEFAULT_MODEL } from "./model";
+import { DEFAULT_MODEL } from "./model";
 import { ModelField } from "./ModelField";
 
 // Explore is the only mode allowed on a primary worktree (ADR-0005).
@@ -93,8 +93,7 @@ export function NewSession(props: {
   const policy = policyRepo ? state.policies[policyRepo] : undefined;
   const modes = MODES.filter((m) => withinCeiling(m, policy?.ceiling ?? null));
   const prefill = policyRepo && !modelChosen ? state.modelPrefills[prefillKey(agent, policyRepo)] : undefined;
-  // An agent whose Model cannot be chosen yet starts on Default.
-  const model = choosesModel(agent) ? (modelChosen ?? prefill?.choice ?? DEFAULT_MODEL) : DEFAULT_MODEL;
+  const model = modelChosen ?? prefill?.choice ?? DEFAULT_MODEL;
   useEffect(() => {
     if (policyRepo) send({ type: "readPolicy", repositoryId: policyRepo });
   }, [policyRepo, send]);
@@ -170,8 +169,8 @@ export function NewSession(props: {
               ))}
             </select>
           </label>
-          {choosesModel(agent) && <ModelField value={model} onChange={setModelChosen} list={state.modelLists[agent]} />}
-          {choosesModel(agent) && prefill?.retired && (
+          <ModelField value={model} onChange={setModelChosen} list={state.modelLists[agent]} />
+          {prefill?.retired && (
             <span className="hint" role="note" aria-label="Remembered Model">
               {prefill.retired}, your last choice here, is no longer offered: Default instead
             </span>
