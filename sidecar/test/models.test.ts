@@ -175,3 +175,21 @@ test("a list-only sidecar refuses every command but list_models", async () => {
   expect(events.filter((e) => e.type === "error")).toHaveLength(4);
   expect(events.some((e) => e.type === "models_listed")).toBe(true);
 });
+
+test("a list-only sidecar runs none of the user's hooks, but still loads their settings for the login", async () => {
+  const { started } = await runListOnly(async () => sdkModels, listModels);
+  expect(started[0].options.settings).toEqual({ disableAllHooks: true });
+  expect(started[0].options.settingSources).toBeUndefined();
+});
+
+test("a Session's sidecar keeps the user's hooks", async () => {
+  const started: any[] = [];
+  const { query } = fakeQuery(async () => sdkModels);
+  await run((params) => {
+    started.push(params.options);
+    return query(params);
+  }, prompt);
+  expect(started).toHaveLength(1);
+  expect(started[0].settings).toBeUndefined();
+  expect(started[0].settingSources).toBeUndefined();
+});

@@ -151,7 +151,10 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   };
   // A list-only CLI can do nothing but list: no built-in tool, no MCP server, no allow rule,
   // the mode that denies whatever is not pre-approved, every tool use denied without asking
-  // the host, and nothing written to the CLI's session history.
+  // the host, no hook of the user's run, and nothing written to the CLI's session history.
+  // The user's settings still load (a login such as an apiKeyHelper lives there); their hooks
+  // are turned off in the flag tier, above user, project and local. Managed-policy hooks
+  // still run: Switchyard does not override the organisation's policy.
   const listOnlyParams = () => ({
     prompt: prompts,
     options: {
@@ -165,6 +168,7 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       strictMcpConfig: true,
       canUseTool: async () => ({ behavior: "deny", message: "Switchyard started this CLI only to list its Models" }),
       persistSession: false,
+      settings: { disableAllHooks: true },
       env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
     } as Options,
   });
