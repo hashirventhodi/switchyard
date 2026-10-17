@@ -57,6 +57,7 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             usage: usage.len(),
         };
         let pending_switch = row.session.pending_model.is_some();
+        let last_incarnation = usage.iter().map(|u| u.incarnation).max().unwrap_or(0);
         let mut state = SessionState {
             session: row.session,
             facts: row.facts,
@@ -72,7 +73,8 @@ pub(crate) fn load(inner: &mut Inner) -> rusqlite::Result<()> {
             // A switch still pending when the app went away goes to the agent once it runs again.
             switch_queued: pending_switch,
             resumed: None,
-            launch: 0,
+            // The next agent launch is a new incarnation, never one with stored usage.
+            launch: last_incarnation,
             saved,
         };
         recover(inner, &mut state);

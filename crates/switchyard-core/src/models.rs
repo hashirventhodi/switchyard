@@ -186,7 +186,6 @@ fn list_without_a_session(inner: &mut Inner, agent: AgentKind, version: String) 
         disallowed_tools: Vec::new(),
         mcp_servers: Vec::new(),
         env: crate::secrets::no_secrets_env(inner),
-        spent: Vec::new(),
         list_only: true,
     };
     let mut handle = match inner.runtime.agents.launch(spec, lister_sink(inner, agent, launch)) {
