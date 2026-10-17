@@ -138,8 +138,10 @@ pub(crate) fn read(inner: &mut Inner, agent: AgentKind) {
         return inner.emit(Event::ModelsChanged { agent, models: ModelList::Empty });
     };
     let models = cached(inner.store.db(), agent, &version);
+    let miss = matches!(models, ModelList::Empty);
     inner.emit(Event::ModelsChanged { agent, models });
-    if !crate::sessions::ask_for_models(inner, agent, &version) {
+    // With no live Session, a CLI is started only when nothing is cached for this version.
+    if !crate::sessions::ask_for_models(inner, agent, &version) && miss {
         list_without_a_session(inner, agent, version);
     }
 }

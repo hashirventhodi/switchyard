@@ -84,7 +84,32 @@ fn with_no_session_running_new_session_lists_the_models_through_a_cli_started_on
 
     assert_eq!(pushed, vec![listed(&["opus", "sonnet"])], "cached for the installed CLI and pushed");
     assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus", "sonnet"]));
-    assert_eq!(core.agents.launches().len(), 2, "the first one is gone once it answered; the next opening starts another");
+}
+
+#[test]
+fn with_a_list_cached_for_the_installed_cli_and_no_session_running_nothing_is_started() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    core.agent_says(0, offered(&["opus"]));
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus"]));
+    assert_eq!(core.agents.launches().len(), 1, "a cache hit starts no CLI");
+    let mut core = core.relaunch();
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus"]));
+    assert!(core.agents.launches().is_empty(), "nor after the app is reopened");
+}
+
+#[test]
+fn a_new_cli_version_has_nothing_cached_so_a_cli_is_started_to_list_it() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    core.agent_says(0, offered(&["opus"]));
+
+    core.probe.cli_prints(Some("2.1.301 (Claude Code)"));
+    core.send(Command::CheckAgents);
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty);
+    assert_eq!(core.agents.launches().len(), 2);
 }
 
 #[test]
