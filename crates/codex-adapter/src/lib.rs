@@ -86,6 +86,10 @@ pub struct Launch {
     /// the thread total ([`Tokens`]). Empty at start.
     #[serde(default)]
     pub spent: Vec<Spent>,
+    /// Started only to list Codex's Models (no Session runs): `list_models` is the only
+    /// command taken, so no thread is ever started.
+    #[serde(default)]
+    pub list_only: bool,
 }
 
 /// Running token totals on one Model, in protocol terms (input excludes cache reads).
@@ -943,6 +947,11 @@ impl Adapter for CodexAdapter {
     }
 
     fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError> {
+        if self.launch.list_only && *command != Command::ListModels {
+            return Err(AdapterError(
+                "this adapter was started only to list Models".into(),
+            ));
+        }
         Ok(match command {
             // The thread resumes on `model` (`thread/resume`'s `model`); none is Default.
             Command::Resume {

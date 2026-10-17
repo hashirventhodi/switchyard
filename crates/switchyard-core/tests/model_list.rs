@@ -137,6 +137,22 @@ fn a_cli_started_only_to_list_is_locked_down_to_listing() {
 }
 
 #[test]
+fn a_codex_started_only_to_list_is_locked_down_the_same_way() {
+    let (mut core, _repo, _worktree) = setup();
+
+    read_models(&mut core, AgentKind::Codex);
+
+    let spec = &core.agents.launches()[0];
+    assert_eq!(spec.agent, AgentKind::Codex);
+    assert_eq!(spec.permission_mode, PermissionMode::Explore);
+    assert!(spec.mcp_servers.is_empty() && spec.env.set.is_empty() && spec.model.is_none());
+    let launch = switchyard_core::codex::launch_for(spec);
+    assert!(launch.list_only, "its adapter takes nothing but list_models, so no thread starts");
+    assert!(launch.config.is_empty() && launch.mcp_servers.is_empty() && launch.mcp_rules.is_empty());
+    assert_eq!(core.agents.all_commands(0), vec![AgentCommand::ListModels]);
+}
+
+#[test]
 fn a_cli_started_only_to_list_is_sent_nothing_else_and_whatever_else_it_says_is_ignored() {
     let (mut core, _repo, _worktree) = setup();
     read_models(&mut core, AgentKind::ClaudeCode);

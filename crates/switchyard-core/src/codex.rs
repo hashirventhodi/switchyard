@@ -75,6 +75,7 @@ pub fn launch_for(spec: &LaunchSpec) -> Launch {
                 },
             })
             .collect(),
+        list_only: spec.list_only,
     }
 }
 

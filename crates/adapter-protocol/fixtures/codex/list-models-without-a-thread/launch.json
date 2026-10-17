@@ -1,7 +1,8 @@
 {
-  "cwd": "/Users/dev/Library/Application Support/switchyard",
+  "cwd": "/var/folders/xy/T/switchyard-models-a1b2c3",
   "permission_mode": "explore",
   "config": {},
   "mcp_servers": [],
-  "mcp_rules": []
+  "mcp_rules": [],
+  "list_only": true
 }
