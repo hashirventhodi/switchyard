@@ -18,6 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use adapter_protocol::Event as AgentEvent;
@@ -39,6 +40,9 @@ pub const NOW_MS: u64 = 1_760_000_000_000;
 
 /// How long a harness core waits for `gh` before giving up.
 pub const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long a harness core waits on a CLI started only to list Models (the app's own).
+pub const LIST_MODELS_TIMEOUT: std::time::Duration = switchyard_core::LIST_MODELS_TIMEOUT;
 
 pub struct Harness {
     core: Core,
@@ -84,6 +88,7 @@ impl Harness {
             sandbox_evidence: || None,
             watcher: Arc::new(FakeWatcher::default()),
             fallback_every: None,
+            list_models_timeout: LIST_MODELS_TIMEOUT,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -110,18 +115,23 @@ impl Harness {
     }
 
     fn launch_in(data_dir: TempDir, processes: FakeProcesses, secrets: FakeSecrets) -> Self {
-        Self::launch_at(data_dir, processes, secrets, || NOW_MS, GH_TIMEOUT, None)
+        Self::launch_at(data_dir, processes, secrets, || NOW_MS, GH_TIMEOUT, None, LIST_MODELS_TIMEOUT)
     }
 
     /// A harness whose core watches the disk with `watcher` (the real one, say) instead of
     /// the fake; collect what it causes with `wait_for`.
     pub fn launch_watching(watcher: Arc<dyn Watcher>) -> Self {
-        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, GH_TIMEOUT, Some(watcher))
+        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, GH_TIMEOUT, Some(watcher), LIST_MODELS_TIMEOUT)
     }
 
     /// A harness whose `gh` is given up on after `timeout` (the app waits a minute).
     pub fn launch_with_gh_timeout(timeout: std::time::Duration) -> Self {
-        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, timeout, None)
+        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, timeout, None, LIST_MODELS_TIMEOUT)
+    }
+
+    /// A harness whose CLIs started only to list Models are given up on after `timeout`.
+    pub fn launch_with_list_models_timeout(timeout: std::time::Duration) -> Self {
+        Self::launch_at(TempDir::new().unwrap(), FakeProcesses::default(), FakeSecrets::default(), || NOW_MS, GH_TIMEOUT, None, timeout)
     }
 
     fn launch_at(
@@ -131,6 +141,7 @@ impl Harness {
         now_ms: fn() -> u64,
         gh_timeout: std::time::Duration,
         real_watcher: Option<Arc<dyn Watcher>>,
+        list_models_timeout: std::time::Duration,
     ) -> Self {
         let (tx, events) = channel();
         let probe = FakeProbe::default();
@@ -150,6 +161,7 @@ impl Harness {
             sandbox_evidence: || None,
             watcher: real_watcher.unwrap_or_else(|| Arc::new(watcher.clone())),
             fallback_every: None,
+            list_models_timeout,
         };
         let core = Core::open_with(data_dir.path(), tx, runtime).expect("core opens");
         let gh = fake_gh_in(&data_dir);
@@ -168,7 +180,7 @@ impl Harness {
     pub fn relaunch_at(self, now_ms: fn() -> u64) -> Self {
         let Harness { core, data_dir, processes, secrets, .. } = self;
         drop(core);
-        Self::launch_at(data_dir, processes, secrets, now_ms, GH_TIMEOUT, None)
+        Self::launch_at(data_dir, processes, secrets, now_ms, GH_TIMEOUT, None, LIST_MODELS_TIMEOUT)
     }
 
     /// Claude Code's home as this core reads it (project memory lives under it).
@@ -416,7 +428,7 @@ pub struct FakeAgents {
 
 #[derive(Default)]
 struct FakeAgentsInner {
-    launched: Vec<(LaunchSpec, AgentSink, Arc<Mutex<Vec<adapter_protocol::Command>>>)>,
+    launched: Vec<(LaunchSpec, AgentSink, Arc<Mutex<Vec<adapter_protocol::Command>>>, Arc<AtomicBool>)>,
     refuse_next: Option<String>,
 }
 
@@ -426,7 +438,13 @@ impl FakeAgents {
     }
 
     pub fn launches(&self) -> Vec<LaunchSpec> {
-        self.inner.lock().unwrap().launched.iter().map(|(s, _, _)| s.clone()).collect()
+        self.inner.lock().unwrap().launched.iter().map(|(s, _, _, _)| s.clone()).collect()
+    }
+
+    /// Whether the core let go of the n-th agent's handle (the real launchers kill the
+    /// process when it drops).
+    pub fn dropped(&self, agent: usize) -> bool {
+        self.inner.lock().unwrap().launched[agent].3.load(Ordering::SeqCst)
     }
 
     /// Protocol commands the core sent to the n-th agent about its Session, leaving out the
@@ -454,7 +472,13 @@ impl FakeAgents {
     }
 }
 
-struct FakeHandle(Arc<Mutex<Vec<adapter_protocol::Command>>>, u32);
+struct FakeHandle(Arc<Mutex<Vec<adapter_protocol::Command>>>, u32, Arc<AtomicBool>);
+
+impl Drop for FakeHandle {
+    fn drop(&mut self) {
+        self.2.store(true, Ordering::SeqCst);
+    }
+}
 
 impl AgentHandle for FakeHandle {
     fn send(&mut self, command: adapter_protocol::Command) -> Result<(), String> {
@@ -474,9 +498,10 @@ impl AgentLauncher for FakeAgents {
             return Err(reason);
         }
         let commands = Arc::new(Mutex::new(Vec::new()));
-        inner.launched.push((spec, sink, commands.clone()));
+        let dropped = Arc::new(AtomicBool::new(false));
+        inner.launched.push((spec, sink, commands.clone(), dropped.clone()));
         let pid = self.processes.spawn();
-        Ok(Box::new(FakeHandle(commands, pid)))
+        Ok(Box::new(FakeHandle(commands, pid, dropped)))
     }
 }
 

@@ -82,7 +82,14 @@ pub struct Runtime {
     /// them again (about [`watcher::FALLBACK_EVERY`]); `None`: only when
     /// [`Core::fallback_tick`] is called (tests tick it by hand).
     pub fallback_every: Option<std::time::Duration>,
+    /// How long an agent started only to list its CLI's Models gets to answer before it is
+    /// killed and given up on ([`LIST_MODELS_TIMEOUT`] in the app).
+    pub list_models_timeout: std::time::Duration,
 }
+
+/// How long a CLI started only to list its Models may take: a cold CLI start and one
+/// listing, with room to spare.
+pub const LIST_MODELS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Default for Runtime {
     fn default() -> Self {
@@ -100,6 +107,7 @@ impl Default for Runtime {
             sandbox_evidence: policy::detect_sandbox,
             watcher: Arc::new(watcher::NoWatcher),
             fallback_every: None,
+            list_models_timeout: LIST_MODELS_TIMEOUT,
         }
     }
 }

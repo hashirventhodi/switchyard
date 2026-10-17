@@ -221,6 +221,7 @@ fn begin(inner: &mut Inner, core: &Arc<Mutex<Inner>>, command: &str, worktree_pa
         mcp_servers: mcp_servers.clone(),
         env: secrets::spawn_env(inner, &repo),
         spent: Vec::new(),
+        list_only: false,
     };
     let handle = match inner.runtime.agents.launch(spec, sink(Arc::downgrade(core), id.clone(), 0)) {
         Ok(handle) => handle,
@@ -427,6 +428,7 @@ fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resu
         // Secrets as granted now: a revoke since the session began takes effect here.
         env: repository.as_ref().map(|repo| secrets::spawn_env(inner, repo)).unwrap_or_default(),
         spent,
+        list_only: false,
     };
     let launch = state_launch + 1;
     let mut handle = match inner.runtime.agents.launch(spec, sink(core, id.to_string(), launch)) {

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use adapter_protocol::{CliInfo, Command as AgentCommand, Event as AgentEvent, ListedModel as Offered, PermissionMode as ProtocolMode};
 use harness::{added_repository, started_session, Harness, TempRepo, NOW_MS};
-use switchyard_schema::{AgentKind, Command, Event, ListedModel, ModelList};
+use switchyard_schema::{AgentKind, Command, Event, ListedModel, ModelList, PermissionMode};
 
 fn setup() -> (Harness, TempRepo, PathBuf) {
     let repo = TempRepo::new("acme");
@@ -113,6 +113,99 @@ fn a_new_cli_version_has_nothing_cached_so_a_cli_is_started_to_list_it() {
 }
 
 #[test]
+fn a_cli_started_only_to_list_is_locked_down_to_listing() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    core.send(Command::AddSecret { repository_id: repo_id.clone(), name: "STRIPE_KEY".into() });
+    core.secrets.in_keychain("STRIPE_KEY", "sk_live_123");
+    core.send(Command::GrantSecret { repository_id: repo_id, name: "STRIPE_KEY".into() });
+
+    read_models(&mut core, AgentKind::ClaudeCode);
+
+    let spec = &core.agents.launches()[0];
+    assert!(spec.list_only, "the launcher disallows every tool and the adapter takes nothing but list_models");
+    assert_eq!(spec.permission_mode, PermissionMode::Explore, "the most locked-down mode");
+    assert_eq!(spec.model, None);
+    assert!(spec.mcp_servers.is_empty() && spec.allowed_tools.is_empty(), "no MCP server, no Grant");
+    assert!(spec.env.set.is_empty(), "no secret set");
+    assert!(spec.env.remove.contains("STRIPE_KEY"), "and every known one stripped");
+    assert!(spec.cwd.is_dir(), "a directory of its own");
+    assert_eq!(std::fs::read_dir(&spec.cwd).unwrap().count(), 0, "and empty");
+    assert!(!spec.cwd.starts_with(core.data_dir().canonicalize().unwrap()) && !spec.cwd.starts_with(core.data_dir()));
+    assert!(!spec.cwd.starts_with(&repo.path) && !spec.cwd.starts_with(core.worktree_root()));
+}
+
+#[test]
+fn a_cli_started_only_to_list_is_sent_nothing_else_and_whatever_else_it_says_is_ignored() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+
+    let said = core.agent_replays(
+        0,
+        &[
+            init("2.1.300"),
+            AgentEvent::AgentText { text: "Hello".into() },
+            AgentEvent::PermissionRequest {
+                request_id: "r1".into(),
+                request: adapter_protocol::RequestDetail::Command { command: "rm -rf ~".into(), cwd: None },
+                reason: None,
+            },
+            AgentEvent::TurnComplete,
+        ],
+    );
+
+    assert!(said.is_empty(), "no Session, transcript or request comes of it: {said:#?}");
+    assert_eq!(core.agents.all_commands(0), vec![AgentCommand::ListModels], "nothing is answered or sent");
+    assert!(!core.agents.dropped(0), "still waiting for the answer");
+    core.agent_says(0, offered(&["opus"]));
+    assert!(core.agents.dropped(0), "gone once it answered");
+}
+
+#[test]
+fn a_cli_started_only_to_list_that_exits_takes_its_directory_with_it() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    let cwd = core.agents.launches()[0].cwd.clone();
+
+    core.agent_exits(0, Some(1), "");
+
+    assert!(core.agents.dropped(0));
+    assert!(!cwd.exists(), "its directory is removed");
+}
+
+#[test]
+fn a_cli_started_only_to_list_that_answers_takes_its_directory_with_it() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    let cwd = core.agents.launches()[0].cwd.clone();
+
+    core.agent_says(0, offered(&["opus"]));
+
+    assert!(!cwd.exists());
+}
+
+#[test]
+fn a_cli_started_only_to_list_that_does_not_answer_in_time_is_killed_and_given_up_on_quietly() {
+    let mut core = Harness::launch_with_list_models_timeout(std::time::Duration::from_millis(50));
+    read_models(&mut core, AgentKind::ClaudeCode);
+    let cwd = core.agents.launches()[0].cwd.clone();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !core.agents.dropped(0) {
+        assert!(std::time::Instant::now() < deadline, "the lister was never given up on");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    assert!(!cwd.exists(), "its directory is removed");
+    assert!(core.drain().is_empty(), "nothing is pushed");
+    let late = core.agent_says(0, offered(&["opus"]));
+    assert!(models_changed(&late, AgentKind::ClaudeCode).is_empty(), "a late answer is dropped");
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty, "the cache is unchanged");
+    assert_eq!(core.agents.launches().len(), 2, "still a miss: the next opening tries again");
+}
+
+#[test]
 fn a_cli_already_listing_is_not_started_twice() {
     let (mut core, _repo, _worktree) = setup();
 
@@ -120,6 +213,21 @@ fn a_cli_already_listing_is_not_started_twice() {
     read_models(&mut core, AgentKind::ClaudeCode);
 
     assert_eq!(core.agents.launches().len(), 1);
+}
+
+#[test]
+fn only_one_cli_lists_at_a_time_across_agents() {
+    let (mut core, _repo, _worktree) = setup();
+
+    read_models(&mut core, AgentKind::ClaudeCode);
+    read_models(&mut core, AgentKind::Codex);
+
+    assert_eq!(core.agents.launches().len(), 1, "Codex waits until Claude Code's lister is gone");
+    core.agent_says(0, offered(&["opus"]));
+    read_models(&mut core, AgentKind::Codex);
+    let launches = core.agents.launches();
+    assert_eq!(launches.len(), 2);
+    assert_eq!(launches[1].agent, AgentKind::Codex);
 }
 
 #[test]

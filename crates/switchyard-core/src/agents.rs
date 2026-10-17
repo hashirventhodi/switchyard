@@ -43,6 +43,10 @@ pub struct LaunchSpec {
     /// CLI that reports usage as one total across launches and Models (Codex's thread
     /// total) needs it to report each Model's own running total.
     pub spent: Vec<SpentOn>,
+    /// Started only to list its CLI's Models (New session with no Session running): the
+    /// launcher locks it down to that, disallowing every tool, and the adapter refuses any
+    /// command but `list_models`.
+    pub list_only: bool,
 }
 
 /// A Session's running token totals on one Model, as its usage last reported them.
