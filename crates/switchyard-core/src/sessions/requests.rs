@@ -99,7 +99,7 @@ fn asked(detail: &RequestDetail) -> String {
 pub(crate) fn answer(inner: &mut Inner, id: &str, request_id: &str, verdict: Verdict) {
     const COMMAND: &str = command_name::ANSWER_REQUEST;
     let Some(state) = super::find(inner, id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
+        return inner.refuse(COMMAND, crate::no_session(id));
     };
     let Some(&index) = state.requests.get(request_id) else {
         return inner.refuse(COMMAND, format!("There is no request {request_id} in this session"));

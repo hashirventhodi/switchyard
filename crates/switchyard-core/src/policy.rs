@@ -430,7 +430,7 @@ pub(crate) fn repository(inner: &Inner, id: &str) -> Option<StoredRepository> {
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     match repository(inner, repository_id) {
         Some(repo) => emit(inner, &repo),
-        None => inner.refuse(command_name::READ_POLICY, crate::no_repository(&repository_id)),
+        None => inner.refuse(command_name::READ_POLICY, crate::no_repository(repository_id)),
     }
 }
 
@@ -447,7 +447,7 @@ pub(crate) fn add_local(inner: &Inner, repository_id: &str, rule: &GrantRule) ->
 pub(crate) fn revoke(inner: &Inner, repository_id: &str, grant_id: &str) {
     const COMMAND: &str = command_name::REVOKE_GRANT;
     let Some(repo) = repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+        return inner.refuse(COMMAND, crate::no_repository(repository_id));
     };
     if grant_id.starts_with("repo-") {
         return inner.refuse(COMMAND, "That grant is in the repository's policy file; change it there".into());

@@ -22,6 +22,7 @@ use crate::Inner;
 /// Recent output kept per shell, replayed on attach so a reloaded renderer keeps its screen.
 const SCROLLBACK_BYTES: usize = 256 * 1024;
 
+#[derive(Default)]
 pub(crate) struct Shells {
     list: Vec<ShellState>,
     next_id: u64,
@@ -40,12 +41,6 @@ impl Default for ShellProgram {
     fn default() -> Self {
         let program = std::env::var_os("SHELL").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/bin/zsh"));
         ShellProgram { program, args: vec!["-l".into()] }
-    }
-}
-
-impl Default for Shells {
-    fn default() -> Self {
-        Shells { list: Vec::new(), next_id: 0, program: ShellProgram::default() }
     }
 }
 
