@@ -2,15 +2,15 @@
 //! when they were fetched. New session reads it ([`read`]) and never waits on a CLI: the
 //! list itself comes from a `list_models` exchange with an agent, asked when a Session
 //! starts and again when New session opens ([`read`]): of a running Session's agent, or,
-//! with none running, of an agent started only to list ([`Listers`]), which is gone once
-//! it answers. Its answer is stored and pushed ([`answered`]). A CLI upgrade reads its own
-//! version's entry, so it starts empty rather than offering the old version's Models.
+//! with none running and nothing cached for the installed CLI, of an agent started only to
+//! list ([`Listers`]), which is gone once it answers or times out. Its answer is stored and
+//! pushed ([`answered`]). A CLI upgrade reads its own version's entry, so it starts empty
+//! rather than offering the old version's Models.
 //!
 //! Also New session's pre-fill: the last Model *choice* (an id, or Default) made for each
 //! agent in each Repository ([`remember`], [`read_prefill`]), kept here in Switchyard's
 //! store and never in the Repository.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
@@ -20,22 +20,36 @@ use switchyard_schema::{AgentKind, Event, ListedModel, ModelChoice, ModelList, P
 use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
 use crate::Inner;
 
-/// Agents started only to list their CLI's Models, at most one per agent (ADR-0002: the
-/// list still comes through the adapter protocol). Each runs in the background, never holds
-/// the core while its CLI starts, is never given a prompt, and is dropped (its process
-/// killed) once it answers or exits.
+/// The agent started only to list its CLI's Models, if one is running: at most one at a time,
+/// across agents (ADR-0002: the list still comes through the adapter protocol). It runs in
+/// the background and never holds the core while its CLI starts.
 #[derive(Default)]
 pub(crate) struct Listers {
-    running: HashMap<AgentKind, Lister>,
+    running: Option<Lister>,
     launches: u32,
 }
 
 struct Lister {
+    agent: AgentKind,
+    /// Dropped first: its process is killed before its directory goes.
     _handle: Box<dyn AgentHandle>,
     /// The installed CLI version it was started for: its answer is cached under it.
     version: String,
     /// Which launch it is: output from one replaced since is dropped.
     launch: u32,
+    /// The empty directory it runs in, removed with it.
+    _cwd: tempfile::TempDir,
+}
+
+impl Listers {
+    /// The running lister of `agent` from launch `launch`, taken out: dropping it kills its
+    /// process and removes its directory.
+    fn take(&mut self, agent: AgentKind, launch: u32) -> Option<Lister> {
+        match &self.running {
+            Some(l) if l.agent == agent && l.launch == launch => self.running.take(),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
@@ -138,23 +152,33 @@ pub(crate) fn read(inner: &mut Inner, agent: AgentKind) {
         return inner.emit(Event::ModelsChanged { agent, models: ModelList::Empty });
     };
     let models = cached(inner.store.db(), agent, &version);
+    let miss = matches!(models, ModelList::Empty);
     inner.emit(Event::ModelsChanged { agent, models });
-    if !crate::sessions::ask_for_models(inner, agent, &version) {
+    // With no live Session, a CLI is started only when nothing is cached for this version.
+    if !crate::sessions::ask_for_models(inner, agent, &version) && miss {
         list_without_a_session(inner, agent, version);
     }
 }
 
-/// No Session of `agent` runs CLI `version`: start its agent just to list the Models, in
-/// the worktree-less data directory, read-only (Explore), with no Model, server or secret.
+/// No Session of `agent` runs CLI `version` and nothing is cached for it: start its agent
+/// only to list the Models. It can do nothing else: it runs in a fresh empty directory
+/// (never the data directory or a Repository), in Explore, as list-only (the launcher
+/// disallows every tool and refuses any other command), with no Model, MCP server, Grant or
+/// secret; its only command is `list_models`, and everything it says besides the answer is
+/// ignored. Given up on, quietly, after [`crate::Runtime::list_models_timeout`].
 fn list_without_a_session(inner: &mut Inner, agent: AgentKind, version: String) {
-    if inner.listers.running.contains_key(&agent) {
+    if inner.listers.running.is_some() {
         return;
     }
+    let cwd = match tempfile::Builder::new().prefix("switchyard-models-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => return eprintln!("switchyard: cannot make a directory to list {agent:?}'s Models in: {e}"),
+    };
     inner.listers.launches += 1;
     let launch = inner.listers.launches;
     let spec = LaunchSpec {
         agent,
-        cwd: inner.data_dir.clone(),
+        cwd: cwd.path().to_path_buf(),
         permission_mode: PermissionMode::Explore,
         model: None,
         sandboxed: false,
@@ -162,27 +186,34 @@ fn list_without_a_session(inner: &mut Inner, agent: AgentKind, version: String) 
         disallowed_tools: Vec::new(),
         mcp_servers: Vec::new(),
         env: crate::secrets::no_secrets_env(inner),
-        spent: Vec::new(),
+        list_only: true,
     };
     let mut handle = match inner.runtime.agents.launch(spec, lister_sink(inner, agent, launch)) {
         Ok(handle) => handle,
         Err(reason) => return eprintln!("switchyard: cannot start {agent:?} to list its Models: {reason}"),
     };
-    if handle.send(AgentCommand::ListModels).is_ok() {
-        inner.listers.running.insert(agent, Lister { _handle: handle, version, launch });
+    if handle.send(AgentCommand::ListModels).is_err() {
+        return;
     }
+    inner.listers.running = Some(Lister { agent, _handle: handle, version, launch, _cwd: cwd });
+    let core = inner.me.clone();
+    let timeout = inner.runtime.list_models_timeout;
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout);
+        let Some(core) = core.upgrade() else { return };
+        // No answer in time: dropped (killed), the cache left as it is, nothing pushed.
+        let late = core.lock().expect("core lock").listers.take(agent, launch);
+        drop(late);
+    });
 }
 
 /// Where a lister reports: its answer is cached and pushed, and then it is dropped, as it
-/// is when it exits; everything else it says is ignored.
+/// is when it exits; everything else it says is ignored (and never answered).
 fn lister_sink(inner: &Inner, agent: AgentKind, launch: u32) -> AgentSink {
     let core = inner.me.clone();
     Arc::new(move |output| {
         let Some(core) = core.upgrade() else { return };
         let mut inner = core.lock().expect("core lock");
-        if inner.listers.running.get(&agent).is_none_or(|l| l.launch != launch) {
-            return;
-        }
         let list = match output {
             AgentOutput::Event(event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. })) => {
                 from_agent(event, (inner.runtime.now_ms)())
@@ -190,7 +221,7 @@ fn lister_sink(inner: &Inner, agent: AgentKind, launch: u32) -> AgentSink {
             AgentOutput::Exited { .. } => None,
             _ => return,
         };
-        let lister = inner.listers.running.remove(&agent).expect("checked above");
+        let Some(lister) = inner.listers.take(agent, launch) else { return };
         if let Some(list) = list {
             answered(&mut inner, agent, Some(&lister.version), list);
         }

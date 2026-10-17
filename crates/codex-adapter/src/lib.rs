@@ -80,29 +80,19 @@ pub struct Launch {
     /// config for the servers in `mcp_servers` ([`McpRule`]).
     #[serde(default)]
     pub mcp_rules: Vec<McpRule>,
-    /// What the Session has spent on each Model so far, as the host last had it: a resumed
-    /// thread's `tokenUsage.total` may count every earlier turn on whatever Model, so this
-    /// launch's usage is reported as the Model's earlier total plus this launch's share of
-    /// the thread total ([`Tokens`]). Empty at start.
+    /// Started only to list Codex's Models (no Session runs): `list_models` is the only
+    /// command taken, so no thread is ever started.
     #[serde(default)]
-    pub spent: Vec<Spent>,
-}
-
-/// Running token totals on one Model, in protocol terms (input excludes cache reads).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Spent {
-    pub model: String,
-    #[serde(flatten)]
-    pub tokens: Tokens,
+    pub list_only: bool,
 }
 
 /// Token counts in protocol terms: `input_tokens` excludes cache reads (Codex's own input
 /// count includes them); Codex charges no cache writes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Tokens {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_tokens: u64,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Tokens {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
 }
 
 impl Tokens {
@@ -119,14 +109,6 @@ impl Tokens {
             input_tokens: count("inputTokens").saturating_sub(cached),
             output_tokens: count("outputTokens"),
             cache_read_tokens: cached,
-        }
-    }
-
-    fn plus(self, other: Tokens) -> Tokens {
-        Tokens {
-            input_tokens: self.input_tokens + other.input_tokens,
-            output_tokens: self.output_tokens + other.output_tokens,
-            cache_read_tokens: self.cache_read_tokens + other.cache_read_tokens,
         }
     }
 
@@ -551,12 +533,13 @@ impl CodexAdapter {
             })
     }
 
-    /// `thread/tokenUsage/updated`: the running total on the thread's Model. Codex's `total`
-    /// is the thread's, across launches and Models: this launch's share is the total less
-    /// the baseline (what it was before this launch's first request, `total - last` at the
-    /// first report after one; all of it, for a report before any), added to what the host
-    /// had on this Model ([`Launch::spent`]). Right whether or not a resumed thread's total
-    /// counts its earlier launches.
+    /// `thread/tokenUsage/updated`: what this process has spent so far, on the thread's
+    /// Model. Codex's `total` is the thread's and may count earlier launches' turns, on any
+    /// Model: this process's share is the total less the baseline (what it was before this
+    /// launch's first request, `total - last` at the first report after one; all of it, for
+    /// a report before any). That is right whether or not a resumed thread's total counts
+    /// its earlier launches. The host adds up what each launch reported (one incarnation
+    /// each), so nothing an earlier launch spent is reported again here.
     fn token_usage(&mut self, params: &Value) -> Vec<Event> {
         let total = Tokens::from_codex(params.pointer("/tokenUsage/total"));
         let last = Tokens::from_codex(params.pointer("/tokenUsage/last"));
@@ -565,14 +548,7 @@ impl CodexAdapter {
             *self
                 .baseline
                 .get_or_insert_with(|| if requested { total.minus(last) } else { total });
-        let before = self
-            .launch
-            .spent
-            .iter()
-            .find(|s| Some(&s.model) == self.model.as_ref())
-            .map(|s| s.tokens)
-            .unwrap_or_default();
-        let tokens = before.plus(total.minus(baseline));
+        let tokens = total.minus(baseline);
         vec![Event::TokenUsage {
             model: self.model.clone(),
             input_tokens: tokens.input_tokens,
@@ -943,6 +919,11 @@ impl Adapter for CodexAdapter {
     }
 
     fn command(&mut self, command: &Command) -> Result<Vec<String>, AdapterError> {
+        if self.launch.list_only && *command != Command::ListModels {
+            return Err(AdapterError(
+                "this adapter was started only to list Models".into(),
+            ));
+        }
         Ok(match command {
             // The thread resumes on `model` (`thread/resume`'s `model`); none is Default.
             Command::Resume {

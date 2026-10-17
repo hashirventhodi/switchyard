@@ -67,10 +67,12 @@ pub enum Event {
         /// True when the CLI process can no longer continue.
         fatal: bool,
     },
-    /// Usage on one Model: running totals for everything the Session has spent on
-    /// `model`, superseding the previous report for the same Model. A CLI that uses
-    /// several Models (its own subagent and background calls, a switch) sends one per
-    /// Model, so each is priced on its own.
+    /// Usage on one Model: running totals for everything this adapter's launch (its CLI
+    /// process) has spent on `model`, superseding its previous report for the same Model.
+    /// The host adds up each launch's totals for the Session's, so a relaunched adapter
+    /// never reports what an earlier launch spent. A CLI that uses several Models (its own
+    /// subagent and background calls, a switch) sends one per Model, so each is priced on
+    /// its own.
     TokenUsage {
         /// The Model these tokens were spent on. Absent (as in 0.1) means the Session's
         /// Model, whatever that is.

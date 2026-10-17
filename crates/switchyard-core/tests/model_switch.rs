@@ -5,7 +5,7 @@
 //! request is pending waits for the answer, so its one-request check starts after it.
 mod harness;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use adapter_protocol::{
     CliInfo, Command as AgentCommand, Event as AgentEvent, ListedModel, PermissionMode as ProtocolMode, RequestDetail,
@@ -25,7 +25,7 @@ fn setup() -> (Harness, TempRepo, PathBuf) {
 }
 
 /// A Claude Code Session running on Opus.
-fn running_on_opus(core: &mut Harness, worktree: &PathBuf, mode: PermissionMode) -> String {
+fn running_on_opus(core: &mut Harness, worktree: &Path, mode: PermissionMode) -> String {
     let id = started_session(&core.start_session_in(worktree, mode, "Fix it."));
     core.agent_says(
         0,

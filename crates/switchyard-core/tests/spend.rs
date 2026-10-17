@@ -6,7 +6,7 @@ mod harness;
 use std::path::PathBuf;
 
 use harness::{added_repository, recorded_events, started_session, Harness, TempRepo, NOW_MS};
-use switchyard_schema::{Command, Event, ModelSpend, Spend};
+use switchyard_schema::{AgentKind, Command, Event, ModelSpend, Spend};
 
 fn setup() -> (Harness, TempRepo, PathBuf) {
     let repo = TempRepo::new("acme");
@@ -213,8 +213,11 @@ fn on(model: &str, input_tokens: u64, output_tokens: u64, cache_read_tokens: u64
     }
 }
 
-/// (Model, reported, estimated in cents, input tokens) of each Model in `spend`, in order.
-fn by_model(spend: &Spend) -> Vec<(Option<String>, Option<f64>, Option<f64>, u64)> {
+/// One Model's line in a Spend breakdown: (Model, reported, estimated in cents, input tokens).
+type ModelLine = (Option<String>, Option<f64>, Option<f64>, u64);
+
+/// Each Model's line in `spend`, in order.
+fn by_model(spend: &Spend) -> Vec<ModelLine> {
     spend.by_model.iter().map(|m| (m.model.clone(), m.reported_usd, m.estimated_usd.map(cents), m.input_tokens)).collect()
 }
 
@@ -312,4 +315,165 @@ fn usage_reported_without_a_model_is_the_sessions_model() {
 
     let spend = spends(&events).pop().unwrap().2;
     assert_eq!(by_model(&spend), vec![(Some("echo-model-1-20261001".into()), None, Some(160.0), 300_000)]);
+}
+
+// Spend across relaunches: each agent launch of a Session is an incarnation, and its usage
+// reports are running totals for that incarnation only. The Session's spend on a Model is
+// the sum over incarnations of the latest report on it in each.
+
+const RELAUNCHED: &str = r#"{
+  "version": "test-5",
+  "models": {
+    "claude-opus-5-5": { "input": 10.0, "output": 10.0, "cacheRead": 10.0 },
+    "claude-sonnet-5-5": { "input": 1.0, "output": 1.0, "cacheRead": 1.0 },
+    "gpt-5.6-terra": { "input": 10.0, "output": 10.0, "cacheRead": 10.0 },
+    "gpt-5.6-luna": { "input": 1.0, "output": 1.0, "cacheRead": 1.0 }
+  }
+}"#;
+
+/// The agent's CLI started: `agent` names it, `model` is what it runs on.
+fn cli_init(agent: AgentKind, model: &str) -> adapter_protocol::Event {
+    let (name, version) = match agent {
+        AgentKind::ClaudeCode => ("claude-code", "2.1.300"),
+        AgentKind::Codex => ("codex", "0.144.1"),
+    };
+    adapter_protocol::Event::SessionInit {
+        external_session_id: "cli-1".into(),
+        permission_mode: adapter_protocol::PermissionMode::AskFirst,
+        cli_permission_mode: "default".into(),
+        cli: adapter_protocol::CliInfo { name: name.into(), version: version.into() },
+        model: Some(model.into()),
+        mcp_servers: vec![],
+    }
+}
+
+fn start_on(core: &mut Harness, worktree: &std::path::Path, agent: AgentKind) -> String {
+    started_session(&core.send(Command::StartSession {
+        worktree_path: worktree.to_string_lossy().into_owned(),
+        agent,
+        permission_mode: switchyard_schema::PermissionMode::AskFirst,
+        model: Default::default(),
+        prompt: "Fix it.".into(),
+    }))
+}
+
+/// The n-th agent ends, and a prompt relaunches it (a resume): agent n + 1, a new incarnation.
+fn relaunch_agent(core: &mut Harness, n: usize, id: &str) {
+    core.agent_says(n, adapter_protocol::Event::TurnComplete);
+    core.agent_exits(n, Some(0), "");
+    core.send(Command::SendPrompt { session_id: id.into(), text: "Go on.".into() });
+}
+
+/// (Model, input tokens) of each Model in `spend`, in order.
+fn input_by_model(spend: &Spend) -> Vec<(String, u64)> {
+    spend.by_model.iter().map(|m| (m.model.clone().unwrap_or_default(), m.input_tokens)).collect()
+}
+
+fn last_spend(events: &[Event]) -> Spend {
+    spends(events).pop().expect("a SpendRecorded").2
+}
+
+/// Every Spend the Session ever recorded, as Attach replays it, never goes down.
+fn assert_never_goes_down(core: &mut Harness) {
+    let totals: Vec<u64> = spends(&core.send(Command::Attach)).iter().map(|(_, _, s)| s.input_tokens).collect();
+    assert!(totals.windows(2).all(|w| w[0] <= w[1]), "the total went down: {totals:?}");
+}
+
+fn spends_across_relaunches(agent: AgentKind, model: &str) {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, RELAUNCHED);
+    let id = start_on(&mut core, &worktree, agent);
+    core.agent_says(0, cli_init(agent, model));
+    core.agent_says(0, on(model, 1_000, 0, 0));
+    core.agent_says(0, on(model, 3_000, 0, 0));
+
+    // The relaunched CLI reports what its own process spent, from zero again.
+    relaunch_agent(&mut core, 0, &id);
+    core.agent_says(1, cli_init(agent, model));
+    let spend = last_spend(&core.agent_says(1, on(model, 500, 0, 0)));
+    assert_eq!(spend.input_tokens, 3_500, "the earlier incarnation's spend is kept, and added to");
+    assert_eq!(input_by_model(&spend), vec![(model.to_string(), 3_500)]);
+    let spend = last_spend(&core.agent_says(1, on(model, 800, 0, 0)));
+    assert_eq!(input_by_model(&spend), vec![(model.to_string(), 3_800)], "a running total within an incarnation");
+    assert_never_goes_down(&mut core);
+
+    // Across a relaunch of the app: kept, and the next agent launch is a new incarnation.
+    let mut core = core.relaunch();
+    let replayed = spends(&core.send(Command::Attach)).pop().unwrap().2;
+    assert_eq!(input_by_model(&replayed), vec![(model.to_string(), 3_800)]);
+    core.send(Command::ResumeSession { session_id: id.clone() });
+    core.agent_says(0, cli_init(agent, model));
+    let spend = last_spend(&core.agent_says(0, on(model, 200, 0, 0)));
+    assert_eq!(input_by_model(&spend), vec![(model.to_string(), 4_000)]);
+    assert_eq!(spend.estimated_usd.map(cents), Some(4.0), "10 USD per million on 4000 tokens");
+    assert_never_goes_down(&mut core);
+}
+
+#[test]
+fn a_claude_code_session_that_spends_relaunches_and_spends_again_shows_the_sum() {
+    spends_across_relaunches(AgentKind::ClaudeCode, "claude-opus-5-5");
+}
+
+#[test]
+fn a_codex_session_that_spends_relaunches_and_spends_again_shows_the_sum() {
+    spends_across_relaunches(AgentKind::Codex, "gpt-5.6-terra");
+}
+
+fn switches_model_between_incarnations(agent: AgentKind, first: &str, second: &str) {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, RELAUNCHED);
+    let id = start_on(&mut core, &worktree, agent);
+    core.agent_says(0, cli_init(agent, first));
+    core.agent_says(0, on(first, 1_000, 0, 0));
+
+    // Resumed on the other Model: its spend is its own, the first Model's is kept.
+    relaunch_agent(&mut core, 0, &id);
+    core.agent_says(1, cli_init(agent, second));
+    let spend = last_spend(&core.agent_says(1, on(second, 400, 0, 0)));
+    assert_eq!(input_by_model(&spend), vec![(first.to_string(), 1_000), (second.to_string(), 400)]);
+
+    // And back: the first Model's spend in each incarnation adds up.
+    relaunch_agent(&mut core, 1, &id);
+    core.agent_says(2, cli_init(agent, first));
+    let spend = last_spend(&core.agent_says(2, on(first, 250, 0, 0)));
+    assert_eq!(input_by_model(&spend), vec![(first.to_string(), 1_250), (second.to_string(), 400)]);
+    // 1250 * 10 + 400 * 1 per million.
+    assert_eq!(spend.estimated_usd.map(cents), Some(1.29));
+    assert_never_goes_down(&mut core);
+
+    let mut core = core.relaunch();
+    let replayed = spends(&core.send(Command::Attach)).pop().unwrap().2;
+    assert_eq!(input_by_model(&replayed), vec![(first.to_string(), 1_250), (second.to_string(), 400)]);
+}
+
+#[test]
+fn usage_stored_before_incarnations_were_kept_is_the_first_incarnations() {
+    let (mut core, _repo, worktree) = setup();
+    write_price_table(&core, RELAUNCHED);
+    let id = start_on(&mut core, &worktree, AgentKind::ClaudeCode);
+    core.agent_says(0, cli_init(AgentKind::ClaudeCode, "claude-opus-5-5"));
+    core.agent_says(0, on("claude-opus-5-5", 1_000, 0, 0));
+    core.agent_says(0, on("claude-opus-5-5", 3_000, 0, 0));
+    // A store from before: the usage table has no incarnation column.
+    let db = rusqlite::Connection::open(core.data_dir().join("switchyard.db")).unwrap();
+    db.execute_batch("ALTER TABLE session_usage DROP COLUMN incarnation").unwrap();
+    drop(db);
+
+    let mut core = core.relaunch();
+    let replayed = spends(&core.send(Command::Attach)).pop().unwrap().2;
+    assert_eq!(input_by_model(&replayed), vec![("claude-opus-5-5".to_string(), 3_000)], "one running total, as before");
+    core.send(Command::ResumeSession { session_id: id });
+    core.agent_says(0, cli_init(AgentKind::ClaudeCode, "claude-opus-5-5"));
+    let spend = last_spend(&core.agent_says(0, on("claude-opus-5-5", 200, 0, 0)));
+    assert_eq!(input_by_model(&spend), vec![("claude-opus-5-5".to_string(), 3_200)], "and the next launch adds to it");
+}
+
+#[test]
+fn a_claude_code_session_resumed_on_another_model_keeps_each_models_spend_across_incarnations() {
+    switches_model_between_incarnations(AgentKind::ClaudeCode, "claude-opus-5-5", "claude-sonnet-5-5");
+}
+
+#[test]
+fn a_codex_session_resumed_on_another_model_keeps_each_models_spend_across_incarnations() {
+    switches_model_between_incarnations(AgentKind::Codex, "gpt-5.6-terra", "gpt-5.6-luna");
 }

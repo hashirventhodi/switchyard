@@ -3,19 +3,5 @@
   "permission_mode": "ask_first",
   "config": {},
   "mcp_servers": [],
-  "mcp_rules": [],
-  "spent": [
-    {
-      "model": "gpt-5.6-terra",
-      "input_tokens": 8000,
-      "output_tokens": 300,
-      "cache_read_tokens": 4000
-    },
-    {
-      "model": "gpt-5.6-luna",
-      "input_tokens": 500,
-      "output_tokens": 50,
-      "cache_read_tokens": 0
-    }
-  ]
+  "mcp_rules": []
 }

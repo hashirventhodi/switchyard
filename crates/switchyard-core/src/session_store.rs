@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS session_usage (
     reported_usd      REAL,
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     model             TEXT,
+    incarnation       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (session_id, seq)
 );
 CREATE TABLE IF NOT EXISTS processes (
@@ -102,6 +103,12 @@ pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
         db.prepare("SELECT 1 FROM pragma_table_info('session_usage') WHERE name = 'model'")?.exists([])?;
     if !has_usage_model {
         db.execute_batch("ALTER TABLE session_usage ADD COLUMN model TEXT")?;
+    }
+    // Stores made before usage was kept per agent launch: their rows are the first one's.
+    let has_incarnation =
+        db.prepare("SELECT 1 FROM pragma_table_info('session_usage') WHERE name = 'incarnation'")?.exists([])?;
+    if !has_incarnation {
+        db.execute_batch("ALTER TABLE session_usage ADD COLUMN incarnation INTEGER NOT NULL DEFAULT 0")?;
     }
     // Stores made before a hunk review named its file and hunk (for Stale decisions).
     let has_hunk_path = db.prepare("SELECT 1 FROM pragma_table_info('review_hunks') WHERE name = 'path'")?.exists([])?;
@@ -178,8 +185,8 @@ pub(crate) fn save_chunk(db: &Connection, session_id: &str, chunk: usize, entrie
 pub(crate) fn save_usage(db: &Connection, session_id: &str, seq: usize, usage: &Usage) -> rusqlite::Result<()> {
     db.execute(
         "INSERT OR REPLACE INTO session_usage
-         (session_id, seq, at_ms, input_tokens, output_tokens, cache_read_tokens, reported_usd, cache_write_tokens, model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         (session_id, seq, at_ms, input_tokens, output_tokens, cache_read_tokens, reported_usd, cache_write_tokens, model, incarnation)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             session_id,
             seq as i64,
@@ -190,6 +197,7 @@ pub(crate) fn save_usage(db: &Connection, session_id: &str, seq: usize, usage: &
             usage.reported_usd,
             usage.cache_write_tokens as i64,
             usage.model,
+            usage.incarnation as i64,
         ],
     )?;
     Ok(())
@@ -236,7 +244,7 @@ pub(crate) fn transcript(db: &Connection, session_id: &str) -> rusqlite::Result<
 
 pub(crate) fn usage(db: &Connection, session_id: &str) -> rusqlite::Result<Vec<Usage>> {
     let mut stmt = db.prepare(
-        "SELECT at_ms, input_tokens, output_tokens, cache_read_tokens, reported_usd, cache_write_tokens, model
+        "SELECT at_ms, input_tokens, output_tokens, cache_read_tokens, reported_usd, cache_write_tokens, model, incarnation
          FROM session_usage WHERE session_id = ?1 ORDER BY seq",
     )?;
     let rows = stmt.query_map(params![session_id], |r| {
@@ -248,6 +256,7 @@ pub(crate) fn usage(db: &Connection, session_id: &str) -> rusqlite::Result<Vec<U
             reported_usd: r.get(4)?,
             cache_write_tokens: r.get::<_, i64>(5)? as u64,
             model: r.get(6)?,
+            incarnation: r.get::<_, i64>(7)? as u32,
         })
     })?;
     rows.collect()

@@ -25,6 +25,11 @@ export interface SidecarConfig {
   mcp_servers?: Record<string, unknown>;
   /** The chosen Model id; absent for Default (the CLI, or the user's own settings, decide). */
   model?: string;
+  /**
+   * Started only to list the CLI's Models (no Session runs): the CLI gets no tool, no MCP
+   * server and no prompt, and every command but list_models is refused.
+   */
+  list_only?: boolean;
 }
 
 /** Modes in which dangerous commands always reach the host (everything below Full auto). */
@@ -113,7 +118,7 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   let started: (q: Query | null) => void = () => {};
   const ready = new Promise<Query | null>((resolve) => (started = resolve));
   const start = (resume?: string) => {
-    q = query({
+    q = query(config.list_only ? listOnlyParams() : {
       prompt: prompts,
       options: {
         cwd: config.cwd,
@@ -144,6 +149,25 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
     started(q);
     return q;
   };
+  // A list-only CLI can do nothing but list: no built-in tool, no MCP server, no allow rule,
+  // the mode that denies whatever is not pre-approved, every tool use denied without asking
+  // the host, and nothing written to the CLI's session history.
+  const listOnlyParams = () => ({
+    prompt: prompts,
+    options: {
+      cwd: config.cwd,
+      permissionMode: "dontAsk",
+      pathToClaudeCodeExecutable: config.claude_path ?? undefined,
+      tools: [],
+      allowedTools: [],
+      disallowedTools: config.disallowed_tools ?? [],
+      mcpServers: {},
+      strictMcpConfig: true,
+      canUseTool: async () => ({ behavior: "deny", message: "Switchyard started this CLI only to list its Models" }),
+      persistSession: false,
+      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
+    } as Options,
+  });
 
   const commandLoop = (async () => {
     for await (const line of commands) {
@@ -159,6 +183,10 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       }
       recorder?.command(command, ops);
       for (const op of ops) {
+        if (config.list_only && op.op !== "list_models") {
+          emit({ type: "error", message: `${command.type} refused: this sidecar was started only to list Models`, fatal: false });
+          break;
+        }
         if (op.op === "resume") {
           if (q) emit({ type: "error", message: "resume must come before any prompt", fatal: false });
           else {

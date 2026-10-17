@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use adapter_protocol::Adapter;
-use codex_adapter::{CodexAdapter, Launch, McpRule, Spent, Tokens};
+use codex_adapter::{CodexAdapter, Launch, McpRule};
 use serde_json::{Map, Value};
 
 use crate::mcp;
@@ -63,18 +63,7 @@ pub fn launch_for(spec: &LaunchSpec) -> Launch {
         config: spawn_config(spec),
         mcp_servers: spec.mcp_servers.iter().map(|s| s.name.clone()).collect(),
         mcp_rules,
-        spent: spec
-            .spent
-            .iter()
-            .map(|s| Spent {
-                model: s.model.clone(),
-                tokens: Tokens {
-                    input_tokens: s.input_tokens,
-                    output_tokens: s.output_tokens,
-                    cache_read_tokens: s.cache_read_tokens,
-                },
-            })
-            .collect(),
+        list_only: spec.list_only,
     }
 }
 
