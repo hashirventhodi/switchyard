@@ -2,16 +2,19 @@
 // transcript and the composer.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { PermissionMode } from "./schema/PermissionMode";
+import type { ModelList } from "./schema/ModelList";
 import type { Policy } from "./schema/Policy";
 import { useAction } from "./actions";
 import { at } from "./chunked";
 import { keysLabel, matches } from "./keymap";
+import { modelLabel } from "./model";
+import { ModelSwitch } from "./ModelSwitch";
 import { RequestCard } from "./RequestCard";
 import type { Command } from "./schema/Command";
 import type { Entry } from "./schema/Entry";
 import type { Verdict } from "./schema/Verdict";
 import type { PendingRequest, SessionView as Session } from "./state";
-import { sessionCost } from "./spend";
+import { SpendByModel, sessionCost } from "./spend";
 import { AGENT_COLOR, AGENT_LABEL, AGENT_SHORT, MODE_LABEL, ModeWarning, Status, withinCeiling } from "./status";
 import { VirtualList } from "./VirtualList";
 
@@ -37,6 +40,11 @@ export interface SessionViewProps {
   onToggleChanges?: () => void;
   /** The repository's policy: its ceiling caps the composer's mode segment. */
   policy?: Policy;
+  /** The agent switches its Model live; otherwise the composer's Model control reads
+   * "applies on resume". */
+  switchModelLive?: boolean;
+  /** The agent's cached Model list, for the composer's Model control. */
+  modelList?: ModelList;
   /** Show the review pane on its Changes tab (the Finished and Paused boxes). */
   onReviewChanges?: () => void;
   /** Open a shell in the session's worktree (the Error box). */
@@ -126,6 +134,8 @@ export function SessionView(props: SessionViewProps) {
         input={composer}
         draft={draft}
         ceiling={policy?.ceiling ?? null}
+        switchModelLive={props.switchModelLive ?? false}
+        modelList={props.modelList}
       />
     </section>
   );
@@ -220,7 +230,7 @@ function SummaryStrip({ session }: { session: Session }) {
   const [cost, costDetail] = sessionCost(session);
   const cells: [string, string, string?][] = [
     ["Agent", AGENT_LABEL[session.agent]],
-    ["Model", facts.model ?? "—"],
+    ["Model", modelLabel(session.model, facts)],
     ["CLI", facts.cliVersion ?? "—"],
     ["Worktree", session.worktreePath],
     ["Mode", MODE_LABEL[session.permissionMode] + cliMode],
@@ -248,6 +258,7 @@ function SummaryStrip({ session }: { session: Session }) {
           <Elapsed since={session.startedAtMs} />
         </div>
       </div>
+      <SpendByModel session={session} />
     </div>
   );
 }
@@ -401,8 +412,10 @@ function Composer(props: {
   /** Text something else (Ask agent in review) drafted for the user to finish and send. */
   draft: Draft;
   ceiling: PermissionMode | null;
+  switchModelLive: boolean;
+  modelList?: ModelList;
 }) {
-  const { session, send, pending, input, draft, ceiling } = props;
+  const { session, send, pending, input, draft, ceiling, switchModelLive, modelList } = props;
   const [text, setText] = useState("");
   useEffect(() => {
     if (draft.seq === 0) return;
@@ -444,7 +457,10 @@ function Composer(props: {
         ))}
       </div>
       <div className="composer">
-        <ModeSegment session={session} send={send} ceiling={ceiling} />
+        <div className="composer-controls">
+          <ModeSegment session={session} send={send} ceiling={ceiling} />
+          <ModelSwitch session={session} send={send} live={switchModelLive} list={modelList} />
+        </div>
         <textarea
           ref={input}
           aria-label="Message the agent"

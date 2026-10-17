@@ -140,6 +140,7 @@ fn main() {
                 sandbox_evidence: switchyard_core::detect_sandbox,
                 watcher: Arc::new(FsWatcher::new()),
                 fallback_every: Some(FALLBACK_EVERY),
+                list_models_timeout: switchyard_core::LIST_MODELS_TIMEOUT,
             };
             let core = Core::open_with(&data_dir, tx, runtime).map_err(|e| e.0)?;
             app.manage(Dispatcher::new(core));

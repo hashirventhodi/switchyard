@@ -1,7 +1,7 @@
-// Adapter protocol v0.1 wire types (the Rust types in crates/adapter-protocol/src/protocol.rs
+// Adapter protocol v0.2 wire types (the Rust types in crates/adapter-protocol/src/protocol.rs
 // are the reference; see its README). Events and commands are tagged by `type`, snake_case.
 
-export const PROTOCOL_RANGE = "^0.1";
+export const PROTOCOL_RANGE = "^0.2";
 
 export type PermissionMode = "explore" | "ask_first" | "auto_edit" | "full_auto" | "bypass";
 
@@ -36,8 +36,10 @@ export type ProtocolEvent =
   | { type: "turn_complete" }
   | { type: "done"; summary: string | null }
   | { type: "error"; message: string; fatal: boolean }
+  /** Running totals on one Model (null: the Session's Model), superseding the last report for it. */
   | {
       type: "token_usage";
+      model: string | null;
       input_tokens: number;
       output_tokens: number;
       cache_read_tokens: number;
@@ -45,7 +47,19 @@ export type ProtocolEvent =
       cache_write_tokens?: number;
       cost_usd: number | null;
     }
-  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null };
+  | { type: "classifier_denial"; tool: string; detail: string; reason: string | null }
+  /** The answer to list_models: the Models the CLI offers, in its order. */
+  | { type: "models_listed"; models: ListedModel[] }
+  /** The answer to list_models from a CLI that cannot list its Models (or could not this time). */
+  | { type: "cannot_list_models"; reason: string | null }
+  /** The main agent's own requests now run on another Model (never a subagent's or background call's). */
+  | { type: "model_changed"; model: string }
+  /** A set_model did not take: the CLI refused it (its reason), or the next request was still on the old Model. */
+  | { type: "model_change_failed"; model: string; reason: string | null };
+
+/** One Model a CLI offers: `id` is what the CLI takes to run on it. */
+/** `resolved_model`: the full Model id an alias `id` stands for (what the CLI reports it by). */
+export type ListedModel = { id: string; display_name: string; resolved_model: string | null };
 
 export type Verdict =
   | { decision: "allow_once" }
@@ -58,4 +72,6 @@ export type ProtocolCommand =
   | { type: "answer_request"; request_id: string; verdict: Verdict }
   | { type: "interrupt" }
   | { type: "set_permission_mode"; permission_mode: PermissionMode }
-  | { type: "resume"; external_session_id: string };
+  | { type: "resume"; external_session_id: string; model?: string | null }
+  | { type: "list_models" }
+  | { type: "set_model"; model: string };

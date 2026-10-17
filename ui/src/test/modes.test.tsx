@@ -28,6 +28,7 @@ const session: Session = {
   branch: "fix/readme",
   agent: "claudeCode",
   permissionMode: "fullAuto",
+  model: { type: "default" },
   status: "running",
   startedAtMs: 0,
 };

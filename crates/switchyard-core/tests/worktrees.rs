@@ -240,6 +240,7 @@ fn start_on_new(core: &mut Harness, repository_id: &str, branch: &str, mode: Per
         branch: branch.into(),
         agent: AgentKind::ClaudeCode,
         permission_mode: mode,
+        model: Default::default(),
         prompt: prompt.into(),
     })
 }

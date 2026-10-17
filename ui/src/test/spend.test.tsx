@@ -30,6 +30,7 @@ function session(id: string, worktreePath: string, branch: string): Event {
     branch,
     agent: "claudeCode",
     permissionMode: "askFirst",
+    model: { type: "default" },
     status: "running",
     startedAtMs: at(9),
   };
@@ -37,8 +38,11 @@ function session(id: string, worktreePath: string, branch: string): Event {
 }
 
 const tokens = { inputTokens: 40, outputTokens: 310, cacheReadTokens: 24100, cacheWriteTokens: 2100 };
-const reported = (usd: number): Spend => ({ ...tokens, reportedUsd: usd, estimatedUsd: null, priceTableVersion: null });
-const estimated = (usd: number): Spend => ({ ...tokens, reportedUsd: null, estimatedUsd: usd, priceTableVersion: "test-1" });
+type Cost = Pick<Spend, "reportedUsd" | "estimatedUsd" | "priceTableVersion">;
+/** A Session's spend, all of it on one Model. */
+const onOneModel = (cost: Cost, model = "claude-opus-5-5"): Spend => ({ ...tokens, ...cost, byModel: [{ model, ...tokens, ...cost }] });
+const reported = (usd: number) => onOneModel({ reportedUsd: usd, estimatedUsd: null, priceTableVersion: null });
+const estimated = (usd: number) => onOneModel({ reportedUsd: null, estimatedUsd: usd, priceTableVersion: "test-1" }, "gpt-5.6-terra");
 const spent = (sessionId: string, atMs: number, spend: Spend): Event => ({ type: "spendRecorded", sessionId, atMs, spend });
 
 function launch(...events: Event[]) {
@@ -75,12 +79,90 @@ test("a token-only CLI's cost is an estimate, marked with a tilde and its price 
 
 test("with tokens but no price, the cost is unknown rather than zero", () => {
   vi.useFakeTimers({ now: at(12) });
-  const unpriced: Spend = { ...tokens, reportedUsd: null, estimatedUsd: null, priceTableVersion: null };
+  const unpriced = onOneModel({ reportedUsd: null, estimatedUsd: null, priceTableVersion: null }, "mystery-model");
   launch(session("session-1", "/wt/a", "fix/readme"), spent("session-1", at(11), unpriced));
 
   const cost = summaryCost();
-  expect(cost.querySelector(".v")!.textContent).toBe("—");
-  expect(cost.title).toMatch(/No price for this model/);
+  expect(cost.querySelector(".v")!.textContent).toBe("Unpriced");
+  expect(cost.title).toMatch(/No price for mystery-model in the price table/);
+  expect(cost.title).toMatch(/40 in · 310 out/);
+  // Its tokens are in plain sight, not only in a tooltip, even on one Model.
+  const list = screen.getByRole("list", { name: "Spend by Model" });
+  expect(within(list).getByRole("listitem").textContent).toBe(
+    "mystery-model unpriced · 40 in · 310 out · 24,100 cache reads · 2,100 cache writes",
+  );
+});
+
+const modelRow = (model: string, inputTokens: number, cost: Cost) => ({
+  model,
+  inputTokens,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  ...cost,
+});
+
+function spendByModel() {
+  const list = screen.getByRole("list", { name: "Spend by Model" });
+  return within(list)
+    .getAllByRole("listitem")
+    .map((row) => [row.textContent, row.title]);
+}
+
+test("a Session that used two Models shows their total and what each cost", () => {
+  vi.useFakeTimers({ now: at(12) });
+  const spend: Spend = {
+    ...tokens,
+    reportedUsd: 0.0518,
+    estimatedUsd: null,
+    priceTableVersion: null,
+    byModel: [
+      modelRow("claude-opus-5-5", 12, { reportedUsd: 0.0431, estimatedUsd: null, priceTableVersion: null }),
+      modelRow("claude-haiku-4-5-20251001", 2400, { reportedUsd: 0.0087, estimatedUsd: null, priceTableVersion: null }),
+    ],
+  };
+  launch(session("session-1", "/wt/a", "fix/readme"), spent("session-1", at(11), spend));
+
+  expect(summaryCost().querySelector(".v")!.textContent).toBe("$0.05");
+  expect(spendByModel()).toEqual([
+    ["claude-opus-5-5 $0.04", expect.stringMatching(/Reported by the CLI: \$0\.0431 · 12 in/)],
+    ["claude-haiku-4-5-20251001 $0.01", expect.stringMatching(/Reported by the CLI: \$0\.0087 · 2,400 in/)],
+  ]);
+});
+
+test("a Model with no price is listed as unpriced with its tokens, and the total says some is unpriced", () => {
+  vi.useFakeTimers({ now: at(12) });
+  const spend: Spend = {
+    ...tokens,
+    reportedUsd: null,
+    estimatedUsd: 0.3,
+    priceTableVersion: "test-4",
+    byModel: [
+      modelRow("big-model", 10000, { reportedUsd: null, estimatedUsd: 0.3, priceTableVersion: "test-4" }),
+      modelRow("mystery-model", 7000, { reportedUsd: null, estimatedUsd: null, priceTableVersion: null }),
+    ],
+  };
+  launch(session("session-1", "/wt/a", "fix/readme"), spent("session-1", at(11), spend));
+
+  const cost = summaryCost();
+  expect(cost.querySelector(".v")!.textContent).toBe("~$0.30 + unpriced");
+  expect(cost.title).toMatch(/Unpriced: mystery-model/);
+  expect(spendByModel()).toEqual([
+    ["big-model ~$0.30", expect.stringMatching(/Estimated from price table test-4/)],
+    [
+      "mystery-model unpriced · 7,000 in · 0 out · 0 cache reads · 0 cache writes",
+      expect.stringMatching(/No price for mystery-model in the price table · 7,000 in/),
+    ],
+  ]);
+  expect(screen.queryByText(/\$0\.00/)).toBeNull();
+});
+
+test("a Session on one priced Model has no breakdown", () => {
+  vi.useFakeTimers({ now: at(12) });
+  launch(session("session-1", "/wt/a", "fix/readme"), spent("session-1", at(11), reported(0.0412)));
+
+  summaryCost();
+  expect(screen.queryByRole("list", { name: "Spend by Model" })).toBeNull();
 });
 
 const statusSpend = () => screen.getByTestId("spend-today-status");

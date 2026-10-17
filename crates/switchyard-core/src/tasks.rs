@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
 use switchyard_schema::command_name;
 use switchyard_schema::{
-    AgentKind, ChecklistItem, Event, PermissionMode, Task, TaskColumn, TaskKind, TaskSessionTarget, TaskSourceKind,
+    ChecklistItem, Event, Task, TaskColumn, TaskKind, TaskSessionTarget, TaskSourceKind,
 };
 
 use crate::store::StoredRepository;
@@ -424,9 +424,7 @@ pub(crate) fn start_session(
     core: &Arc<Mutex<Inner>>,
     task_id: &str,
     target: TaskSessionTarget,
-    agent: AgentKind,
-    permission_mode: PermissionMode,
-    prompt: &str,
+    start: sessions::Start,
 ) {
     const COMMAND: &str = command_name::START_TASK_SESSION;
     let Some((repo, found)) = find(inner, task_id) else {
@@ -438,13 +436,13 @@ pub(crate) fn start_session(
     let before = sessions::live_ids(inner);
     match target {
         TaskSessionTarget::NewWorktree { branch } => {
-            worktrees::start_session_on_new(inner, core, &repo.id, &branch, agent, permission_mode, prompt)
+            worktrees::start_session_on_new(inner, core, &repo.id, &branch, start)
         }
         TaskSessionTarget::Worktree { worktree_path } => {
-            sessions::start(inner, core, &worktree_path, agent, permission_mode, prompt)
+            sessions::start(inner, core, &worktree_path, start)
         }
         TaskSessionTarget::Replace { session_id } => {
-            sessions::replace(inner, core, &session_id, agent, permission_mode, prompt)
+            sessions::replace(inner, core, &session_id, start)
         }
     }
     // The session that started (none when it was refused) is linked to the task.

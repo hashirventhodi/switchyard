@@ -1,6 +1,6 @@
 # adapter-protocol
 
-The Switchyard adapter protocol, version **0.1.0**, and its conformance runner.
+The Switchyard adapter protocol, version **0.2.0**, and its conformance runner.
 
 Switchyard drives agent CLIs (Claude Code, Codex, ...) only through their structured modes, never by scraping a terminal (ADR-0002). An **adapter** maps one CLI's structured output into this protocol's **events**, and maps this protocol's **commands** into that CLI's input. A **recorded fixture** pins that mapping for a specific CLI version, and the **conformance runner** checks an adapter against it.
 
@@ -9,8 +9,14 @@ This crate is self-contained (no dependency on the rest of Switchyard) so it can
 ## Versioning
 
 - `PROTOCOL_VERSION` is the version this crate defines. It follows semver: while it is `0.x`, a minor bump is breaking.
-- Every adapter declares the range it implements in its `AdapterManifest` (`implements`, a semver requirement such as `^0.1`). Hosts and the runner refuse an adapter whose range does not include `PROTOCOL_VERSION`.
-- Every fixture records the protocol version its expected events are written in (`meta.json` `protocol`). The runner refuses a fixture whose version is not caret-compatible with its own (for example a `0.2.0` fixture under a `0.1.0` runner).
+- Every adapter declares the range it implements in its `AdapterManifest` (`implements`, a semver requirement such as `^0.2`). Hosts and the runner refuse an adapter whose range does not include `PROTOCOL_VERSION`.
+- The manifest also declares `switch_model_live`: true when the adapter switches its CLI's Model live (`set_model`) and can tell the main agent's requests from subagent and background calls, so its `model_changed` is truthful. An adapter that cannot make that distinction must declare false (the default) and never send `model_changed`; the host then applies a switch only when the Session resumes.
+- Every fixture records the protocol version its expected events are written in (`meta.json` `protocol`). The runner refuses a fixture whose version is not caret-compatible with its own (for example a `0.3.0` fixture under a `0.2.0` runner).
+
+## Changes
+
+- **0.2.0**: `token_usage` is per Model (`model`). A 0.1 message without it still parses, as usage on the Session's Model. New `list_models` command, answered by `models_listed` or `cannot_list_models`. Live Model switching: the `set_model` command, the `model_changed` and `model_change_failed` events, and the manifest's `switch_model_live` (false when left out, as from a 0.1 adapter). `resume` carries an optional `model` to resume on; a 0.1 `resume` without it means Default. `model_change_failed` also reports a Model the CLI could not resume on. `models_listed` entries may carry `resolved_model`, the full id an alias stands for. `model_changed` is also sent for the main agent's first request when `session_init` named no Model. `list_models` may be the first and only command, to an adapter started only to list.
+- **0.1.0**: first version.
 
 ## Wire format
 
@@ -29,8 +35,12 @@ Events and commands are JSON objects, internally tagged by `type`, with snake_ca
 | `turn_complete` | (none): the agent awaits the next prompt |
 | `done` | `summary`: the agent declared its work complete |
 | `error` | `message`, `fatal` |
-| `token_usage` | `input_tokens` (excluding cache reads and writes), `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (cache creation; optional, 0 when absent), `cost_usd` (only when the CLI reports one): running totals for the whole session, each report superseding the last |
+| `token_usage` | `model` (the Model these tokens were spent on; absent or `null` means the Session's Model, as in 0.1), `input_tokens` (excluding cache reads and writes), `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (cache creation; optional, 0 when absent), `cost_usd` (the CLI's cost for these tokens, only when it reports one): running totals for everything this launch of the adapter (its CLI process) has spent on that Model, each report superseding the last for the same Model; the host adds up each launch's totals for the Session's, so a relaunched (resumed) adapter never reports what an earlier launch spent. A CLI that uses several Models (its own subagent or background calls, a switch) sends one per Model, never one summed total |
 | `classifier_denial` | `tool`, `detail`, `reason`: never a Permission request |
+| `models_listed` | `models`: the Models the CLI offers, in its order, each `{id, display_name, resolved_model?}` (`id` is what the CLI takes to run on it; `resolved_model`, when `id` is an alias such as `opus`, is the full id it stands for, the name `session_init`, `model_changed` and `token_usage` report it by). The answer to `list_models` |
+| `cannot_list_models` | `reason` (optional): the answer to `list_models` from a CLI that cannot list its Models, or could not this time |
+| `model_changed` | `model`: the main agent's own requests now run on this Model, a different one from its last request; also sent for its first request when `session_init` named no Model, which is how the host resolves an unreported Default (never from `token_usage`, whose Model may be a subagent's). Never sent for a subagent's, a compaction's or another background call's Model, whose usage still comes as `token_usage` on that Model. An adapter that cannot tell the main agent's requests apart never sends it. Only the user's switches change a Session's Model: the host takes it as a `set_model` that took only when it names that Model (its id, or the `resolved_model` a listed alias stands for); any other `model_changed` is the CLI moving on its own, which the host notes and never records as the Session's Model, and a `set_model` whose next request ran on yet another Model did not take |
+| `model_change_failed` | `model` (the Model `set_model` or `resume` asked for), `reason` (the CLI's, when it gives one): the switch did not take, because the CLI refused it or the main agent's next request was still on the old Model. The CLI carries on as it was. Also sent when the CLI cannot run a request on the Model it was resumed on (retired, or no access): the host then resumes it once more on Default |
 
 A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 
@@ -50,7 +60,9 @@ A `permission_request`'s `request` is tagged by `kind`, one of exactly five:
 | `answer_request` | `request_id`, `verdict` (below) |
 | `interrupt` | (none) |
 | `set_permission_mode` | `permission_mode` (switch the live CLI to another mode; added in 0.1 without a version bump) |
-| `resume` | `external_session_id` |
+| `resume` | `external_session_id`, `model` (optional): the Model to resume on. Absent or null means Default: the adapter passes no Model, so the CLI or the user's own settings decide |
+| `list_models` | (none): ask which Models the CLI offers. The host asks and the adapter translates the answer, so the adapter does no I/O. It may be the first and only command: the host then started the adapter only to list (no Session runs), and the adapter starts its CLI without a prompt, a thread or a conversation, lists, and is stopped once it answered |
+| `set_model` | `model` (a Model id): switch the live CLI to this Model from the main agent's next request on, leaving the request in flight alone. Answered by `model_changed` or `model_change_failed`. Only sent to an adapter whose manifest has `switch_model_live` |
 
 `resume` is only ever the first command a freshly started adapter receives: the host relaunched it for a Session whose process is gone (after a crash or quit) and the CLI must reload that conversation by its own session id (from `session_init`) so the agent keeps its context. A `send_text` follows it.
 
@@ -95,7 +107,7 @@ fixtures/
 {
   "adapter": "echo",
   "cli": { "name": "echo-cli", "version": "1.0.0" },
-  "protocol": "0.1.0",
+  "protocol": "0.2.0",
   "description": "What this recording covers."
 }
 ```

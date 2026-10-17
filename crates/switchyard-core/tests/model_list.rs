@@ -1,0 +1,374 @@
+//! The Model list through seam 1: what the New session picker offers comes from the CLI
+//! itself (a `list_models` exchange with a running Session's agent), cached per agent and
+//! CLI version with the time it was fetched, and read from that cache without ever waiting
+//! on a CLI.
+mod harness;
+
+use std::path::PathBuf;
+
+use adapter_protocol::{CliInfo, Command as AgentCommand, Event as AgentEvent, ListedModel as Offered, PermissionMode as ProtocolMode};
+use harness::{added_repository, started_session, Harness, TempRepo, NOW_MS};
+use switchyard_schema::{AgentKind, Command, Event, ListedModel, ModelList, PermissionMode};
+
+fn setup() -> (Harness, TempRepo, PathBuf) {
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("fix/readme");
+    let mut core = Harness::launch();
+    added_repository(&core.add_repository(&repo.path));
+    (core, repo, worktree)
+}
+
+fn list_requests(core: &Harness, agent: usize) -> usize {
+    core.agents.all_commands(agent).iter().filter(|c| **c == AgentCommand::ListModels).count()
+}
+
+#[test]
+fn a_session_start_asks_its_cli_which_models_it_offers() {
+    let (mut core, _repo, worktree) = setup();
+
+    started_session(&core.start_session(&worktree, "Fix it."));
+
+    assert_eq!(list_requests(&core, 0), 1);
+}
+
+fn models_changed(events: &[Event], agent: AgentKind) -> Vec<ModelList> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ModelsChanged { agent: a, models } if *a == agent => Some(models.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn read_models(core: &mut Harness, agent: AgentKind) -> ModelList {
+    let changed = models_changed(&core.send(Command::ReadModels { agent }), agent);
+    assert_eq!(changed.len(), 1, "one answer, from the cache: {changed:#?}");
+    changed[0].clone()
+}
+
+#[test]
+fn a_relaunched_agent_is_asked_too() {
+    let (mut core, _repo, worktree) = setup();
+    let id = started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+    core.agent_exits(0, Some(1), "");
+
+    core.send(Command::SendPrompt { session_id: id, text: "Go on.".into() });
+
+    assert_eq!(list_requests(&core, 1), 1);
+    assert!(matches!(core.agents.all_commands(1)[0], AgentCommand::Resume { .. }), "resume stays the first command");
+}
+
+#[test]
+fn before_any_session_new_session_reads_an_empty_list_at_once() {
+    let (mut core, _repo, _worktree) = setup();
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty);
+}
+
+#[test]
+fn with_no_session_running_new_session_lists_the_models_through_a_cli_started_only_for_that() {
+    let (mut core, _repo, _worktree) = setup();
+
+    read_models(&mut core, AgentKind::ClaudeCode);
+
+    let launches = core.agents.launches();
+    assert_eq!(launches.len(), 1, "one short-lived CLI, in the background");
+    assert_eq!(launches[0].agent, AgentKind::ClaudeCode);
+    assert_eq!(launches[0].permission_mode, switchyard_schema::PermissionMode::Explore, "it may do nothing");
+    assert_eq!(core.agents.all_commands(0), vec![AgentCommand::ListModels], "never a prompt");
+    assert!(core.send(Command::Attach).iter().all(|e| !matches!(e, Event::SessionStarted { .. })), "no Session");
+
+    let pushed = models_changed(&core.agent_says(0, offered(&["opus", "sonnet"])), AgentKind::ClaudeCode);
+
+    assert_eq!(pushed, vec![listed(&["opus", "sonnet"])], "cached for the installed CLI and pushed");
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus", "sonnet"]));
+}
+
+#[test]
+fn with_a_list_cached_for_the_installed_cli_and_no_session_running_nothing_is_started() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    core.agent_says(0, offered(&["opus"]));
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus"]));
+    assert_eq!(core.agents.launches().len(), 1, "a cache hit starts no CLI");
+    let mut core = core.relaunch();
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus"]));
+    assert!(core.agents.launches().is_empty(), "nor after the app is reopened");
+}
+
+#[test]
+fn a_new_cli_version_has_nothing_cached_so_a_cli_is_started_to_list_it() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    core.agent_says(0, offered(&["opus"]));
+
+    core.probe.cli_prints(Some("2.1.301 (Claude Code)"));
+    core.send(Command::CheckAgents);
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty);
+    assert_eq!(core.agents.launches().len(), 2);
+}
+
+#[test]
+fn a_cli_started_only_to_list_is_locked_down_to_listing() {
+    let repo = TempRepo::new("acme");
+    let mut core = Harness::launch();
+    let repo_id = added_repository(&core.add_repository(&repo.path)).id;
+    core.send(Command::AddSecret { repository_id: repo_id.clone(), name: "STRIPE_KEY".into() });
+    core.secrets.in_keychain("STRIPE_KEY", "sk_live_123");
+    core.send(Command::GrantSecret { repository_id: repo_id, name: "STRIPE_KEY".into() });
+
+    read_models(&mut core, AgentKind::ClaudeCode);
+
+    let spec = &core.agents.launches()[0];
+    assert!(spec.list_only, "the launcher disallows every tool and the adapter takes nothing but list_models");
+    assert_eq!(spec.permission_mode, PermissionMode::Explore, "the most locked-down mode");
+    assert_eq!(spec.model, None);
+    assert!(spec.mcp_servers.is_empty() && spec.allowed_tools.is_empty(), "no MCP server, no Grant");
+    assert!(spec.env.set.is_empty(), "no secret set");
+    assert!(spec.env.remove.contains("STRIPE_KEY"), "and every known one stripped");
+    assert!(spec.cwd.is_dir(), "a directory of its own");
+    assert_eq!(std::fs::read_dir(&spec.cwd).unwrap().count(), 0, "and empty");
+    assert!(!spec.cwd.starts_with(core.data_dir().canonicalize().unwrap()) && !spec.cwd.starts_with(core.data_dir()));
+    assert!(!spec.cwd.starts_with(&repo.path) && !spec.cwd.starts_with(core.worktree_root()));
+}
+
+#[test]
+fn a_codex_started_only_to_list_is_locked_down_the_same_way() {
+    let (mut core, _repo, _worktree) = setup();
+
+    read_models(&mut core, AgentKind::Codex);
+
+    let spec = &core.agents.launches()[0];
+    assert_eq!(spec.agent, AgentKind::Codex);
+    assert_eq!(spec.permission_mode, PermissionMode::Explore);
+    assert!(spec.mcp_servers.is_empty() && spec.env.set.is_empty() && spec.model.is_none());
+    let launch = switchyard_core::codex::launch_for(spec);
+    assert!(launch.list_only, "its adapter takes nothing but list_models, so no thread starts");
+    assert!(launch.config.is_empty() && launch.mcp_servers.is_empty() && launch.mcp_rules.is_empty());
+    assert_eq!(core.agents.all_commands(0), vec![AgentCommand::ListModels]);
+}
+
+#[test]
+fn a_cli_started_only_to_list_is_sent_nothing_else_and_whatever_else_it_says_is_ignored() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+
+    let said = core.agent_replays(
+        0,
+        &[
+            init("2.1.300"),
+            AgentEvent::AgentText { text: "Hello".into() },
+            AgentEvent::PermissionRequest {
+                request_id: "r1".into(),
+                request: adapter_protocol::RequestDetail::Command { command: "rm -rf ~".into(), cwd: None },
+                reason: None,
+            },
+            AgentEvent::TurnComplete,
+        ],
+    );
+
+    assert!(said.is_empty(), "no Session, transcript or request comes of it: {said:#?}");
+    assert_eq!(core.agents.all_commands(0), vec![AgentCommand::ListModels], "nothing is answered or sent");
+    assert!(!core.agents.dropped(0), "still waiting for the answer");
+    core.agent_says(0, offered(&["opus"]));
+    assert!(core.agents.dropped(0), "gone once it answered");
+}
+
+#[test]
+fn a_cli_started_only_to_list_that_exits_takes_its_directory_with_it() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    let cwd = core.agents.launches()[0].cwd.clone();
+
+    core.agent_exits(0, Some(1), "");
+
+    assert!(core.agents.dropped(0));
+    assert!(!cwd.exists(), "its directory is removed");
+}
+
+#[test]
+fn a_cli_started_only_to_list_that_answers_takes_its_directory_with_it() {
+    let (mut core, _repo, _worktree) = setup();
+    read_models(&mut core, AgentKind::ClaudeCode);
+    let cwd = core.agents.launches()[0].cwd.clone();
+
+    core.agent_says(0, offered(&["opus"]));
+
+    assert!(!cwd.exists());
+}
+
+#[test]
+fn a_cli_started_only_to_list_that_does_not_answer_in_time_is_killed_and_given_up_on_quietly() {
+    let mut core = Harness::launch_with_list_models_timeout(std::time::Duration::from_millis(50));
+    read_models(&mut core, AgentKind::ClaudeCode);
+    let cwd = core.agents.launches()[0].cwd.clone();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !core.agents.dropped(0) {
+        assert!(std::time::Instant::now() < deadline, "the lister was never given up on");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    assert!(!cwd.exists(), "its directory is removed");
+    assert!(core.drain().is_empty(), "nothing is pushed");
+    let late = core.agent_says(0, offered(&["opus"]));
+    assert!(models_changed(&late, AgentKind::ClaudeCode).is_empty(), "a late answer is dropped");
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty, "the cache is unchanged");
+    assert_eq!(core.agents.launches().len(), 2, "still a miss: the next opening tries again");
+}
+
+#[test]
+fn a_cli_already_listing_is_not_started_twice() {
+    let (mut core, _repo, _worktree) = setup();
+
+    read_models(&mut core, AgentKind::ClaudeCode);
+    read_models(&mut core, AgentKind::ClaudeCode);
+
+    assert_eq!(core.agents.launches().len(), 1);
+}
+
+#[test]
+fn only_one_cli_lists_at_a_time_across_agents() {
+    let (mut core, _repo, _worktree) = setup();
+
+    read_models(&mut core, AgentKind::ClaudeCode);
+    read_models(&mut core, AgentKind::Codex);
+
+    assert_eq!(core.agents.launches().len(), 1, "Codex waits until Claude Code's lister is gone");
+    core.agent_says(0, offered(&["opus"]));
+    read_models(&mut core, AgentKind::Codex);
+    let launches = core.agents.launches();
+    assert_eq!(launches.len(), 2);
+    assert_eq!(launches[1].agent, AgentKind::Codex);
+}
+
+#[test]
+fn no_cli_is_started_to_list_models_when_none_is_installed() {
+    let (mut core, _repo, _worktree) = setup();
+    core.probe.cli_prints(None);
+    core.send(Command::CheckAgents);
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty);
+    assert!(core.agents.launches().is_empty());
+}
+
+fn init(version: &str) -> AgentEvent {
+    AgentEvent::SessionInit {
+        external_session_id: "cli-1".into(),
+        permission_mode: ProtocolMode::AskFirst,
+        cli_permission_mode: "default".into(),
+        cli: CliInfo { name: "claude-code".into(), version: version.into() },
+        model: Some("claude-opus-5-5".into()),
+        mcp_servers: vec![],
+    }
+}
+
+fn offered(ids: &[&str]) -> AgentEvent {
+    AgentEvent::ModelsListed {
+        models: ids.iter().map(|id| Offered { id: id.to_string(), display_name: id.to_uppercase(), resolved_model: None }).collect(),
+    }
+}
+
+fn listed(ids: &[&str]) -> ModelList {
+    ModelList::Listed {
+        models: ids.iter().map(|id| ListedModel { id: id.to_string(), display_name: id.to_uppercase(), resolved_model: None }).collect(),
+        fetched_at_ms: NOW_MS,
+    }
+}
+
+#[test]
+fn the_models_a_cli_lists_are_cached_with_when_they_were_fetched() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+
+    let pushed = models_changed(&core.agent_says(0, offered(&["opus", "sonnet"])), AgentKind::ClaudeCode);
+
+    assert_eq!(pushed, vec![listed(&["opus", "sonnet"])], "a dialog already open gets the list");
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus", "sonnet"]));
+    let mut core = core.relaunch();
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus", "sonnet"]), "kept in the store");
+}
+
+#[test]
+fn attaching_pushes_each_agents_cached_list_so_the_composer_has_it_too() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+    core.agent_says(0, offered(&["opus", "sonnet"]));
+
+    let attach = core.send(Command::Attach);
+
+    assert_eq!(models_changed(&attach, AgentKind::ClaudeCode), vec![listed(&["opus", "sonnet"])]);
+    assert_eq!(list_requests(&core, 0), 1, "from the cache: no CLI is asked");
+}
+
+#[test]
+fn a_cli_that_cannot_list_models_is_remembered_as_such() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+
+    core.agent_says(0, AgentEvent::CannotListModels { reason: Some("no model list here".into()) });
+
+    assert_eq!(
+        read_models(&mut core, AgentKind::ClaudeCode),
+        ModelList::CannotList { reason: Some("no model list here".into()) }
+    );
+}
+
+#[test]
+fn a_failed_list_never_replaces_one_the_cli_gave() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+    core.agent_says(0, offered(&["opus"]));
+
+    core.agent_says(0, AgentEvent::CannotListModels { reason: Some("timed out".into()) });
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus"]));
+}
+
+#[test]
+fn opening_new_session_asks_a_live_session_for_a_fresh_list_and_pushes_it_when_it_arrives() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+    core.agent_says(0, offered(&["opus"]));
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), listed(&["opus"]), "the cache, at once");
+    assert_eq!(list_requests(&core, 0), 2, "and a refresh in the background");
+
+    let pushed = models_changed(&core.agent_says(0, offered(&["opus", "sonnet"])), AgentKind::ClaudeCode);
+    assert_eq!(pushed, vec![listed(&["opus", "sonnet"])]);
+}
+
+#[test]
+fn opening_new_session_for_another_agent_asks_no_claude_code_session() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+
+    assert_eq!(read_models(&mut core, AgentKind::Codex), ModelList::Empty);
+    assert_eq!(list_requests(&core, 0), 1, "only the start's own request");
+}
+
+#[test]
+fn a_cli_upgrade_shows_the_new_versions_list_not_the_old_ones() {
+    let (mut core, _repo, worktree) = setup();
+    started_session(&core.start_session(&worktree, "Fix it."));
+    core.agent_says(0, init("2.1.300"));
+    core.agent_says(0, offered(&["opus"]));
+
+    core.probe.cli_prints(Some("2.1.301 (Claude Code)"));
+    core.send(Command::CheckAgents);
+
+    assert_eq!(read_models(&mut core, AgentKind::ClaudeCode), ModelList::Empty);
+    assert_eq!(list_requests(&core, 0), 1, "a Session still on the old version is not asked");
+    let pushed = models_changed(&core.agent_says(0, offered(&["opus", "sonnet"])), AgentKind::ClaudeCode);
+    assert_eq!(pushed, vec![], "the old version's list is never shown for the new one");
+}

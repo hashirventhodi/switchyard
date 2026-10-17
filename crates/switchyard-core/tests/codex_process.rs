@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use harness::{started_session, Harness, TempRepo};
 use switchyard_core::codex::CodexLauncher;
-use switchyard_schema::{AgentKind, Command, Entry, Event, PermissionMode, SessionStatus, Verdict};
+use switchyard_schema::{AgentKind, Command, Entry, Event, ModelChoice, PermissionMode, SessionStatus, Verdict};
 
 struct FakeCodex {
     _dir: tempfile::TempDir,
@@ -35,6 +35,7 @@ fn start(worktree: &Path, prompt: &str) -> Command {
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent: AgentKind::Codex,
         permission_mode: PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: prompt.into(),
     }
 }
@@ -82,7 +83,7 @@ fn codex_app_server_runs_in_the_worktree_and_its_turn_reaches_the_transcript() {
     assert!(log.contains(&format!("cwd={}\n", worktree.canonicalize().unwrap().display())), "{log}");
     let sent = sent(&fake.log);
     let methods: Vec<&str> = sent.iter().filter_map(|m| m["method"].as_str()).collect();
-    assert_eq!(methods, vec!["initialize", "initialized", "config/read", "thread/start", "turn/start"]);
+    assert_eq!(methods, vec!["initialize", "initialized", "config/read", "thread/start", "turn/start", "model/list"]);
     let thread = &sent[3]["params"];
     assert_eq!(thread["cwd"], worktree.to_string_lossy().as_ref());
     assert_eq!(thread["approvalPolicy"], "untrusted");
@@ -145,4 +146,57 @@ fn a_codex_approval_is_answered_with_the_same_json_rpc_id() {
     assert_eq!(agent_texts(&events), vec!["Tests ran.".to_string()]);
     let answers: Vec<serde_json::Value> = sent(&fake.log).into_iter().filter(|m| m.get("result").is_some()).collect();
     assert_eq!(answers, vec![serde_json::json!({ "id": 0, "result": { "decision": "accept" } })]);
+}
+
+fn start_on(worktree: &Path, model: &str, prompt: &str) -> Command {
+    Command::StartSession {
+        worktree_path: worktree.to_string_lossy().into_owned(),
+        agent: AgentKind::Codex,
+        permission_mode: PermissionMode::AskFirst,
+        model: ModelChoice::Model { id: model.into() },
+        prompt: prompt.into(),
+    }
+}
+
+fn thread_calls(log: &Path) -> Vec<serde_json::Value> {
+    sent(log).into_iter().filter(|m| matches!(m["method"].as_str(), Some("thread/start" | "thread/resume"))).collect()
+}
+
+fn switch_state(events: &[Event]) -> Option<(Option<String>, Option<String>)> {
+    events.iter().rev().find_map(|e| match e {
+        Event::SessionModelChanged { pending_model, switched_model, .. } => {
+            Some((pending_model.clone(), switched_model.clone()))
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn a_codex_session_starts_on_its_chosen_model_and_resumes_on_its_current_one() {
+    let fake = fake_codex();
+    let repo = TempRepo::new("acme");
+    let worktree = repo.add_worktree("feat/x");
+    let mut core = Harness::launch_with(fake.launcher.clone());
+    core.add_repository(&repo.path);
+
+    core.dispatch(start_on(&worktree, "gpt-5.6-sol", "hello"));
+    let events = core.wait_for(|seen| has_status(seen, SessionStatus::Waiting));
+    let id = started_session(&events);
+    assert_eq!(thread_calls(&fake.log)[0]["method"], "thread/start");
+    assert_eq!(thread_calls(&fake.log)[0]["params"]["model"], "gpt-5.6-sol");
+
+    // Codex cannot switch live: the switch waits for the resume, which runs on it.
+    core.dispatch(Command::SetModel { session_id: id.clone(), model: "gpt-5.6-luna".into() });
+    core.dispatch(Command::StopSession { session_id: id.clone() });
+    core.dispatch(Command::ResumeSession { session_id: id });
+    let events = core.wait_for(|seen| {
+        switch_state(seen) == Some((None, Some("gpt-5.6-luna".into()))) && has_status(seen, SessionStatus::Waiting)
+    });
+
+    let resumed = &thread_calls(&fake.log)[1];
+    assert_eq!(resumed["method"], "thread/resume");
+    assert_eq!(resumed["params"]["threadId"], "thread-fake");
+    assert_eq!(resumed["params"]["model"], "gpt-5.6-luna");
+    assert!(sent(&fake.log).iter().all(|m| m["method"] != "set_model"));
+    assert!(agent_texts(&events).contains(&"Hello from Codex.".to_string()), "{events:#?}");
 }

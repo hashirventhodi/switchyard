@@ -1,0 +1,286 @@
+//! The Model-list cache: the Models each agent's CLI offers, per agent and CLI version, with
+//! when they were fetched. New session reads it ([`read`]) and never waits on a CLI: the
+//! list itself comes from a `list_models` exchange with an agent, asked when a Session
+//! starts and again when New session opens ([`read`]): of a running Session's agent, or,
+//! with none running and nothing cached for the installed CLI, of an agent started only to
+//! list ([`Listers`]), which is gone once it answers or times out. Its answer is stored and
+//! pushed ([`answered`]). A CLI upgrade reads its own version's entry, so it starts empty
+//! rather than offering the old version's Models.
+//!
+//! Also New session's pre-fill: the last Model *choice* (an id, or Default) made for each
+//! agent in each Repository ([`remember`], [`read_prefill`]), kept here in Switchyard's
+//! store and never in the Repository.
+
+use std::sync::Arc;
+
+use adapter_protocol::{Command as AgentCommand, Event as AgentEvent};
+use rusqlite::{params, Connection, OptionalExtension};
+use switchyard_schema::{AgentKind, Event, ListedModel, ModelChoice, ModelList, PermissionMode};
+
+use crate::agents::{AgentHandle, AgentOutput, AgentSink, LaunchSpec};
+use crate::Inner;
+
+/// The agent started only to list its CLI's Models, if one is running: at most one at a time,
+/// across agents (ADR-0002: the list still comes through the adapter protocol). It runs in
+/// the background and never holds the core while its CLI starts.
+#[derive(Default)]
+pub(crate) struct Listers {
+    running: Option<Lister>,
+    launches: u32,
+}
+
+struct Lister {
+    agent: AgentKind,
+    /// Dropped first: its process is killed before its directory goes.
+    _handle: Box<dyn AgentHandle>,
+    /// The installed CLI version it was started for: its answer is cached under it.
+    version: String,
+    /// Which launch it is: output from one replaced since is dropped.
+    launch: u32,
+    /// The empty directory it runs in, removed with it.
+    _cwd: tempfile::TempDir,
+}
+
+impl Listers {
+    /// The running lister of `agent` from launch `launch`, taken out: dropping it kills its
+    /// process and removes its directory.
+    fn take(&mut self, agent: AgentKind, launch: u32) -> Option<Lister> {
+        match &self.running {
+            Some(l) if l.agent == agent && l.launch == launch => self.running.take(),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn init(db: &Connection) -> rusqlite::Result<()> {
+    // `list` is the schema ModelList as JSON (never `empty`); `choice` is the schema
+    // ModelChoice as JSON.
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS model_lists (
+            agent       TEXT NOT NULL,
+            cli_version TEXT NOT NULL,
+            list        TEXT NOT NULL,
+            PRIMARY KEY (agent, cli_version)
+        );
+        CREATE TABLE IF NOT EXISTS model_choices (
+            agent         TEXT NOT NULL,
+            repository_id TEXT NOT NULL,
+            choice        TEXT NOT NULL,
+            PRIMARY KEY (agent, repository_id)
+        );",
+    )
+}
+
+fn agent_key(agent: AgentKind) -> String {
+    serde_json::to_string(&agent).expect("agent kinds serialize")
+}
+
+/// The cached list for `agent`'s CLI at `cli_version`; empty when there is none.
+fn cached(db: &Connection, agent: AgentKind, cli_version: &str) -> ModelList {
+    let json: Option<String> = db
+        .query_row(
+            "SELECT list FROM model_lists WHERE agent = ?1 AND cli_version = ?2",
+            params![agent_key(agent), cli_version],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+    json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(ModelList::Empty)
+}
+
+/// The Models a CLI listed, to tell when two names are one Model: an alias the CLI takes
+/// (`opus`) and the full id it reports that Model by (`claude-opus-5-5`).
+pub(crate) struct Names(Vec<ListedModel>);
+
+impl Names {
+    /// Whether `a` and `b` name the same Model: equal, or one listed Model's id and the full
+    /// id it resolves to. Without a list, only equal names are known to be one Model.
+    pub fn same(&self, a: &str, b: &str) -> bool {
+        a == b || self.0.iter().any(|m| m.is(a) && m.is(b))
+    }
+}
+
+/// The names `agent`'s CLI at `cli_version` listed its Models by (none when nothing is cached).
+pub(crate) fn names(db: &Connection, agent: AgentKind, cli_version: Option<&str>) -> Names {
+    match cli_version.map(|version| cached(db, agent, version)) {
+        Some(ModelList::Listed { models, .. }) => Names(models),
+        _ => Names(Vec::new()),
+    }
+}
+
+/// What a CLI answered to `list_models`, as the cache keeps it.
+pub(crate) fn from_agent(event: adapter_protocol::Event, fetched_at_ms: u64) -> Option<ModelList> {
+    match event {
+        adapter_protocol::Event::ModelsListed { models } => Some(ModelList::Listed {
+            models: models
+                .into_iter()
+                .map(|m| ListedModel { id: m.id, display_name: m.display_name, resolved_model: m.resolved_model })
+                .collect(),
+            fetched_at_ms,
+        }),
+        adapter_protocol::Event::CannotListModels { reason } => Some(ModelList::CannotList { reason }),
+        _ => None,
+    }
+}
+
+/// A Session's CLI (of `agent`, at `cli_version`) answered `list_models`: cache it for that
+/// version, and push it when that is the version installed now. A failure never replaces a
+/// list the same version gave before (it may only have timed out).
+pub(crate) fn answered(inner: &mut Inner, agent: AgentKind, cli_version: Option<&str>, list: ModelList) {
+    let Some(version) = cli_version else { return };
+    let db = inner.store.db();
+    if matches!(list, ModelList::CannotList { .. }) && matches!(cached(db, agent, version), ModelList::Listed { .. }) {
+        return;
+    }
+    let json = serde_json::to_string(&list).expect("model lists serialize");
+    let stored = db.execute(
+        "INSERT OR REPLACE INTO model_lists (agent, cli_version, list) VALUES (?1, ?2, ?3)",
+        params![agent_key(agent), version, json],
+    );
+    if let Err(e) = stored {
+        eprintln!("switchyard: cannot cache the Model list: {e}");
+    }
+    if crate::compat::installed_version(inner, agent).as_deref() == Some(version) {
+        inner.emit(Event::ModelsChanged { agent, models: list });
+    }
+}
+
+/// The `readModels` command (New session opened): the installed CLI's cached list, at once,
+/// then a refresh from a live Session on that version, if there is one.
+pub(crate) fn read(inner: &mut Inner, agent: AgentKind) {
+    let Some(version) = crate::compat::installed_version(inner, agent) else {
+        return inner.emit(Event::ModelsChanged { agent, models: ModelList::Empty });
+    };
+    let models = cached(inner.store.db(), agent, &version);
+    let miss = matches!(models, ModelList::Empty);
+    inner.emit(Event::ModelsChanged { agent, models });
+    // With no live Session, a CLI is started only when nothing is cached for this version.
+    if !crate::sessions::ask_for_models(inner, agent, &version) && miss {
+        list_without_a_session(inner, agent, version);
+    }
+}
+
+/// No Session of `agent` runs CLI `version` and nothing is cached for it: start its agent
+/// only to list the Models. It can do nothing else: it runs in a fresh empty directory
+/// (never the data directory or a Repository), in Explore, as list-only (the launcher
+/// disallows every tool and refuses any other command), with no Model, MCP server, Grant or
+/// secret; its only command is `list_models`, and everything it says besides the answer is
+/// ignored. Given up on, quietly, after [`crate::Runtime::list_models_timeout`].
+fn list_without_a_session(inner: &mut Inner, agent: AgentKind, version: String) {
+    if inner.listers.running.is_some() {
+        return;
+    }
+    let cwd = match tempfile::Builder::new().prefix("switchyard-models-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => return eprintln!("switchyard: cannot make a directory to list {agent:?}'s Models in: {e}"),
+    };
+    inner.listers.launches += 1;
+    let launch = inner.listers.launches;
+    let spec = LaunchSpec {
+        agent,
+        cwd: cwd.path().to_path_buf(),
+        permission_mode: PermissionMode::Explore,
+        model: None,
+        sandboxed: false,
+        allowed_tools: Vec::new(),
+        disallowed_tools: Vec::new(),
+        mcp_servers: Vec::new(),
+        env: crate::secrets::no_secrets_env(inner),
+        list_only: true,
+    };
+    let mut handle = match inner.runtime.agents.launch(spec, lister_sink(inner, agent, launch)) {
+        Ok(handle) => handle,
+        Err(reason) => return eprintln!("switchyard: cannot start {agent:?} to list its Models: {reason}"),
+    };
+    if handle.send(AgentCommand::ListModels).is_err() {
+        return;
+    }
+    inner.listers.running = Some(Lister { agent, _handle: handle, version, launch, _cwd: cwd });
+    let core = inner.me.clone();
+    let timeout = inner.runtime.list_models_timeout;
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout);
+        let Some(core) = core.upgrade() else { return };
+        // No answer in time: dropped (killed), the cache left as it is, nothing pushed.
+        let late = core.lock().expect("core lock").listers.take(agent, launch);
+        drop(late);
+    });
+}
+
+/// Where a lister reports: its answer is cached and pushed, and then it is dropped, as it
+/// is when it exits; everything else it says is ignored (and never answered).
+fn lister_sink(inner: &Inner, agent: AgentKind, launch: u32) -> AgentSink {
+    let core = inner.me.clone();
+    Arc::new(move |output| {
+        let Some(core) = core.upgrade() else { return };
+        let mut inner = core.lock().expect("core lock");
+        let list = match output {
+            AgentOutput::Event(event @ (AgentEvent::ModelsListed { .. } | AgentEvent::CannotListModels { .. })) => {
+                from_agent(event, (inner.runtime.now_ms)())
+            }
+            AgentOutput::Exited { .. } => None,
+            _ => return,
+        };
+        let Some(lister) = inner.listers.take(agent, launch) else { return };
+        if let Some(list) = list {
+            answered(&mut inner, agent, Some(&lister.version), list);
+        }
+    })
+}
+
+/// On attach: each agent's cached list for its installed CLI (Empty when none), so the
+/// composer's Model switch has it without opening New session. Nothing is refreshed here.
+pub(crate) fn replay(inner: &mut Inner) {
+    for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        let models = match crate::compat::installed_version(inner, agent) {
+            Some(version) => cached(inner.store.db(), agent, &version),
+            None => ModelList::Empty,
+        };
+        inner.emit(Event::ModelsChanged { agent, models });
+    }
+}
+
+/// A Session started on `choice` for `agent` in `repository_id`: New session pre-fills it
+/// next time. Default is remembered as Default, not as what it resolved to.
+pub(crate) fn remember(inner: &Inner, agent: AgentKind, repository_id: &str, choice: &ModelChoice) {
+    let json = serde_json::to_string(choice).expect("model choices serialize");
+    let stored = inner.store.db().execute(
+        "INSERT OR REPLACE INTO model_choices (agent, repository_id, choice) VALUES (?1, ?2, ?3)",
+        params![agent_key(agent), repository_id, json],
+    );
+    if let Err(e) = stored {
+        eprintln!("switchyard: cannot remember the Model choice: {e}");
+    }
+}
+
+/// The `readModelPrefill` command: the last choice for `agent` in `repository_id` (Default
+/// when there is none). A remembered Model the installed CLI's cached list no longer offers
+/// comes back as Default, naming it as retired; with no list cached it is offered as is.
+pub(crate) fn read_prefill(inner: &mut Inner, agent: AgentKind, repository_id: String) {
+    let json: Option<String> = inner
+        .store
+        .db()
+        .query_row(
+            "SELECT choice FROM model_choices WHERE agent = ?1 AND repository_id = ?2",
+            params![agent_key(agent), repository_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+    let remembered: ModelChoice = json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+    let (choice, retired) = match remembered {
+        ModelChoice::Model { id } if !offered(inner, agent, &id) => (ModelChoice::Default, Some(id)),
+        choice => (choice, None),
+    };
+    inner.emit(Event::ModelPrefill { agent, repository_id, choice, retired });
+}
+
+/// Whether the installed CLI's cached list offers `id` (by its id, or as the full id one of its
+/// aliases resolves to); true when no list is cached.
+fn offered(inner: &mut Inner, agent: AgentKind, id: &str) -> bool {
+    let Some(version) = crate::compat::installed_version(inner, agent) else { return true };
+    match cached(inner.store.db(), agent, &version) {
+        ModelList::Listed { models, .. } => models.iter().any(|m| m.is(id)),
+        ModelList::Empty | ModelList::CannotList { .. } => true,
+    }
+}

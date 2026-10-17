@@ -8,7 +8,9 @@
 //! "allowed_tools", "disallowed_tools" (Claude Code permission rules from the resolved
 //! Policy), "allow_bypass" (the repository's policy declares a sandbox), "mcp_servers" (the
 //! repository's MCP servers as the SDK's `mcpServers` map; the sidecar always runs the CLI
-//! with `--strict-mcp-config`, so these are the only servers it loads)}`.
+//! with `--strict-mcp-config`, so these are the only servers it loads), "model" (the chosen
+//! Model id; left out for Default), "list_only" (true only for a CLI started just to list its
+//! Models: no tool, no server, nothing but list_models; left out otherwise)}`.
 //!
 //! The process environment is the inherited one with [`LaunchSpec::env`] applied: granted
 //! secrets set, every other known secret name removed. Secret values never go in the config.
@@ -40,7 +42,7 @@ pub struct SidecarLauncher {
 
 impl AgentLauncher for SidecarLauncher {
     fn launch(&self, spec: LaunchSpec, sink: AgentSink) -> Result<Box<dyn AgentHandle>, String> {
-        let config = json!({
+        let mut config = json!({
             "cwd": spec.cwd,
             "permission_mode": crate::agents::protocol_mode(spec.permission_mode, spec.sandboxed),
             "claude_path": self.claude,
@@ -49,6 +51,16 @@ impl AgentLauncher for SidecarLauncher {
             "allow_bypass": spec.sandboxed,
             "mcp_servers": crate::mcp::claude_servers(&spec.mcp_servers),
         });
+        // Only a chosen Model is passed; Default leaves the CLI (or the user's own settings)
+        // to decide.
+        if let Some(model) = &spec.model {
+            config["model"] = json!(model);
+        }
+        // Started only to list Models: the sidecar gives the CLI no tool and refuses anything
+        // but list_models.
+        if spec.list_only {
+            config["list_only"] = json!(true);
+        }
         let mut command = Command::new(&self.node);
         // Granted secrets in, every other known secret out; the CLI the sidecar starts, and
         // the MCP servers the CLI starts, inherit this environment. Values never go in the

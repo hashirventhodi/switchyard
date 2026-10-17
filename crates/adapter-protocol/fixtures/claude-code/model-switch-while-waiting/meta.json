@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.2.0",
+  "description": "A live Model switch made while a Permission request is pending: the host sends set_model claude-sonnet-5-5 and then the answer (Run once). The pending request is resolved exactly as asked, and the main agent's request after the answer is the one checked: it runs on Sonnet, so model_changed. Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
+}

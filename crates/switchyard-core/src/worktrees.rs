@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use switchyard_schema::command_name;
-use switchyard_schema::{AgentKind, Event, PermissionMode, SessionStatus, Worktree, WorktreeFacts};
+use switchyard_schema::{Event, SessionStatus, Worktree, WorktreeFacts};
 
 use crate::store::StoredRepository;
 use crate::{git, repo_policy, review, sessions, shells, Inner};
@@ -84,12 +84,11 @@ pub(crate) fn start_session_on_new(
     core: &Arc<Mutex<Inner>>,
     repository_id: &str,
     branch: &str,
-    agent: AgentKind,
-    permission_mode: PermissionMode,
-    prompt: &str,
+    start: sessions::Start,
 ) {
     const COMMAND: &str = command_name::START_SESSION_ON_NEW_WORKTREE;
-    if prompt.trim().is_empty() {
+    let (agent, permission_mode) = (start.agent, start.permission_mode);
+    if start.prompt.trim().is_empty() {
         return inner.refuse(COMMAND, "Write a prompt for the agent first".into());
     }
     // An agent that cannot start would leave a worktree nobody asked for.
@@ -102,7 +101,7 @@ pub(crate) fn start_session_on_new(
         }
     }
     if let Some(worktree) = create(inner, COMMAND, repository_id, branch) {
-        sessions::start(inner, core, &worktree.path, agent, permission_mode, prompt);
+        sessions::start(inner, core, &worktree.path, start);
     }
 }
 

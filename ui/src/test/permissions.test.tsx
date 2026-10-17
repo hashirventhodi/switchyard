@@ -33,6 +33,7 @@ const session = (id: string, branch: string, path: string): Session => ({
   branch,
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs: Date.now(),
 });

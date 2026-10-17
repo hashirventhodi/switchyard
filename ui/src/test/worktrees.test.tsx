@@ -23,6 +23,7 @@ const session: Session = {
   branch: "fix/readme",
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs: 0,
 };
@@ -144,6 +145,7 @@ test("New session creates a new worktree from base by default, naming the branch
     branch: "feat/cursor-pagination-orders",
     agent: "claudeCode",
     permissionMode: "askFirst",
+    model: { type: "default" },
     prompt: "Add cursor pagination to orders",
   });
 
@@ -212,6 +214,7 @@ test("Explore here opens New session on the primary worktree in Explore", () => 
     worktreePath: "/src/acme",
     agent: "claudeCode",
     permissionMode: "explore",
+    model: { type: "default" },
     prompt: "How does auth work?",
   });
 });

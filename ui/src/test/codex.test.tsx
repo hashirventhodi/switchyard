@@ -16,8 +16,8 @@ const acme = { id: "repo-1", name: "acme", path: "/src/acme", baseBranch: "main"
 const ready: Event = {
   type: "agentsChecked",
   agents: [
-    { agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" } },
-    { agent: "codex", name: "Codex", state: { type: "ready", version: "0.144.1" } },
+    { agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" }, switchModelLive: true },
+    { agent: "codex", name: "Codex", state: { type: "ready", version: "0.144.1" }, switchModelLive: false },
   ],
 };
 const repoEvents: Event[] = [
@@ -35,6 +35,7 @@ const session = (id: string, agent: AgentKind, branch: string, path: string): Se
   branch,
   agent,
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs: Date.now(),
 });
@@ -128,11 +129,12 @@ test("a Codex CLI that is missing blocks only Codex in New session", () => {
     emit({
       type: "agentsChecked",
       agents: [
-        { agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" } },
+        { agent: "claudeCode", name: "Claude Code", state: { type: "ready", version: "2.1.300" }, switchModelLive: true },
         {
           agent: "codex",
           name: "Codex",
           state: { type: "missing", installHint: "brew install --cask codex", link: { label: "How to install Codex", url: "https://developers.openai.com/codex/cli" } },
+          switchModelLive: false,
         },
       ],
     }),

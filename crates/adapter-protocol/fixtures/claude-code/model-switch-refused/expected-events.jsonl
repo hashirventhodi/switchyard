@@ -1,0 +1,9 @@
+{"type":"session_init","external_session_id":"a05b7c63-2f99-4baa-4f6e-7e5b8d4c3a65","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":"claude-opus-5-5"}
+{"type":"agent_text","text":"Done reading."}
+{"type":"token_usage","model":"claude-opus-5-5","input_tokens":8,"output_tokens":20,"cache_read_tokens":9000,"cost_usd":0.012}
+{"type":"turn_complete"}
+{"type":"model_change_failed","model":"claude-nonexistent-1","reason":"Model 'claude-nonexistent-1' not found"}
+{"type":"agent_text","text":"Still here."}
+{"type":"token_usage","model":"claude-opus-5-5","input_tokens":8,"output_tokens":20,"cache_read_tokens":9000,"cost_usd":0.012}
+{"type":"turn_complete"}
+{"type":"done","summary":"Still here."}

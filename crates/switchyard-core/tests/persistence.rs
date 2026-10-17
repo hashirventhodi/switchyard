@@ -112,7 +112,7 @@ fn a_session_comes_back_after_relaunch_with_its_transcript_facts_and_spend() {
     core.agent_says(0, text("Fixed the link."));
     core.agent_says(
         0,
-        AgentEvent::TokenUsage { input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd: Some(0.5) },
+        AgentEvent::TokenUsage { model: None, input_tokens: 10, output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd: Some(0.5) },
     );
     core.agent_says(0, AgentEvent::TurnComplete);
     core.agent_says(0, AgentEvent::Done { summary: None });
@@ -261,7 +261,7 @@ fn resume_after_relaunch_relaunches_the_agent_by_its_external_session_id() {
     assert_eq!(launches[0].cwd, worktree);
     assert_eq!(launches[0].permission_mode, PermissionMode::AskFirst);
     let commands = core.agents.commands(0);
-    assert_eq!(commands[0], AgentCommand::Resume { external_session_id: "ext-42".into() });
+    assert_eq!(commands[0], AgentCommand::Resume { external_session_id: "ext-42".into(), model: None });
     assert!(matches!(&commands[1], AgentCommand::SendText { .. }), "{commands:?}");
     // The relaunched agent is recorded like any other: the next crash kills it too.
     let core = core.relaunch();
@@ -319,7 +319,7 @@ fn a_prompt_to_a_finished_session_after_relaunch_resumes_the_agent_first() {
     assert_eq!(
         core.agents.commands(0),
         vec![
-            AgentCommand::Resume { external_session_id: "ext-7".into() },
+            AgentCommand::Resume { external_session_id: "ext-7".into(), model: None },
             AgentCommand::SendText { text: "One more thing".into() },
         ]
     );
@@ -332,6 +332,7 @@ fn replace(core: &mut Harness, id: &str, prompt: &str) -> Vec<Event> {
         session_id: id.into(),
         agent: AgentKind::ClaudeCode,
         permission_mode: PermissionMode::AskFirst,
+        model: Default::default(),
         prompt: prompt.into(),
     })
 }

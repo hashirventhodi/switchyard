@@ -1,0 +1,8 @@
+{"type":"session_init","external_session_id":"9f4a6b52-1e88-4a99-3e5d-6d4a7c3b2f54","permission_mode":"ask_first","cli_permission_mode":"default","cli":{"name":"claude-code","version":"2.1.300"},"model":"claude-opus-5-5"}
+{"type":"tool_call_started","call_id":"toolu_01","tool":"Read","input":{"file_path":"/wt/acme/fix-readme/README.md"}}
+{"type":"tool_call_finished","call_id":"toolu_01","ok":true,"output":"# Acme"}
+{"type":"model_change_failed","model":"claude-sonnet-5-5","reason":null}
+{"type":"agent_text","text":"The README has no links."}
+{"type":"token_usage","model":"claude-opus-5-5","input_tokens":8,"output_tokens":20,"cache_read_tokens":9000,"cost_usd":0.012}
+{"type":"turn_complete"}
+{"type":"done","summary":"The README has no links."}

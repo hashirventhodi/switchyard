@@ -58,6 +58,7 @@ impl Store {
         crate::tasks::init(&db)?;
         crate::secrets::init(&db)?;
         crate::acknowledgements::init(&db)?;
+        crate::models::init(&db)?;
         Ok(Store { db })
     }
 

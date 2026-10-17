@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.2.0",
+  "description": "Resume on a Model the account can no longer use: the host's resume names claude-opus-4-1 (the query starts with options.resume and options.model), init reports it, and the first request comes back as the CLI's synthetic assistant error (error model_not_found, model <synthetic>). The adapter sends model_change_failed for the Model it was resumed on, with the CLI's message as the reason, and no agent_text and no model_changed for the synthetic message. Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
+}

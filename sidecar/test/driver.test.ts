@@ -145,6 +145,27 @@ test("the resolved grants are passed as the CLI's allowed and disallowed tools, 
   expect(calls.options).not.toHaveProperty("settings");
 });
 
+test("a chosen Model is passed to the CLI, and Default passes none", async () => {
+  const run = async (model?: string) => {
+    const stdin = lines();
+    const { query, calls } = fakeQuery(() => []);
+    const done = drive({
+      config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null, ...(model ? { model } : {}) },
+      commands: stdin,
+      emit: () => {},
+      query,
+    });
+    stdin.push({ type: "send_text", text: "hi" });
+    stdin.close();
+    await done;
+    return calls.options;
+  };
+
+  expect((await run("claude-sonnet-5-5")).model).toBe("claude-sonnet-5-5");
+  // Default: the CLI, or the user's own settings, decide.
+  expect(await run()).not.toHaveProperty("model");
+});
+
 test("interrupt calls query.interrupt()", async () => {
   const stdin = lines();
   const { query, calls } = fakeQuery(() => []);
@@ -183,6 +204,27 @@ test("resume starts the query on the CLI's own session, then takes prompts", asy
   expect(calls.options).toMatchObject({ cwd: "/wt", permissionMode: "acceptEdits", resume: S });
   expect(calls.prompts).toEqual(["Continue where you left off."]);
   expect(events[0]).toMatchObject({ type: "session_init", external_session_id: S });
+});
+
+test("resume with a Model starts the CLI on it; without one, on Default", async () => {
+  const resumeOn = async (model: string | null) => {
+    const stdin = lines();
+    const { query, calls } = fakeQuery(() => []);
+    const done = drive({
+      // The Model the Session started on no longer counts: the resume names its current one.
+      config: { cwd: "/wt", permission_mode: "ask_first", claude_path: null, model: "claude-opus-5-5" },
+      commands: stdin,
+      emit: () => {},
+      query,
+    });
+    stdin.push({ type: "resume", external_session_id: S, model });
+    stdin.close();
+    await done;
+    return calls.options;
+  };
+
+  expect(await resumeOn("claude-sonnet-5-5")).toMatchObject({ resume: S, model: "claude-sonnet-5-5" });
+  expect((await resumeOn(null)).model).toBeUndefined();
 });
 
 test("a new session starts the query without resuming anything", async () => {
@@ -290,7 +332,7 @@ test("with a record directory it writes a replayable fixture of the run", async 
   expect(JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"))).toMatchObject({
     adapter: "claude-code",
     cli: { name: "claude-code", version: "2.1.300" },
-    protocol: "0.1.0",
+    protocol: "0.2.0",
   });
 });
 

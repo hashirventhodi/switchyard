@@ -52,7 +52,11 @@ pub fn turn_policy(mode: PermissionMode) -> (Value, Value) {
 /// policy), and Codex's own name for it: `untrusted / workspace-write`. Ask first and Auto
 /// edit look the same to Codex (Switchyard tells them apart), so `untrusted` reads back as
 /// whichever of the two was `requested`.
-pub fn read_back(approval: Option<&Value>, sandbox: Option<&Value>, requested: PermissionMode) -> (PermissionMode, String) {
+pub fn read_back(
+    approval: Option<&Value>,
+    sandbox: Option<&Value>,
+    requested: PermissionMode,
+) -> (PermissionMode, String) {
     let approval = match approval {
         Some(Value::String(name)) => name.clone(),
         Some(Value::Object(map)) if map.contains_key("granular") => "granular".into(),

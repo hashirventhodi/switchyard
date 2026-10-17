@@ -1,0 +1,9 @@
+{
+  "adapter": "claude-code",
+  "cli": {
+    "name": "claude-code",
+    "version": "2.1.300"
+  },
+  "protocol": "0.2.0",
+  "description": "A Session started on Default whose system/init does not name the Model, and whose turn delegates to a subagent on another Model (Task with subagent_type Explore, run on claude-haiku-4-5-20251001) that the result's modelUsage lists first. Only the main agent's own first request (parent_tool_use_id null) says what Default runs on: it is a model_changed to claude-opus-5-5, which resolves Default. The subagent's Model, though its usage comes first, never resolves it and is never a switch. Synthesised from the Agent SDK 0.3.300 message types (paired with Claude Code 2.1.300), not captured from a live run: replace with a capture made with SWITCHYARD_RECORD_DIR (see sidecar/README.md)."
+}

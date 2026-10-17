@@ -6,20 +6,34 @@
 //! the app (`crates/switchyard-core/price-table.json`). Format:
 //! `{"version": "...", "models": {"<model id or family>": {"input", "output", "cacheRead", "cacheWrite"?}}}`,
 //! prices in USD per million tokens (cache writes cost what input costs when not named).
+//!
+//! Across relaunches ([`spend`]): each agent launch of a Session is an *incarnation*, and
+//! every usage report is kept with the incarnation that made it. A report is taken as a
+//! running total for its own process only, so the Session's spend on a Model is the sum over
+//! incarnations of the latest report on that Model in each. That assumes a CLI's reports
+//! are per process, which no capture shows yet (issue #29, a captured resume run, settles
+//! it). If they turn out to be cumulative across a resume, this overcounts visibly; it
+//! never silently drops what an earlier process spent, and never guesses what to subtract.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
-use switchyard_schema::Spend;
+use switchyard_schema::{ModelSpend, Spend};
 
 const BUILT_IN: &str = include_str!("../price-table.json");
 const FILE_NAME: &str = "price-table.json";
 
-/// One token_usage report: running totals for the session, as of `at_ms`.
-#[derive(Debug, Clone, Copy)]
+/// One token_usage report: running totals for what the Session's agent process (its
+/// `incarnation`) has spent on `model`, as of `at_ms`. No `model` means the Session's Model
+/// (an agent that does not report per Model).
+#[derive(Debug, Clone)]
 pub(crate) struct Usage {
     pub at_ms: u64,
+    /// Which agent launch of the Session made the report (0 the first; rows stored before
+    /// incarnations were kept are all 0).
+    pub incarnation: u32,
+    pub model: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
@@ -66,14 +80,15 @@ impl PriceTable {
 }
 
 impl Usage {
-    /// The spend this report stands for. A reported cost is never estimated over.
-    pub fn spend(&self, model: Option<&str>, table: &PriceTable) -> Spend {
+    /// The spend this report stands for, on `model`. A reported cost is never estimated over.
+    fn spend(&self, model: Option<&str>, table: &PriceTable) -> ModelSpend {
         let prices = match self.reported_usd {
             Some(_) => None,
             None => model.and_then(|m| table.prices(m)),
         };
         let per_million = |tokens: u64, usd: f64| tokens as f64 * usd / 1_000_000.0;
-        Spend {
+        ModelSpend {
+            model: model.map(str::to_string),
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cache_read_tokens: self.cache_read_tokens,
@@ -87,5 +102,65 @@ impl Usage {
             }),
             price_table_version: prices.map(|_| table.version.clone()),
         }
+    }
+}
+
+/// The latest report on each Model in each incarnation in `reports` (oldest first), in
+/// first-seen order. A report naming no Model is on `session_model` (`None` while that is
+/// unknown).
+fn latest<'a>(reports: &'a [Usage], session_model: Option<&str>) -> Vec<(Option<String>, &'a Usage)> {
+    let mut latest: Vec<(Option<String>, &Usage)> = Vec::new();
+    for report in reports {
+        let model = report.model.as_deref().or(session_model).map(str::to_string);
+        match latest.iter_mut().find(|(m, r)| *m == model && r.incarnation == report.incarnation) {
+            Some(slot) => slot.1 = report,
+            None => latest.push((model, report)),
+        }
+    }
+    latest
+}
+
+/// One Model's spend in two incarnations, added up.
+fn add(a: &mut ModelSpend, b: ModelSpend) {
+    let sum = |x: Option<f64>, y: Option<f64>| match (x, y) {
+        (Some(x), Some(y)) => Some(x + y),
+        (x, y) => x.or(y),
+    };
+    a.input_tokens += b.input_tokens;
+    a.output_tokens += b.output_tokens;
+    a.cache_read_tokens += b.cache_read_tokens;
+    a.cache_write_tokens += b.cache_write_tokens;
+    a.reported_usd = sum(a.reported_usd, b.reported_usd);
+    a.estimated_usd = sum(a.estimated_usd, b.estimated_usd);
+    a.price_table_version = a.price_table_version.take().or(b.price_table_version);
+}
+
+/// What `reports` (oldest first) add up to. Within an incarnation each report is a running
+/// total for its Model, so only the latest counts; across incarnations those add up (see the
+/// module notes). Each Model is priced on its own, and the Models summed. A report naming no
+/// Model is on `session_model`, so it and a later report naming that Model are one running
+/// total (as when an unresolved Default resolves).
+///
+/// The total never goes down from one report to the next, as Spend today's differencing of
+/// samples needs: a report replaces only its own incarnation's earlier one on that Model.
+pub(crate) fn spend(reports: &[Usage], session_model: Option<&str>, table: &PriceTable) -> Spend {
+    let mut by_model: Vec<ModelSpend> = Vec::new();
+    for (model, report) in latest(reports, session_model) {
+        let spent = report.spend(model.as_deref(), table);
+        match by_model.iter_mut().find(|m| m.model == model) {
+            Some(earlier) => add(earlier, spent),
+            None => by_model.push(spent),
+        }
+    }
+    let sum = |cost: fn(&ModelSpend) -> Option<f64>| by_model.iter().filter_map(cost).reduce(|a, b| a + b);
+    Spend {
+        input_tokens: by_model.iter().map(|m| m.input_tokens).sum(),
+        output_tokens: by_model.iter().map(|m| m.output_tokens).sum(),
+        cache_read_tokens: by_model.iter().map(|m| m.cache_read_tokens).sum(),
+        cache_write_tokens: by_model.iter().map(|m| m.cache_write_tokens).sum(),
+        reported_usd: sum(|m| m.reported_usd),
+        estimated_usd: sum(|m| m.estimated_usd),
+        price_table_version: by_model.iter().find_map(|m| m.price_table_version.clone()),
+        by_model,
     }
 }

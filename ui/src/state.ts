@@ -9,6 +9,8 @@ import type { ConflictFile } from "./schema/ConflictFile";
 import type { ContextFile } from "./schema/ContextFile";
 import type { DeclaredMcpServer } from "./schema/DeclaredMcpServer";
 import type { Entry } from "./schema/Entry";
+import type { ModelChoice } from "./schema/ModelChoice";
+import type { ModelList } from "./schema/ModelList";
 import type { Policy } from "./schema/Policy";
 import type { Secret } from "./schema/Secret";
 import type { Event } from "./schema/Event";
@@ -41,6 +43,8 @@ export interface SessionView extends Session {
   rawEvents: RawLog;
   /** Running spend totals as recorded, oldest first. */
   spend: SpendSample[];
+  /** The last Model switch that did not take, until the next switch. */
+  modelSwitchFailed?: { model: string; reason: string | null } | null;
 }
 
 /** A Permission request waiting for the user. */
@@ -121,7 +125,19 @@ export interface State {
   contextFiles: Record<string, ContextFile[]>;
   /** What happened, newest first (at most ACTIVITY_KEEP): the Dashboard's activity feed. */
   activity: Activity[];
+  /** The Models each agent's installed CLI offers, as the core last sent from its cache. */
+  modelLists: Partial<Record<AgentKind, ModelList>>;
+  /** What New session pre-fills, by `prefillKey(agent, repositoryId)`: the last Model
+   * choice there, and the remembered Model it replaced with Default when no longer offered. */
+  modelPrefills: Record<string, ModelPrefill>;
 }
+
+export interface ModelPrefill {
+  choice: ModelChoice;
+  retired: string | null;
+}
+
+export const prefillKey = (agent: AgentKind, repositoryId: string) => `${agent} ${repositoryId}`;
 
 /** One line of the activity feed. */
 export interface Activity {
@@ -214,6 +230,8 @@ export const initialState: State = {
   activity: [],
   contextFiles: {},
   mcpDeclared: {},
+  modelLists: {},
+  modelPrefills: {},
 };
 
 const noFacts: SessionFacts = {
@@ -349,6 +367,19 @@ export function reduce(state: State, event: Event): State {
       return updateSession(state, event.sessionId, (s) => ({ ...s, permissionMode: event.permissionMode }));
     case "sessionFactsChanged":
       return updateSession(state, event.sessionId, (s) => ({ ...s, facts: event.facts }));
+    case "sessionModelChanged":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        pendingModel: event.pendingModel,
+        switchedModel: event.switchedModel,
+        // A new switch puts the last failure behind it.
+        modelSwitchFailed: event.pendingModel ? null : s.modelSwitchFailed,
+      }));
+    case "modelSwitchFailed":
+      return updateSession(state, event.sessionId, (s) => ({
+        ...s,
+        modelSwitchFailed: { model: event.model, reason: event.reason },
+      }));
     case "spendRecorded":
       return updateSession(state, event.sessionId, (s) => ({
         ...s,
@@ -448,6 +479,12 @@ export function reduce(state: State, event: Event): State {
       return { ...state, policies: { ...state.policies, [event.repositoryId]: event.policy } };
     case "secretsChanged":
       return { ...state, secrets: { ...state.secrets, [event.repositoryId]: event.secrets } };
+    case "modelsChanged":
+      return { ...state, modelLists: { ...state.modelLists, [event.agent]: event.models } };
+    case "modelPrefill": {
+      const prefill = { choice: event.choice, retired: event.retired };
+      return { ...state, modelPrefills: { ...state.modelPrefills, [prefillKey(event.agent, event.repositoryId)]: prefill } };
+    }
     case "forgeChecked":
       return { ...state, forge: event.forge };
     case "pullRequestChanged": {

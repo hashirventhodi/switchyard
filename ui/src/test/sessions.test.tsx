@@ -26,6 +26,7 @@ const session: Session = {
   branch: "fix/readme",
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status: "running",
   startedAtMs: Date.now() - 65_000,
 };
@@ -65,6 +66,7 @@ test("New session can start Claude Code on an existing free worktree in Ask firs
     worktreePath: "/wt/acme/feat",
     agent: "claudeCode",
     permissionMode: "askFirst",
+    model: { type: "default" },
     prompt: "Add a login form",
   });
   expect(screen.queryByRole("dialog", { name: "New session" })).toBeNull();
@@ -180,7 +182,7 @@ test("the summary strip shows agent, model, CLI version, path, mode, turns, cost
     .map((l) => [l.textContent, l.nextElementSibling?.textContent]);
   expect(cells).toEqual([
     ["Agent", "Claude Code"],
-    ["Model", "claude-opus-5-5"],
+    ["Model", "Default → claude-opus-5-5"],
     ["CLI", "2.1.300"],
     ["Worktree", "/wt/acme/fix"],
     ["Mode", "Ask first (CLI: default)"],

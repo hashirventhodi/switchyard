@@ -23,6 +23,13 @@ export interface SidecarConfig {
   allow_bypass?: boolean;
   /** The repository's MCP servers as the SDK's `mcpServers` map: the only ones the CLI loads. */
   mcp_servers?: Record<string, unknown>;
+  /** The chosen Model id; absent for Default (the CLI, or the user's own settings, decide). */
+  model?: string;
+  /**
+   * Started only to list the CLI's Models (no Session runs): the CLI gets no tool, no MCP
+   * server and no prompt, and every command but list_models is refused.
+   */
+  list_only?: boolean;
 }
 
 /** Modes in which dangerous commands always reach the host (everything below Full auto). */
@@ -101,15 +108,17 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
   };
 
   const prompts = new Pushable<SDKUserMessage>();
-  // The query starts with the first command: a resume (the CLI reloads that conversation)
-  // or the first prompt. A session that never gets a command never starts the CLI.
+  // The query starts with the first command: a resume (the CLI reloads that conversation),
+  // the first prompt, or a list_models. A session that never gets a command never starts the CLI.
   let q = null as Query | null;
   // The CLI-facing mode to start in; a switch before the first prompt changes it.
   let cliMode: string = CLI_MODE[config.permission_mode];
+  // The Model to start on (none for Default); a switch before the first prompt changes it.
+  let model = config.model;
   let started: (q: Query | null) => void = () => {};
   const ready = new Promise<Query | null>((resolve) => (started = resolve));
   const start = (resume?: string) => {
-    q = query({
+    q = query(config.list_only ? listOnlyParams() : {
       prompt: prompts,
       options: {
         cwd: config.cwd,
@@ -117,6 +126,8 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
         permissionMode: cliMode as Options["permissionMode"],
         // Bypass-everything is only ever made available where the policy declares a sandbox.
         ...(config.allow_bypass ? { allowDangerouslySkipPermissions: true } : {}),
+        // Only a chosen Model; for Default the CLI (or the user's own settings) decides.
+        ...(model ? { model } : {}),
         pathToClaudeCodeExecutable: config.claude_path ?? undefined,
         // Grants are Switchyard's data, passed per spawn as flags; never written into the
         // CLI's settings files (ADR-0004).
@@ -138,6 +149,25 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
     started(q);
     return q;
   };
+  // A list-only CLI can do nothing but list: no built-in tool, no MCP server, no allow rule,
+  // the mode that denies whatever is not pre-approved, every tool use denied without asking
+  // the host, and nothing written to the CLI's session history.
+  const listOnlyParams = () => ({
+    prompt: prompts,
+    options: {
+      cwd: config.cwd,
+      permissionMode: "dontAsk",
+      pathToClaudeCodeExecutable: config.claude_path ?? undefined,
+      tools: [],
+      allowedTools: [],
+      disallowedTools: config.disallowed_tools ?? [],
+      mcpServers: {},
+      strictMcpConfig: true,
+      canUseTool: async () => ({ behavior: "deny", message: "Switchyard started this CLI only to list its Models" }),
+      persistSession: false,
+      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
+    } as Options,
+  });
 
   const commandLoop = (async () => {
     for await (const line of commands) {
@@ -153,9 +183,17 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
       }
       recorder?.command(command, ops);
       for (const op of ops) {
+        if (config.list_only && op.op !== "list_models") {
+          emit({ type: "error", message: `${command.type} refused: this sidecar was started only to list Models`, fatal: false });
+          break;
+        }
         if (op.op === "resume") {
           if (q) emit({ type: "error", message: "resume must come before any prompt", fatal: false });
-          else start(op.session_id);
+          else {
+            // The Session's current Model, or Default: never the Model it started on.
+            model = op.model;
+            start(op.session_id);
+          }
         } else if (op.op === "push_user_message") {
           q ?? start();
           prompts.push(op.message as SDKUserMessage);
@@ -164,8 +202,29 @@ export async function drive({ config, commands, emit, query, recordDir }: DriveP
           if (q) await q.setPermissionMode(op.mode as Parameters<Query["setPermissionMode"]>[0]);
           else cliMode = op.mode;
           mode = op.permission_mode;
-        }
-        else if (op.op === "resolve_permission") {
+        } else if (op.op === "set_model") {
+          // Before the first prompt there is nothing live to switch: the CLI starts on it.
+          if (!q) model = op.model;
+          else
+            await q.setModel(op.model).catch((e) => {
+              const message = (e as Error)?.message ?? String(e);
+              ingest(JSON.stringify({ type: "switchyard", subtype: "set_model_failed", model: op.model, message }));
+            });
+        } else if (op.op === "list_models") {
+          // Answered in the background, never holding up the commands behind it. Before any
+          // prompt the CLI is started without one: the host may start the sidecar only to
+          // list (New session with no Session running), and it never gets a prompt.
+          void (async () => {
+            const live = q ?? start();
+            try {
+              const models = await live.supportedModels();
+              ingest(JSON.stringify({ type: "switchyard", subtype: "supported_models", models }));
+            } catch (e) {
+              const message = (e as Error)?.message ?? String(e);
+              ingest(JSON.stringify({ type: "switchyard", subtype: "supported_models_failed", message }));
+            }
+          })();
+        } else if (op.op === "resolve_permission") {
           waiting.get(op.request_id)?.(op.result);
           waiting.delete(op.request_id);
         }
@@ -242,7 +301,7 @@ class Recorder {
       const meta = {
         adapter: "claude-code",
         cli: event.cli,
-        protocol: "0.1.0",
+        protocol: "0.2.0",
         description: "Recorded with SWITCHYARD_RECORD_DIR. Review expected-events.jsonl before committing.",
       };
       writeFileSync(join(this.dir, "meta.json"), JSON.stringify(meta, null, 2) + "\n");

@@ -1,15 +1,18 @@
-// The New session modal: agent, where to run (a new worktree from base, or an existing
-// free one), permission mode, initial prompt.
+// The New session modal: agent and its Model, where to run (a new worktree from base, or an
+// existing free one), permission mode, initial prompt.
 import { useEffect, useState } from "react";
 import { slugBranch, type BranchKind } from "./branch";
 import type { AgentKind } from "./schema/AgentKind";
 import type { Command } from "./schema/Command";
+import type { ModelChoice } from "./schema/ModelChoice";
 import type { PermissionMode } from "./schema/PermissionMode";
 import type { Task } from "./schema/Task";
 import { taskBranch, taskPrompt } from "./tasks";
-import { sessionOn, type State } from "./state";
+import { prefillKey, sessionOn, type State } from "./state";
 import { AgentProblem, agentProblem, type OpenLink } from "./Setup";
 import { AGENT_LABEL, AGENTS, MODE_LABEL, STATUS_LABEL, withinCeiling } from "./status";
+import { DEFAULT_MODEL } from "./model";
+import { ModelField } from "./ModelField";
 
 // Explore is the only mode allowed on a primary worktree (ADR-0005).
 const MODES: PermissionMode[] = ["askFirst", "autoEdit", "fullAuto", "explore"];
@@ -48,6 +51,8 @@ export function NewSession(props: {
   // refuses too); say why here, before the first session, not mid-session.
   const [agent, setAgent] = useState<AgentKind>("claudeCode");
   const blocked = agentProblem(state.agents, agent);
+  // Until the user picks one, the Model is the last choice for this agent in this Repository.
+  const [modelChosen, setModelChosen] = useState<ModelChoice | null>(null);
   const [mode, setMode] = useState<PermissionMode>(preset.mode ?? "askFirst");
   // Until the user (or the preset) picks one, the mode follows the repository's default.
   const [modeTouched, setModeTouched] = useState(preset.mode !== undefined);
@@ -87,9 +92,20 @@ export function NewSession(props: {
     where === "new" ? repositoryId : state.repositories.find((r) => r.worktrees.some((w) => w.path === worktree))?.id;
   const policy = policyRepo ? state.policies[policyRepo] : undefined;
   const modes = MODES.filter((m) => withinCeiling(m, policy?.ceiling ?? null));
+  const prefill = policyRepo && !modelChosen ? state.modelPrefills[prefillKey(agent, policyRepo)] : undefined;
+  const model = modelChosen ?? prefill?.choice ?? DEFAULT_MODEL;
   useEffect(() => {
     if (policyRepo) send({ type: "readPolicy", repositoryId: policyRepo });
   }, [policyRepo, send]);
+  // The cached Model list, at once; the core refreshes it in the background and pushes a
+  // fresher one if it arrives while the dialog is open.
+  useEffect(() => {
+    send({ type: "readModels", agent });
+  }, [agent, send]);
+  // The last Model choice for this agent here, remembered by the core (never in the Repository).
+  useEffect(() => {
+    if (policyRepo) send({ type: "readModelPrefill", agent, repositoryId: policyRepo });
+  }, [agent, policyRepo, send]);
   useEffect(() => {
     if (!modeTouched && policy?.defaultMode) setMode(policy.defaultMode);
   }, [modeTouched, policy?.defaultMode]);
@@ -111,15 +127,15 @@ export function NewSession(props: {
           : replacing
             ? ({ type: "replace", sessionId: replacing.id } as const)
             : ({ type: "worktree", worktreePath: worktree } as const);
-      onStart({ type: "startTaskSession", taskId: task.id, target, agent, permissionMode: shownMode, prompt });
+      onStart({ type: "startTaskSession", taskId: task.id, target, agent, permissionMode: shownMode, model, prompt });
       return onClose();
     }
     onStart(
       where === "new"
-        ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, prompt }
+        ? { type: "startSessionOnNewWorktree", repositoryId, branch: shownBranch.trim(), agent, permissionMode: shownMode, model, prompt }
         : replacing
-          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: shownMode, prompt }
-          : { type: "startSession", worktreePath: worktree, agent, permissionMode: shownMode, prompt },
+          ? { type: "replaceSession", sessionId: replacing.id, agent, permissionMode: shownMode, model, prompt }
+          : { type: "startSession", worktreePath: worktree, agent, permissionMode: shownMode, model, prompt },
     );
     onClose();
   };
@@ -153,6 +169,12 @@ export function NewSession(props: {
               ))}
             </select>
           </label>
+          <ModelField value={model} onChange={setModelChosen} list={state.modelLists[agent]} />
+          {prefill?.retired && (
+            <span className="hint" role="note" aria-label="Remembered Model">
+              {prefill.retired}, your last choice here, is no longer offered: Default instead
+            </span>
+          )}
           {task && (
             <div className="field" role="group" aria-label="Task">
               <span>Task</span>

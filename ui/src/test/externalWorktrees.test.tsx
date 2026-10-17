@@ -38,6 +38,7 @@ const session = (id: string, worktreePath: string, branch: string, status: Sessi
   branch,
   agent: "claudeCode",
   permissionMode: "askFirst",
+  model: { type: "default" },
   status,
   startedAtMs: 1_760_000_000_000,
 });

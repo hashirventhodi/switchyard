@@ -32,6 +32,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// Stop (interrupt) a Session: it becomes Idle ("Paused"); the worktree is untouched.
@@ -111,6 +114,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// Remove a clean, unoccupied, non-primary worktree (`git worktree remove`). The
@@ -289,6 +295,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// Read an archived Session's transcript. Answered with [`Event::ArchivedTranscript`].
@@ -417,6 +426,9 @@ pub enum Command {
         #[serde(rename = "permissionMode")]
         #[ts(rename = "permissionMode")]
         permission_mode: PermissionMode,
+        /// The Model to start on; Default (also when left out) passes none to the CLI.
+        #[serde(default)]
+        model: ModelChoice,
         prompt: String,
     },
     /// List a Repository's secrets by name, with grant flags and where each value would
@@ -465,6 +477,29 @@ pub enum Command {
         repository_id: String,
         name: String,
         value: String,
+    },
+    /// New session is open on `agent`: the core answers at once with
+    /// [`Event::ModelsChanged`] from its cache (never waiting on the CLI) and asks for a fresh
+    /// list in the background: of a live Session's CLI, or, with none running, of the CLI
+    /// started only to list (and stopped once it answered).
+    ReadModels { agent: AgentKind },
+    /// Switch a running Session to another Model (the composer's Model control). It applies
+    /// from the agent's next request and is pending until the agent's own requests run on
+    /// it ([`Event::SessionModelChanged`]), or fails ([`Event::ModelSwitchFailed`]).
+    SetModel {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        /// A Model id.
+        model: String,
+    },
+    /// New session is on `agent` in a Repository: the core answers with
+    /// [`Event::ModelPrefill`], the last Model choice made for that agent there.
+    ReadModelPrefill {
+        agent: AgentKind,
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
     },
 }
 
@@ -528,8 +563,11 @@ pub mod command_name {
     pub const ADD_SECRET: &str = "addSecret";
     pub const REMOVE_SECRET: &str = "removeSecret";
     pub const SET_SECRET_VALUE: &str = "setSecretValue";
+    pub const READ_MODELS: &str = "readModels";
+    pub const SET_MODEL: &str = "setModel";
+    pub const READ_MODEL_PREFILL: &str = "readModelPrefill";
     /// Every name, in declaration order.
-    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE];
+    pub const ALL: &[&str] = &[ATTACH, ADD_REPOSITORY, START_SESSION, STOP_SESSION, SET_PERMISSION_MODE, SEND_PROMPT, OPEN_SHELL, WRITE_SHELL, RESIZE_SHELL, CLOSE_SHELL, CLOSE_WORKTREE_SHELLS, CREATE_WORKTREE, START_SESSION_ON_NEW_WORKTREE, REMOVE_WORKTREE, REFRESH_WORKTREES, CHECK_AGENTS, READ_CHANGES, DECIDE_FILE, COMMIT_ACCEPTED, DECIDE_HUNK, COMMENT_HUNK, SEND_FEEDBACK, REBASE_WORKTREE, RESOLVE_CONFLICT, ASK_AGENT_TO_REBASE, READ_HISTORY, ACKNOWLEDGE_POLICY, READ_MCP_SERVERS, ENABLE_MCP_SERVER, DISABLE_MCP_SERVER, READ_CONTEXT, ANSWER_REQUEST, RESUME_SESSION, REPLACE_SESSION, READ_ARCHIVED_SESSION, EXPORT_TRANSCRIPT, UPDATE_SETTINGS, READ_POLICY, REVOKE_GRANT, CHECK_FORGE, POLL_FORGE_NOW, WINDOW_VISIBILITY, OPEN_PULL_REQUEST, PRUNE_MERGED, LOCAL_MERGE, READ_TASKS, SYNC_TASKS, CREATE_TASK, TICK_TASK, LINK_TASK, START_TASK_SESSION, READ_SECRETS, GRANT_SECRET, REVOKE_SECRET, ADD_SECRET, REMOVE_SECRET, SET_SECRET_VALUE, READ_MODELS, SET_MODEL, READ_MODEL_PREFILL];
 }
 
 impl Command {
@@ -593,6 +631,9 @@ impl Command {
             Command::AddSecret { .. } => command_name::ADD_SECRET,
             Command::RemoveSecret { .. } => command_name::REMOVE_SECRET,
             Command::SetSecretValue { .. } => command_name::SET_SECRET_VALUE,
+            Command::ReadModels { .. } => command_name::READ_MODELS,
+            Command::SetModel { .. } => command_name::SET_MODEL,
+            Command::ReadModelPrefill { .. } => command_name::READ_MODEL_PREFILL,
         }
     }
 }
@@ -1005,6 +1046,48 @@ pub enum Event {
         #[ts(rename = "repositoryId")]
         repository_id: String,
         secrets: Vec<Secret>,
+    },
+    /// The Models the installed CLI of `agent` offers, as cached: sent after
+    /// [`Command::ReadModels`] (at once, from the cache) and again whenever a fresher list
+    /// for that CLI version arrives. Replaces the earlier list for `agent`.
+    ModelsChanged { agent: AgentKind, models: ModelList },
+    /// A Session's Model switch moved on, replacing its `pendingModel` and `switchedModel`
+    /// (see [`Session`]): a switch asked for, confirmed or failed. The Model the agent runs
+    /// on is in its facts.
+    SessionModelChanged {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "pendingModel")]
+        #[ts(rename = "pendingModel")]
+        pending_model: Option<String>,
+        #[serde(rename = "switchedModel")]
+        #[ts(rename = "switchedModel")]
+        switched_model: Option<String>,
+    },
+    /// A switch to `model` did not take: the CLI refused it, the agent's next request was
+    /// still on the old Model (or ran on another one), or the CLI could not resume on it.
+    /// `reason` says which, worded by the core for the user (the CLI's own message when it
+    /// gave one); null only from an older core. The Session carries on on the Model it runs
+    /// on, in the same status; nothing is retried.
+    ModelSwitchFailed {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: String,
+        model: String,
+        reason: Option<String>,
+    },
+    /// What New session pre-fills for `agent` in a Repository, after
+    /// [`Command::ReadModelPrefill`]: the last choice made there (Default stays Default),
+    /// kept in Switchyard's store and never in the Repository. A remembered Model the cached
+    /// list no longer offers comes back as Default, naming it in `retired`.
+    ModelPrefill {
+        agent: AgentKind,
+        #[serde(rename = "repositoryId")]
+        #[ts(rename = "repositoryId")]
+        repository_id: String,
+        choice: ModelChoice,
+        retired: Option<String>,
     },
 }
 
@@ -1499,6 +1582,11 @@ pub struct AgentSetup {
     /// Display name, e.g. "Claude Code".
     pub name: String,
     pub state: AgentSetupState,
+    /// Its adapter switches a running Session's Model live. When false (or not known), the
+    /// composer's Model control reads "applies on resume": a switch is recorded and applied
+    /// when the Session resumes.
+    #[serde(default)]
+    pub switch_model_live: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1580,6 +1668,70 @@ pub enum PermissionMode {
     FullAuto,
 }
 
+/// The Model chosen for a Session: a named Model id, or Default, which passes nothing to the
+/// CLI so that the CLI (or the user's own CLI settings) decides. What Default resolved to is
+/// a fact of the running Session ([`SessionFacts::model`]), never stored as the choice.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModelChoice {
+    #[default]
+    Default,
+    Model { id: String },
+}
+
+impl ModelChoice {
+    /// The Model id to pass to the CLI; none for Default.
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            ModelChoice::Default => None,
+            ModelChoice::Model { id } => Some(id),
+        }
+    }
+}
+
+/// The Models an agent's CLI offers, as cached for its installed version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModelList {
+    /// Nothing cached for this CLI version yet (first run, or a new version): the list
+    /// loads after the first Session with it.
+    Empty,
+    /// The Models the CLI listed, in its order, and when they were fetched.
+    Listed {
+        models: Vec<ListedModel>,
+        /// Milliseconds since the Unix epoch.
+        #[serde(rename = "fetchedAtMs")]
+        #[ts(rename = "fetchedAtMs", type = "number")]
+        fetched_at_ms: u64,
+    },
+    /// The CLI cannot list its Models; `reason` says why, when it said.
+    CannotList { reason: Option<String> },
+}
+
+/// One Model a CLI offers: `id` is what the CLI takes to run on it, `displayName` what the
+/// user reads, and `resolvedModel` the full Model id an alias `id` stands for (`opus` for
+/// `claude-opus-5-5`), the name the CLI reports it by once running; absent when the CLI does
+/// not say.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ListedModel {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub resolved_model: Option<String>,
+}
+
+impl ListedModel {
+    /// Whether `model` names this Model: its id, or the full id it resolves to.
+    pub fn is(&self, model: &str) -> bool {
+        self.id == model || self.resolved_model.as_deref() == Some(model)
+    }
+}
+
 /// Exactly five statuses, shown everywhere with the same colour and label:
 /// Running, Waiting ("Needs you"), Idle ("Paused"), Done ("Finished"), Failed ("Error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1604,6 +1756,19 @@ pub struct Session {
     pub agent: AgentKind,
     /// The mode the user asked for (the CLI's actual mode is in [`SessionFacts`]).
     pub permission_mode: PermissionMode,
+    /// The Model chosen at start (a Model id, or Default).
+    #[serde(default)]
+    pub model: ModelChoice,
+    /// The Model the user last switched to, once the agent's own requests were confirmed
+    /// on it; none before the first confirmed switch.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub switched_model: Option<String>,
+    /// A switch the user asked for that is neither confirmed nor failed yet (also one
+    /// waiting for a Permission request's answer, or for the agent to be running again).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub pending_model: Option<String>,
     pub status: SessionStatus,
     /// Milliseconds since the Unix epoch.
     #[ts(type = "number")]
@@ -1614,6 +1779,8 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SessionFacts {
+    /// The Model the CLI runs on: as it reported, else the chosen one it was started on.
+    /// None while a Default the CLI did not report is unresolved ("Default (not reported)").
     pub model: Option<String>,
     pub cli_version: Option<String>,
     /// The CLI's own name for the mode it actually started in.
@@ -1662,9 +1829,11 @@ pub enum McpState {
     Disabled,
 }
 
-/// A Session's running spend. Cost is either reported by the CLI or, for a CLI that
-/// reports tokens only, estimated from the price table when read (shown with a tilde);
-/// the two are never mixed into one figure.
+/// A Session's running spend, totalled over every Model it used and broken down by Model
+/// in `byModel`. Each Model's cost is either reported by the CLI or, for a CLI that reports
+/// tokens only, estimated from the price table when read (shown with a tilde); the two are
+/// never mixed into one figure. A Model with neither is unpriced: its tokens count, its
+/// cost is unknown (never $0) and adds nothing to either total.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -1680,10 +1849,38 @@ pub struct Spend {
     #[serde(default)]
     #[ts(type = "number")]
     pub cache_write_tokens: u64,
-    /// Cost the CLI reported, in USD.
+    /// Cost the CLI reported, in USD, summed over the Models it reported one for.
+    pub reported_usd: Option<f64>,
+    /// Cost estimated from the price table, in USD, summed over the Models the CLI reported
+    /// no cost for and the table prices.
+    pub estimated_usd: Option<f64>,
+    /// The price table version `estimatedUsd` was computed with.
+    pub price_table_version: Option<String>,
+    /// The same, per Model, in the order each Model was first used.
+    #[serde(default)]
+    pub by_model: Vec<ModelSpend>,
+}
+
+/// What a Session has spent on one Model so far. Neither cost set: the Model is unpriced.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ModelSpend {
+    /// The Model; none when the agent named none and the Session's Model is not known.
+    pub model: Option<String>,
+    /// Input tokens, not counting cache reads or writes.
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    #[ts(type = "number")]
+    pub cache_read_tokens: u64,
+    #[ts(type = "number")]
+    pub cache_write_tokens: u64,
+    /// Cost the CLI reported for this Model, in USD.
     pub reported_usd: Option<f64>,
     /// Cost estimated from the price table, in USD: only when the CLI reported none and the
-    /// table prices the Session's model.
+    /// table prices this Model.
     pub estimated_usd: Option<f64>,
     /// The price table version `estimatedUsd` was computed with.
     pub price_table_version: Option<String>,

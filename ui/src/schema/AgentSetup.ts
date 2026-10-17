@@ -9,4 +9,10 @@ export type AgentSetup = { agent: AgentKind,
 /**
  * Display name, e.g. "Claude Code".
  */
-name: string, state: AgentSetupState, };
+name: string, state: AgentSetupState, 
+/**
+ * Its adapter switches a running Session's Model live. When false (or not known), the
+ * composer's Model control reads "applies on resume": a switch is recorded and applied
+ * when the Session resumes.
+ */
+switchModelLive: boolean, };

@@ -40,6 +40,7 @@ fn start(core: &mut Harness, worktree: &Path, agent: AgentKind, mode: Permission
         worktree_path: worktree.to_string_lossy().into_owned(),
         agent,
         permission_mode: mode,
+        model: Default::default(),
         prompt: prompt.into(),
     }))
 }
@@ -247,7 +248,7 @@ fn a_codex_session_resumes_by_its_thread_id_after_a_relaunch() {
     assert_eq!(
         core.agents.commands(0),
         vec![
-            AgentCommand::Resume { external_session_id: "019a-thread".into() },
+            AgentCommand::Resume { external_session_id: "019a-thread".into(), model: None },
             AgentCommand::SendText { text: "Continue where you left off.".into() },
         ]
     );

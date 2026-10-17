@@ -18,6 +18,9 @@ pub struct LaunchSpec {
     /// The mode the user asked for; the launcher maps it onto the CLI's own
     /// ([`protocol_mode`]).
     pub permission_mode: PermissionMode,
+    /// The Model to run on; `None` (Default) passes none, so the CLI or the user's own CLI
+    /// settings decide.
+    pub model: Option<String>,
     /// The repository's policy declares a sandbox: Full auto runs as the CLI's
     /// bypass-everything mode, and only then.
     pub sandboxed: bool,
@@ -36,6 +39,10 @@ pub struct LaunchSpec {
     ///
     /// [`SpawnEnv::apply`]: crate::secrets::SpawnEnv::apply
     pub env: crate::secrets::SpawnEnv,
+    /// Started only to list its CLI's Models (New session with no Session running): the
+    /// launcher locks it down to that, disallowing every tool, and the adapter refuses any
+    /// command but `list_models`.
+    pub list_only: bool,
 }
 
 /// The protocol mode a launcher asks its CLI for: Full auto bypasses every check only in

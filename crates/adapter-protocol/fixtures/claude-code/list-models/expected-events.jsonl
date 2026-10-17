@@ -1,0 +1,2 @@
+{"type": "session_init", "external_session_id": "list-models", "permission_mode": "ask_first", "cli_permission_mode": "default", "cli": {"name": "claude-code", "version": "2.1.300"}, "model": "claude-opus-5-5"}
+{"type": "models_listed", "models": [{"id": "opus", "display_name": "Opus", "resolved_model": "claude-opus-5-5"}, {"id": "sonnet", "display_name": "Sonnet", "resolved_model": "claude-sonnet-5-5"}, {"id": "haiku", "display_name": "Haiku", "resolved_model": "claude-haiku-4-5-20251001"}]}
