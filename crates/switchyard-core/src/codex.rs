@@ -63,6 +63,11 @@ pub fn launch_for(spec: &LaunchSpec) -> Launch {
         config: spawn_config(spec),
         mcp_servers: spec.mcp_servers.iter().map(|s| s.name.clone()).collect(),
         mcp_rules,
+        // A list-only Codex runs none of the user's hooks without being told to: every hook
+        // Codex runs belongs to a thread (app-server schema, codex-cli 0.144.1:
+        // `HookStartedNotification` requires a `threadId`, `HookScope` is thread or turn, and
+        // no `HookEventName` fires on `initialize` or `model/list`), and a list-only adapter
+        // never starts one.
         list_only: spec.list_only,
     }
 }
