@@ -213,8 +213,11 @@ fn on(model: &str, input_tokens: u64, output_tokens: u64, cache_read_tokens: u64
     }
 }
 
-/// (Model, reported, estimated in cents, input tokens) of each Model in `spend`, in order.
-fn by_model(spend: &Spend) -> Vec<(Option<String>, Option<f64>, Option<f64>, u64)> {
+/// One Model's line in a Spend breakdown: (Model, reported, estimated in cents, input tokens).
+type ModelLine = (Option<String>, Option<f64>, Option<f64>, u64);
+
+/// Each Model's line in `spend`, in order.
+fn by_model(spend: &Spend) -> Vec<ModelLine> {
     spend.by_model.iter().map(|m| (m.model.clone(), m.reported_usd, m.estimated_usd.map(cents), m.input_tokens)).collect()
 }
 

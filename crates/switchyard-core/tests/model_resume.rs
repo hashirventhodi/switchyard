@@ -4,7 +4,7 @@
 //! the CLI cannot run on its Model falls back to Default once, with a note.
 mod harness;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use adapter_protocol::{CliInfo, Command as AgentCommand, Event as AgentEvent, PermissionMode as ProtocolMode};
 use harness::{added_repository, started_session, Harness, TempRepo};
@@ -33,7 +33,7 @@ fn init(model: Option<&str>) -> AgentEvent {
 }
 
 /// A Claude Code Session started on `choice`, its CLI running on Opus.
-fn started_on(core: &mut Harness, worktree: &PathBuf, choice: ModelChoice) -> String {
+fn started_on(core: &mut Harness, worktree: &Path, choice: ModelChoice) -> String {
     let id = started_session(&core.start_session_on(worktree, PermissionMode::AskFirst, choice, "Fix it."));
     core.agent_says(0, init(Some(OPUS)));
     id

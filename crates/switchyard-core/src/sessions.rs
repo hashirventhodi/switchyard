@@ -390,7 +390,7 @@ fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result
 
 /// Relaunch the session's agent by its CLI session id, resuming on `resumed.model`.
 fn relaunch(inner: &mut Inner, core: Weak<Mutex<Inner>>, id: &str, resumed: Resumed) -> Result<(), String> {
-    let Some(state) = find(inner, id) else { return Err(crate::no_session(&id)) };
+    let Some(state) = find(inner, id) else { return Err(crate::no_session(id)) };
     let agent = state.session.agent;
     let Some(external_id) = state.external_id.clone() else {
         return Err(format!(

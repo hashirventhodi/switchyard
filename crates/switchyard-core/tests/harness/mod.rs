@@ -426,9 +426,18 @@ pub struct FakeAgents {
     processes: FakeProcesses,
 }
 
+/// One fake launch: what it was started with, where it reports, the commands it was sent,
+/// and whether the core has let go of its handle.
+struct Launched {
+    spec: LaunchSpec,
+    sink: AgentSink,
+    commands: Arc<Mutex<Vec<adapter_protocol::Command>>>,
+    dropped: Arc<AtomicBool>,
+}
+
 #[derive(Default)]
 struct FakeAgentsInner {
-    launched: Vec<(LaunchSpec, AgentSink, Arc<Mutex<Vec<adapter_protocol::Command>>>, Arc<AtomicBool>)>,
+    launched: Vec<Launched>,
     refuse_next: Option<String>,
 }
 
@@ -438,13 +447,13 @@ impl FakeAgents {
     }
 
     pub fn launches(&self) -> Vec<LaunchSpec> {
-        self.inner.lock().unwrap().launched.iter().map(|(s, _, _, _)| s.clone()).collect()
+        self.inner.lock().unwrap().launched.iter().map(|l| l.spec.clone()).collect()
     }
 
     /// Whether the core let go of the n-th agent's handle (the real launchers kill the
     /// process when it drops).
     pub fn dropped(&self, agent: usize) -> bool {
-        self.inner.lock().unwrap().launched[agent].3.load(Ordering::SeqCst)
+        self.inner.lock().unwrap().launched[agent].dropped.load(Ordering::SeqCst)
     }
 
     /// Protocol commands the core sent to the n-th agent about its Session, leaving out the
@@ -457,7 +466,7 @@ impl FakeAgents {
 
     /// Every protocol command the core sent to the n-th agent.
     pub fn all_commands(&self, agent: usize) -> Vec<adapter_protocol::Command> {
-        self.inner.lock().unwrap().launched[agent].2.lock().unwrap().clone()
+        self.inner.lock().unwrap().launched[agent].commands.lock().unwrap().clone()
     }
 
     /// The next launch fails with `reason` (the CLI or the sidecar could not start).
@@ -467,7 +476,7 @@ impl FakeAgents {
 
     /// Deliver `output` from the n-th agent (from any thread).
     pub fn deliver(&self, agent: usize, output: AgentOutput) {
-        let sink = self.inner.lock().unwrap().launched[agent].1.clone();
+        let sink = self.inner.lock().unwrap().launched[agent].sink.clone();
         sink(output);
     }
 }
@@ -499,7 +508,7 @@ impl AgentLauncher for FakeAgents {
         }
         let commands = Arc::new(Mutex::new(Vec::new()));
         let dropped = Arc::new(AtomicBool::new(false));
-        inner.launched.push((spec, sink, commands.clone(), dropped.clone()));
+        inner.launched.push(Launched { spec, sink, commands: commands.clone(), dropped: dropped.clone() });
         let pid = self.processes.spawn();
         Ok(Box::new(FakeHandle(commands, pid, dropped)))
     }
