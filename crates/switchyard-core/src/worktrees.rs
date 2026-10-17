@@ -17,7 +17,7 @@ use crate::{git, repo_policy, review, sessions, shells, Inner};
 pub(crate) fn create(inner: &mut Inner, command: &str, repository_id: &str, branch: &str) -> Option<Worktree> {
     let branch = branch.trim();
     let Some(repo) = repository(inner, repository_id) else {
-        inner.refuse(command, crate::no_repository(&repository_id));
+        inner.refuse(command, crate::no_repository(repository_id));
         return None;
     };
     let dir = Path::new(&repo.path);

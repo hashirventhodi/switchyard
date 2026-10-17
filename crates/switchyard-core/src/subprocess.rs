@@ -46,7 +46,7 @@ pub(crate) fn describe(limit: Duration) -> String {
     let secs = limit.as_secs();
     if secs == 0 {
         format!("{} ms", limit.as_millis())
-    } else if secs % 60 == 0 {
+    } else if secs.is_multiple_of(60) {
         let m = secs / 60;
         if m == 1 { "1 minute".into() } else { format!("{m} minutes") }
     } else if secs == 1 {

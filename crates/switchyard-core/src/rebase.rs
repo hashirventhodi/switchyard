@@ -81,7 +81,7 @@ pub(crate) fn rebase(inner: &mut Inner, worktree_path: &str) {
 pub(crate) fn ask_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, session_id: &str) {
     const COMMAND: &str = command_name::ASK_AGENT_TO_REBASE;
     let Some((worktree_path, status)) = sessions::worktree_and_status(inner, session_id) else {
-        return inner.refuse(COMMAND, crate::no_session(&session_id));
+        return inner.refuse(COMMAND, crate::no_session(session_id));
     };
     match status {
         SessionStatus::Running => {

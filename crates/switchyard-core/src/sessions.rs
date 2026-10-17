@@ -287,7 +287,7 @@ fn begin(inner: &mut Inner, core: &Arc<Mutex<Inner>>, command: &str, worktree_pa
 pub(crate) fn stop(inner: &mut Inner, id: &str) {
     const COMMAND: &str = command_name::STOP_SESSION;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
+        return inner.refuse(COMMAND, crate::no_session(id));
     };
     let Some(status) = change_status(state, &Cause::UserStop) else {
         return inner.refuse(COMMAND, "The session is not running".into());
@@ -306,7 +306,7 @@ pub(crate) fn stop(inner: &mut Inner, id: &str) {
 pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str, text: &str) {
     const COMMAND: &str = command_name::SEND_PROMPT;
     let Some(state) = inner.sessions.list.iter_mut().find(|s| s.session.id == id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
+        return inner.refuse(COMMAND, crate::no_session(id));
     };
     // While the agent asks something, what the user types is the answer to its question.
     if let Some(question) = requests::pending_question(state) {
@@ -340,7 +340,7 @@ pub(crate) fn send_prompt(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str,
 pub(crate) fn resume(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) {
     const COMMAND: &str = command_name::RESUME_SESSION;
     let Some(state) = find(inner, id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
+        return inner.refuse(COMMAND, crate::no_session(id));
     };
     if transition(state.session.status, &Cause::Resume).is_none() {
         let label = status_label(state.session.status);
@@ -378,7 +378,7 @@ fn send_text(inner: &mut Inner, id: &str, text: &str) {
 
 /// Make sure the session has a running agent: relaunch a gone one by its CLI session id.
 fn ensure_agent(inner: &mut Inner, core: &Arc<Mutex<Inner>>, id: &str) -> Result<(), String> {
-    let Some(state) = find(inner, id) else { return Err(crate::no_session(&id)) };
+    let Some(state) = find(inner, id) else { return Err(crate::no_session(id)) };
     let agent_kind = state.session.agent;
     if state.agent.is_some() {
         return Ok(());
@@ -530,7 +530,7 @@ fn persist(db: &rusqlite::Connection, state: &mut SessionState, archived_at_ms: 
 pub(crate) fn set_mode(inner: &mut Inner, id: &str, mode: PermissionMode) {
     const COMMAND: &str = command_name::SET_PERMISSION_MODE;
     let Some(state) = find(inner, id) else {
-        return inner.refuse(COMMAND, crate::no_session(&id));
+        return inner.refuse(COMMAND, crate::no_session(id));
     };
     let (from, repository_id, status) = (state.session.permission_mode, state.session.repository_id.clone(), state.session.status);
     if from == mode {

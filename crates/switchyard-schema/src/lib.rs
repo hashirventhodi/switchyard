@@ -574,7 +574,7 @@ impl Command {
     /// This command's wire name (its `type` tag), as a `commandRefused` names it.
     pub fn name(&self) -> &'static str {
         match self {
-            Command::Attach { .. } => command_name::ATTACH,
+            Command::Attach => command_name::ATTACH,
             Command::AddRepository { .. } => command_name::ADD_REPOSITORY,
             Command::StartSession { .. } => command_name::START_SESSION,
             Command::StopSession { .. } => command_name::STOP_SESSION,
@@ -588,8 +588,8 @@ impl Command {
             Command::CreateWorktree { .. } => command_name::CREATE_WORKTREE,
             Command::StartSessionOnNewWorktree { .. } => command_name::START_SESSION_ON_NEW_WORKTREE,
             Command::RemoveWorktree { .. } => command_name::REMOVE_WORKTREE,
-            Command::RefreshWorktrees { .. } => command_name::REFRESH_WORKTREES,
-            Command::CheckAgents { .. } => command_name::CHECK_AGENTS,
+            Command::RefreshWorktrees => command_name::REFRESH_WORKTREES,
+            Command::CheckAgents => command_name::CHECK_AGENTS,
             Command::ReadChanges { .. } => command_name::READ_CHANGES,
             Command::DecideFile { .. } => command_name::DECIDE_FILE,
             Command::CommitAccepted { .. } => command_name::COMMIT_ACCEPTED,
@@ -613,8 +613,8 @@ impl Command {
             Command::UpdateSettings { .. } => command_name::UPDATE_SETTINGS,
             Command::ReadPolicy { .. } => command_name::READ_POLICY,
             Command::RevokeGrant { .. } => command_name::REVOKE_GRANT,
-            Command::CheckForge { .. } => command_name::CHECK_FORGE,
-            Command::PollForgeNow { .. } => command_name::POLL_FORGE_NOW,
+            Command::CheckForge => command_name::CHECK_FORGE,
+            Command::PollForgeNow => command_name::POLL_FORGE_NOW,
             Command::WindowVisibility { .. } => command_name::WINDOW_VISIBILITY,
             Command::OpenPullRequest { .. } => command_name::OPEN_PULL_REQUEST,
             Command::PruneMerged { .. } => command_name::PRUNE_MERGED,

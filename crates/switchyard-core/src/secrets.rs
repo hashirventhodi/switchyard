@@ -230,7 +230,7 @@ fn known(inner: &Inner) -> BTreeSet<String> {
 pub(crate) fn add(inner: &mut Inner, repository_id: &str, name: &str) {
     const COMMAND: &str = command_name::ADD_SECRET;
     let Some(repo) = policy::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+        return inner.refuse(COMMAND, crate::no_repository(repository_id));
     };
     let name = name.trim();
     if !valid_name(name) {
@@ -251,7 +251,7 @@ pub(crate) fn add(inner: &mut Inner, repository_id: &str, name: &str) {
 pub(crate) fn remove(inner: &mut Inner, repository_id: &str, name: &str) {
     const COMMAND: &str = command_name::REMOVE_SECRET;
     let Some(repo) = policy::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+        return inner.refuse(COMMAND, crate::no_repository(repository_id));
     };
     match declared(&repo).get(name) {
         Some(SecretOrigin::Policy) => {
@@ -277,7 +277,7 @@ pub(crate) fn remove(inner: &mut Inner, repository_id: &str, name: &str) {
 pub(crate) fn set_value(inner: &mut Inner, repository_id: &str, name: &str, value: &str) {
     const COMMAND: &str = command_name::SET_SECRET_VALUE;
     let Some(repo) = policy::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+        return inner.refuse(COMMAND, crate::no_repository(repository_id));
     };
     if !list(inner, &repo).iter().any(|s| s.name == name) {
         return inner.refuse(COMMAND, format!("{name} is not one of this repository's secrets"));
@@ -295,7 +295,7 @@ pub(crate) fn set_value(inner: &mut Inner, repository_id: &str, name: &str, valu
 pub(crate) fn set_grant(inner: &mut Inner, repository_id: &str, name: &str, granted: bool) {
     let command = if granted { command_name::GRANT_SECRET } else { command_name::REVOKE_SECRET };
     let Some(repo) = policy::repository(inner, repository_id) else {
-        return inner.refuse(command, crate::no_repository(&repository_id));
+        return inner.refuse(command, crate::no_repository(repository_id));
     };
     let Some(current) = list(inner, &repo).into_iter().find(|s| s.name == name) else {
         return inner.refuse(command, format!("{name} is not one of this repository's secrets"));
@@ -321,6 +321,6 @@ fn emit(inner: &Inner, repo: &StoredRepository) {
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     match policy::repository(inner, repository_id) {
         Some(repo) => emit(inner, &repo),
-        None => inner.refuse(command_name::READ_SECRETS, crate::no_repository(&repository_id)),
+        None => inner.refuse(command_name::READ_SECRETS, crate::no_repository(repository_id)),
     }
 }

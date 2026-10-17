@@ -264,7 +264,7 @@ pub(crate) fn local_file(inner: &Inner, repo: &StoredRepository) -> PathBuf {
 /// [`Command::ReadTasks`](switchyard_schema::Command::ReadTasks).
 pub(crate) fn read(inner: &Inner, repository_id: &str) {
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(command_name::READ_TASKS, crate::no_repository(&repository_id));
+        return inner.refuse(command_name::READ_TASKS, crate::no_repository(repository_id));
     };
     announce(inner, command_name::READ_TASKS, &repo);
 }
@@ -277,7 +277,7 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
     let (repo, dir, forge) = {
         let inner = core.lock().expect("core lock");
         let Some(repo) = worktrees::repository(&inner, repository_id) else {
-            return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+            return inner.refuse(COMMAND, crate::no_repository(repository_id));
         };
         let dir = Path::new(&repo.path).to_path_buf();
         if git::remote(&dir).is_none() {
@@ -309,7 +309,7 @@ pub(crate) fn sync(core: &Arc<Mutex<Inner>>, repository_id: &str) {
 pub(crate) fn create(inner: &Inner, repository_id: &str, new: NewTask) {
     const COMMAND: &str = command_name::CREATE_TASK;
     let Some(repo) = worktrees::repository(inner, repository_id) else {
-        return inner.refuse(COMMAND, crate::no_repository(&repository_id));
+        return inner.refuse(COMMAND, crate::no_repository(repository_id));
     };
     let title = new.title.trim().to_string();
     if title.is_empty() {
@@ -367,7 +367,7 @@ fn linked_task(db: &Connection, session_id: &str) -> Option<String> {
 pub(crate) fn link(inner: &Inner, session_id: &str, task_id: Option<&str>, relink: bool) {
     const COMMAND: &str = command_name::LINK_TASK;
     let Some(session) = sessions::live(inner, session_id) else {
-        return inner.refuse(COMMAND, crate::no_session(&session_id));
+        return inner.refuse(COMMAND, crate::no_session(session_id));
     };
     let db = inner.store.db();
     let Some(task_id) = task_id else {
@@ -518,23 +518,6 @@ pub(crate) fn replay_links(inner: &Inner) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_task_id_reads_back_what_it_writes_and_keeps_slashes_in_the_key() {
-        let repo = StoredRepository { id: "repo-3".into(), path: "/src/acme".into() };
-        let id = TaskId::new(&repo, TaskSourceKind::Github, "#412");
-        assert_eq!(id.to_string(), "repo-3/github/#412");
-        assert_eq!(TaskId::parse("repo-3/github/#412"), Some(id));
-        let odd = TaskId::parse("repo-3/local/L-1/x").unwrap();
-        assert_eq!((odd.source, odd.key.as_str()), (TaskSourceKind::Local, "L-1/x"));
-        assert_eq!(TaskId::parse("repo-3/jira/X-1"), None);
-        assert_eq!(TaskId::parse("repo-3"), None);
-    }
-}
-
 /// The GitHub issue numbers linked to the sessions that ran on `branch` at `path`: what a
 /// pull request opened from there closes on merge.
 pub(crate) fn linked_issues(inner: &Inner, path: &str, branch: &str) -> Vec<u32> {
@@ -589,4 +572,21 @@ fn keep_issues(inner: &Inner, repository_id: &str, issues: &[crate::forge::Forge
 /// at least once)?
 pub(crate) fn issues_synced(inner: &Inner, repository_id: &str) -> bool {
     github::synced(inner.store.db(), repository_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_task_id_reads_back_what_it_writes_and_keeps_slashes_in_the_key() {
+        let repo = StoredRepository { id: "repo-3".into(), path: "/src/acme".into() };
+        let id = TaskId::new(&repo, TaskSourceKind::Github, "#412");
+        assert_eq!(id.to_string(), "repo-3/github/#412");
+        assert_eq!(TaskId::parse("repo-3/github/#412"), Some(id));
+        let odd = TaskId::parse("repo-3/local/L-1/x").unwrap();
+        assert_eq!((odd.source, odd.key.as_str()), (TaskSourceKind::Local, "L-1/x"));
+        assert_eq!(TaskId::parse("repo-3/jira/X-1"), None);
+        assert_eq!(TaskId::parse("repo-3"), None);
+    }
 }
