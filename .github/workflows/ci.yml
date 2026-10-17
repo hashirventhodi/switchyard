@@ -25,6 +25,38 @@ jobs:
       - name: Generated TypeScript is committed and current
         run: git diff --exit-code -- ui/src/schema
 
+  clippy:
+    # Temporary until #52: clippy at -D warnings on the lines a change adds or modifies only,
+    # so the existing warnings don't block it. #52 clears them and replaces this job with
+    # `cargo clippy --workspace --exclude switchyard-app --all-targets -- -D warnings`.
+    name: Clippy on changed lines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # A PR is compared with its base branch; a push to main with the main it replaced
+      # (HEAD^ when that commit is gone, e.g. after a force-push); any other push with main.
+      - name: Clippy -D warnings on lines changed since the base
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base="origin/$BASE_REF"
+          elif [ "$GITHUB_REF" = refs/heads/main ]; then
+            base="$BEFORE"
+            git cat-file -e "$base^{commit}" 2>/dev/null || base=HEAD^
+          else
+            base=origin/main
+          fi
+          scripts/clippy-changed-lines.py "$base"
+
   renderer:
     name: Renderer tests
     runs-on: ubuntu-latest
