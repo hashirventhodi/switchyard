@@ -10,7 +10,8 @@
 //! repository's MCP servers as the SDK's `mcpServers` map; the sidecar always runs the CLI
 //! with `--strict-mcp-config`, so these are the only servers it loads), "model" (the chosen
 //! Model id; left out for Default), "list_only" (true only for a CLI started just to list its
-//! Models: no tool, no server, nothing but list_models; left out otherwise)}`.
+//! Models: no tool, no server, no hook of the user's, nothing but list_models; left out
+//! otherwise)}`.
 //!
 //! The process environment is the inherited one with [`LaunchSpec::env`] applied: granted
 //! secrets set, every other known secret name removed. Secret values never go in the config.

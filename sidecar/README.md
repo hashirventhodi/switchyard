@@ -16,6 +16,14 @@ adapter protocol (`crates/adapter-protocol/README.md`) on stdio.
 The core starts it in the worktree with `{"cwd", "permission_mode", "claude_path"}`; with no
 `claude_path` it runs the `claude` found on PATH or in the usual install locations.
 
+A sidecar started only to list Models (`"list_only": true`, in an empty directory of its own)
+can do nothing but list: the CLI gets no built-in tool, no MCP server and no allow rule, runs
+in `dontAsk` with every tool use denied without asking the host, writes no session history,
+and runs none of the user's hooks (`settings: {disableAllHooks: true}`, the flag tier, above
+user, project and local settings; managed-policy hooks still run). The user's settings still
+load, so a login kept there (such as an `apiKeyHelper`) works. The sidecar refuses every
+command but `list_models`.
+
 ## Recording a fixture (manual; costs a model call)
 
 The fixtures under `crates/adapter-protocol/fixtures/claude-code/` are synthesised from the

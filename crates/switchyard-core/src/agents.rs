@@ -40,8 +40,8 @@ pub struct LaunchSpec {
     /// [`SpawnEnv::apply`]: crate::secrets::SpawnEnv::apply
     pub env: crate::secrets::SpawnEnv,
     /// Started only to list its CLI's Models (New session with no Session running): the
-    /// launcher locks it down to that, disallowing every tool, and the adapter refuses any
-    /// command but `list_models`.
+    /// launcher locks it down to that, disallowing every tool and running none of the user's
+    /// hooks, and the adapter refuses any command but `list_models`.
     pub list_only: bool,
 }
 
