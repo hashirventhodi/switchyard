@@ -9,7 +9,8 @@
 //! Policy), "allow_bypass" (the repository's policy declares a sandbox), "mcp_servers" (the
 //! repository's MCP servers as the SDK's `mcpServers` map; the sidecar always runs the CLI
 //! with `--strict-mcp-config`, so these are the only servers it loads), "model" (the chosen
-//! Model id; left out for Default)}`.
+//! Model id; left out for Default), "list_only" (true only for a CLI started just to list its
+//! Models: no tool, no server, nothing but list_models; left out otherwise)}`.
 //!
 //! The process environment is the inherited one with [`LaunchSpec::env`] applied: granted
 //! secrets set, every other known secret name removed. Secret values never go in the config.
@@ -54,6 +55,11 @@ impl AgentLauncher for SidecarLauncher {
         // to decide.
         if let Some(model) = &spec.model {
             config["model"] = json!(model);
+        }
+        // Started only to list Models: the sidecar gives the CLI no tool and refuses anything
+        // but list_models.
+        if spec.list_only {
+            config["list_only"] = json!(true);
         }
         let mut command = Command::new(&self.node);
         // Granted secrets in, every other known secret out; the CLI the sidecar starts, and

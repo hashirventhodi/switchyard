@@ -100,3 +100,78 @@ test("a slow list does not hold up the commands behind it", async () => {
   await run(counting, listModels, prompt);
   expect(started).toHaveLength(1);
 });
+
+/** Runs a list-only sidecar (the host started it only to list Models), recording what query() got. */
+async function runListOnly(supportedModels: () => Promise<unknown[]>, ...lines: object[]) {
+  const { query, calls } = fakeQuery(supportedModels);
+  const started: { options: any; prompts: unknown[] }[] = [];
+  const recording: QueryFn = (params) => {
+    const seen = { options: params.options, prompts: [] as unknown[] };
+    started.push(seen);
+    void (async () => {
+      for await (const message of params.prompt) seen.prompts.push(message);
+    })();
+    return query(params);
+  };
+  const events: ProtocolEvent[] = [];
+  await drive({
+    config: {
+      cwd: "/tmp/switchyard-models-x",
+      permission_mode: "explore",
+      claude_path: null,
+      allowed_tools: ["Bash(git status)"],
+      mcp_servers: { github: { command: "npx" } },
+      list_only: true,
+    },
+    commands: commands(...lines),
+    emit: (e) => events.push(e),
+    query: recording,
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  return { events, started, calls };
+}
+
+test("a list-only sidecar starts the CLI with every tool disallowed, in the most locked-down mode", async () => {
+  const { events, started } = await runListOnly(async () => sdkModels, listModels);
+  expect(started).toHaveLength(1);
+  const options = started[0].options;
+  expect(options.tools).toEqual([]);
+  expect(options.permissionMode).toBe("dontAsk");
+  expect(options.allowedTools).toEqual([]);
+  expect(options.mcpServers).toEqual({});
+  expect(options.strictMcpConfig).toBe(true);
+  expect(options.persistSession).toBe(false);
+  expect(options.model).toBeUndefined();
+  expect(started[0].prompts).toEqual([]);
+  expect(events.some((e) => e.type === "models_listed")).toBe(true);
+});
+
+test("a list-only sidecar denies any tool use without asking the host", async () => {
+  const { events, started } = await runListOnly(async () => sdkModels, listModels);
+  const verdict = await started[0].options.canUseTool("Bash", { command: "rm -rf ~" }, {
+    signal: new AbortController().signal,
+    requestId: "r1",
+    toolUseID: "t1",
+  });
+  expect(verdict.behavior).toBe("deny");
+  expect(events.filter((e) => e.type === "permission_request")).toEqual([]);
+});
+
+test("a list-only sidecar refuses every command but list_models", async () => {
+  const { events, started, calls } = await runListOnly(
+    async () => sdkModels,
+    prompt,
+    { type: "resume", external_session_id: "cli-1", model: "opus" },
+    { type: "set_model", model: "opus" },
+    { type: "set_permission_mode", permission_mode: "full_auto" },
+    listModels,
+  );
+  expect(started).toHaveLength(1);
+  expect(started[0].prompts).toEqual([]);
+  expect(started[0].options.resume).toBeUndefined();
+  expect(started[0].options.model).toBeUndefined();
+  expect(started[0].options.permissionMode).toBe("dontAsk");
+  expect(calls.lists).toBe(1);
+  expect(events.filter((e) => e.type === "error")).toHaveLength(4);
+  expect(events.some((e) => e.type === "models_listed")).toBe(true);
+});
